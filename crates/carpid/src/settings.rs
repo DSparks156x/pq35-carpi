@@ -37,6 +37,23 @@ pub fn get(cfg: &Config) -> Settings {
         },
         dis: carpi_proto::DisSettings {
             enabled: cfg.dis.enabled,
+            claim: match cfg.dis.claim {
+                crate::config::Claim::Always => carpi_proto::DisClaim::Always,
+                crate::config::Claim::Tab => carpi_proto::DisClaim::Tab,
+            },
+            default_page: match cfg.dis.default_page {
+                crate::config::DisPage::Readings => carpi_proto::DisPage::Readings,
+                crate::config::DisPage::Accel => carpi_proto::DisPage::Accel,
+                crate::config::DisPage::Media => carpi_proto::DisPage::Media,
+            },
+            auto_nav: cfg.dis.auto_nav,
+            auto_phone: cfg.dis.auto_phone,
+            auto_media: cfg.dis.auto_media,
+            media_layout: match cfg.dis.media_layout {
+                crate::config::DisMediaLayout::Stack => carpi_proto::DisMediaLayout::Stack,
+                crate::config::DisMediaLayout::Art => carpi_proto::DisMediaLayout::Art,
+            },
+            cover_flash_s: cfg.dis.cover_flash_s,
             readings: cfg
                 .readings()
                 .into_iter()
@@ -246,6 +263,31 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
             t
         }));
     }
+    if let Some(d) = &patch.dis {
+        table(&mut doc, "dis")?;
+        let snake = |v: &dyn erased::Snake| v.snake();
+        if let Some(v) = d.claim {
+            doc["dis"]["claim"] = value(snake(&v));
+        }
+        if let Some(v) = d.default_page {
+            doc["dis"]["default_page"] = value(snake(&v));
+        }
+        if let Some(v) = d.auto_nav {
+            doc["dis"]["auto_nav"] = value(v);
+        }
+        if let Some(v) = d.auto_phone {
+            doc["dis"]["auto_phone"] = value(v);
+        }
+        if let Some(v) = d.auto_media {
+            doc["dis"]["auto_media"] = value(v);
+        }
+        if let Some(v) = d.media_layout {
+            doc["dis"]["media_layout"] = value(snake(&v));
+        }
+        if let Some(v) = d.cover_flash_s {
+            doc["dis"]["cover_flash_s"] = value(v);
+        }
+    }
     if let Some(b) = &patch.bindings {
         table(&mut doc, "input")?;
         doc["input"]["bindings"] = array(b.iter().map(|b| {
@@ -398,6 +440,55 @@ mod tests {
         )
         .unwrap();
         assert!(!get(&cfg).portal_pin_set);
+    }
+
+    #[test]
+    fn dis_behaviour_round_trip() {
+        use carpi_proto::{DisClaim, DisMediaLayout, DisPage, DisPatch};
+        let (_d, p) = file();
+        let before = get(&Config::parse(FILE).unwrap());
+        assert_eq!(before.dis.claim, DisClaim::Always);
+        assert_eq!(before.dis.default_page, DisPage::Readings);
+        assert!(before.dis.auto_media);
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                dis: Some(DisPatch {
+                    claim: Some(DisClaim::Tab),
+                    default_page: Some(DisPage::Media),
+                    auto_phone: Some(false),
+                    media_layout: Some(DisMediaLayout::Art),
+                    cover_flash_s: Some(0.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let after = get(&cfg);
+        assert_eq!(after.dis.claim, DisClaim::Tab);
+        assert_eq!(after.dis.default_page, DisPage::Media);
+        assert!(!after.dis.auto_phone && after.dis.auto_nav, "only phone changed");
+        assert_eq!(after.dis.media_layout, DisMediaLayout::Art);
+        // And what the car model gets.
+        let core = cfg.core().dis;
+        assert!(!core.claim_always);
+        assert_eq!(core.default_page, carpi_core::DisScreen::Media);
+        assert!(core.cover_flash.is_none());
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("claim = \"tab\""), "{text}");
+        // Out of range is refused.
+        let bad = set(
+            &p,
+            &SettingsPatch {
+                dis: Some(DisPatch {
+                    cover_flash_s: Some(-1.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        assert!(bad.is_err());
     }
 
     #[test]
@@ -588,5 +679,20 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("portal is off"), "{e}");
+    }
+}
+
+/// The TOML spelling of the `[dis]` enums (their serde snake_case names).
+mod erased {
+    pub trait Snake {
+        fn snake(&self) -> String;
+    }
+    impl<T: serde::Serialize> Snake for T {
+        fn snake(&self) -> String {
+            serde_json::to_value(self)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default()
+        }
     }
 }

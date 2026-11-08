@@ -390,6 +390,80 @@ pub struct DisSettings {
     pub enabled: bool,
     /// The readings page, up to 8 cells: left column top to bottom, then right.
     pub readings: Vec<ReadingSetting>,
+    /// When we hold the centre with nothing else to show.
+    #[serde(default)]
+    pub claim: DisClaim,
+    /// The page "always" shows, and the cluster-menu tab opens to.
+    #[serde(default)]
+    pub default_page: DisPage,
+    /// Each takes the centre while it has content and gives it back after.
+    #[serde(default = "yes")]
+    pub auto_nav: bool,
+    #[serde(default = "yes")]
+    pub auto_phone: bool,
+    #[serde(default = "yes")]
+    pub auto_media: bool,
+    #[serde(default)]
+    pub media_layout: DisMediaLayout,
+    /// Full cover on a new track, held this long once drawn; 0 = off.
+    #[serde(default = "four")]
+    pub cover_flash_s: f64,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn four() -> f64 {
+    4.0
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisClaim {
+    /// Our default page holds the centre whenever nothing else wants it.
+    #[default]
+    Always,
+    /// Idle as a cluster-menu tab until the driver picks it.
+    Tab,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisPage {
+    #[default]
+    Readings,
+    Accel,
+    Media,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisMediaLayout {
+    /// Title, artist, album, bar, times.
+    #[default]
+    Stack,
+    /// A small cover beside the text.
+    Art,
+}
+
+/// `[dis]` fields a patch can change; left out = unchanged.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DisPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<DisClaim>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_page: Option<DisPage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_nav: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_phone: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_media: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_layout: Option<DisMediaLayout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_flash_s: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -436,6 +510,9 @@ pub struct SettingsPatch {
     pub dis_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dis_readings: Option<Vec<ReadingSetting>>,
+    /// The rest of `[dis]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dis: Option<DisPatch>,
     /// Replaces the whole table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bindings: Option<Vec<Binding>>,

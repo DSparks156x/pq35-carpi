@@ -512,6 +512,10 @@ impl Config {
         if !(1..=90).contains(&self.logs.max_pct) {
             return Err("[logs] max_pct must be 1-90".into());
         }
+        let f = self.dis.cover_flash_s;
+        if !f.is_finite() || !(0.0..=60.0).contains(&f) {
+            return Err(format!("[dis] cover_flash_s: 0-60, got {f}"));
+        }
         if let Some(r) = &self.dis.readings {
             if r.len() > 8 {
                 return Err(format!("[dis] readings: at most 8, got {}", r.len()));
