@@ -119,7 +119,7 @@ What's there grew one feature at a time and is clunky. Redo it after the next ca
   - Nav style: stock vs fancy.
   - Cover art flash: seconds, with 0 = off. Today it can't actually be turned off.
 - **Names**: say what the setting does. No internal terms.
-- **UI**: fast with the knob and D-pad. Fewer levels, values changed in place, no dead-end screens.
+- **UI**: fast with the knob and D-pad. Levels are fine as long as they make sense: organise by what you're doing, values changed in place, no dead-end screens, every row does something on a press.
 
 ## 6. Order
 
