@@ -31,8 +31,8 @@ pub const BAR_X: u8 = 57;
 pub const BAR_Y: [u8; 5] = [3, 10, 17, 24, 31];
 /// Lane strip: the road row, full width.
 pub const LANES: Rect = Rect::new(0, 38, 64, 9);
-/// Lane cell pitch in the strip, px (12-px arrows + 2).
-pub const LANE_PITCH: usize = 14;
+/// Lane cell pitch in the strip, px (18-px arrows + 3): 6 lanes across.
+pub const LANE_PITCH: usize = 21;
 /// Pocket text row, and its right edge (one unit clear of the bar at x=57).
 pub const POCKET_Y: u8 = 27;
 pub const POCKET_RIGHT: u8 = 56;

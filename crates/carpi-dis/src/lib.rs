@@ -32,6 +32,7 @@ mod font_data;
 pub mod helpers;
 pub mod icons;
 pub mod image;
+pub mod lane_icons;
 pub mod lanes;
 mod nav_icon_data;
 pub mod reading_art;

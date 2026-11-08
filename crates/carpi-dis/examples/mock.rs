@@ -2,7 +2,7 @@
 //! message they'd send to the framebuffer model (real glyphs from the font
 //! capture, native strokes, clips), and write what the centre would show.
 //!
-//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes|lane-art]`
+//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes]`
 //!
 //! Each sheet is a grid of labelled tiles, 4x, lit pixels white on black.
 //! Optional "top lines" above a tile show the two 8-cell radio lines.
@@ -200,7 +200,10 @@ fn nav_lanes(out: &Path) {
         road: Some("Ring Road".into()),
         ..Default::default()
     });
-    let top = Some(("One More".to_string(), "Time".to_string()));
+    // Line 1 is ours: 8 cells, the title marquees through it (here its first
+    // window). Line 2 is the cluster's outside temperature while the centre is
+    // in use (Drew), so nothing of ours goes there.
+    let top = Some(("One More".to_string(), "4.5\u{B0}C".to_string()));
     let f = LaneLayout::Flip;
     let tiles = vec![
         Tile { label: "800 m, pocket: ETA".into(), fb: nav(f, far.clone(), 0.0), top: top.clone() },
@@ -215,74 +218,6 @@ fn nav_lanes(out: &Path) {
     sheet(&tiles, 4, &out.join("nav_lanes.png"));
 }
 
-/// Lane arrow styles side by side: each row a style, each column a lane set,
-/// the 128x18 px road-row strip at the tile scale.
-fn lane_art(out: &Path) {
-    use carpi_dis::icons::Art;
-    use carpi_dis::lanes::{strip, strip_maps};
-    let sets: Vec<(&str, Vec<Lane>)> = vec![
-        (
-            "right, 4 lanes",
-            vec![
-                lane(&[("normal_left", false)]),
-                lane(&[("straight", false)]),
-                lane(&[("straight", false), ("normal_right", true)]),
-                lane(&[("normal_right", true)]),
-            ],
-        ),
-        (
-            "left, 5 lanes",
-            vec![
-                lane(&[("uturn_left", false), ("normal_left", true)]),
-                lane(&[("normal_left", true)]),
-                lane(&[("straight", false)]),
-                lane(&[("straight", false)]),
-                lane(&[("normal_right", false), ("slight_right", false)]),
-            ],
-        ),
-        (
-            "keep left, 3 lanes",
-            vec![
-                lane(&[("slight_left", true)]),
-                lane(&[("straight", false), ("slight_left", true)]),
-                lane(&[("straight", false)]),
-            ],
-        ),
-    ];
-    let (w, h) = (128usize, 18usize);
-    let styles: Vec<(&str, Box<dyn Fn(&[Lane]) -> Art>)> = vec![
-        ("pixel art 12x16 (now)", Box::new(move |l: &[Lane]| strip(l, w, h, 14))),
-        ("Maps icons 18 px, the arrow to take", Box::new(move |l: &[Lane]| strip_maps(l, w, h, 21, 18, false))),
-        ("Maps icons 18 px, all arrows overlaid", Box::new(move |l: &[Lane]| strip_maps(l, w, h, 21, 18, true))),
-        ("Maps icons 16 px, the arrow to take", Box::new(move |l: &[Lane]| strip_maps(l, w, h, 19, 16, false))),
-    ];
-    let (cw, ch) = (w as u32 * S + 24, h as u32 * S + 40);
-    let label_w = 560;
-    let mut img = RgbImage::from_pixel(label_w + cw * sets.len() as u32, 40 + ch * styles.len() as u32, BG);
-    for (c, (name, _)) in sets.iter().enumerate() {
-        text(&mut img, label_w + c as u32 * cw + 12, 8, name, Font::Prop, 2);
-    }
-    for (r, (sname, f)) in styles.iter().enumerate() {
-        let y0 = 40 + r as u32 * ch;
-        text(&mut img, 12, y0 + 24, sname, Font::Prop, 2);
-        for (c, (_, lanes)) in sets.iter().enumerate() {
-            let a = f(lanes);
-            let x0 = label_w + c as u32 * cw + 12;
-            for y in 0..h as u32 {
-                for x in 0..w as u32 {
-                    let col = if a.get(x as usize, y as usize) { LIT } else { DARK };
-                    for d in 0..S * S {
-                        img.put_pixel(x0 + x * S + d % S, y0 + 12 + y * S + d / S, col);
-                    }
-                }
-            }
-        }
-    }
-    let p = out.join("lane_art.png");
-    img.save(&p).expect("png");
-    println!("{}", p.display());
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = PathBuf::from(args.first().expect("usage: mock <out dir> [sheet]"));
@@ -290,7 +225,6 @@ fn main() {
     let which = args.get(1).map_or("nav-lanes", String::as_str);
     match which {
         "nav-lanes" => nav_lanes(&out),
-        "lane-art" => lane_art(&out),
         other => panic!("unknown sheet {other}"),
     }
 }

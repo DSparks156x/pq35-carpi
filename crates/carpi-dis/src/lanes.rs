@@ -1,128 +1,14 @@
-//! Lane guidance art: hand-drawn native pixel masks, one per AA lane shape
-//! (right-hand shapes drawn, left ones mirrored), composed into a strip.
+//! Lane guidance art: the lane shapes from Drew's Maps SVGs, rendered at
+//! 18 px and grid-fitted offline (`lane_icons`, made by
+//! `examples/small_icons.rs`; downscaling the 72 px masks butchered them).
 //!
-//! The ROM graphics font has no small lane arrows (only tile pieces for the
-//! stock maneuver arrows and the approach bar), so these are pixel art, 12 px
-//! wide and 16 tall with 2-px strokes (round 2; Drew: the 9x12 ones need work). Arrows to follow are solid; the others
-//! use the 50 % checker the Maps icons use for secondary routes. A lane with
-//! several arrows draws them over each other, like the phone does.
+//! Each lane shows one arrow: the one the phone highlights, else its first.
+//! Lanes to take are solid; the others use the 50 % checker the Maps icons
+//! use for secondary routes. Lanes that don't fit are dropped from the side
+//! away from the highlighted ones.
 
 use crate::icons::Art;
-
-pub const AW: usize = 12;
-pub const AH: usize = 16;
-
-// Every shape leaves the bottom on the same 2-px stem (columns 5-6), so
-// several arrows in one lane overlay as a fork, the way the phone draws them,
-// instead of a blob. Right-hand (or symmetric) shapes; left ones mirror
-// (columns 5-6 mirror onto themselves).
-const STRAIGHT: [&str; AH] = [
-    ".....##.....",
-    "....####....",
-    "...######...",
-    "..########..",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-];
-const SLIGHT: [&str; AH] = [
-    "......######",
-    "........####",
-    ".......#####",
-    "......###.##",
-    ".....###...#",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-];
-const TURN: [&str; AH] = [
-    "............",
-    "............",
-    ".........#..",
-    ".........##.",
-    ".....#######",
-    ".....#######",
-    ".........##.",
-    ".........#..",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-];
-const SHARP: [&str; AH] = [
-    "............",
-    "............",
-    "............",
-    ".....##.....",
-    ".....###....",
-    "......###...",
-    ".......###.#",
-    "........####",
-    ".......#####",
-    "......######",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-];
-/// U-turn to the left; mirrored for right-hand u-turns.
-const UTURN_LEFT: [&str; AH] = [
-    "............",
-    "..####......",
-    ".######.....",
-    ".##..##.....",
-    ".##..##.....",
-    ".##..##.....",
-    ".##..##.....",
-    ".##..##.....",
-    "####.##.....",
-    ".##..##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-    ".....##.....",
-];
-
-fn shape_rows(shape: &str) -> Option<(&'static [&'static str; AH], bool)> {
-    // (mask, mirror)
-    Some(match shape {
-        "straight" => (&STRAIGHT, false),
-        "slight_right" => (&SLIGHT, false),
-        "slight_left" => (&SLIGHT, true),
-        "normal_right" | "right" => (&TURN, false),
-        "normal_left" | "left" => (&TURN, true),
-        "sharp_right" => (&SHARP, false),
-        "sharp_left" => (&SHARP, true),
-        "uturn_left" | "u_turn_left" => (&UTURN_LEFT, false),
-        "uturn_right" | "u_turn_right" => (&UTURN_LEFT, true),
-        _ => return None,
-    })
-}
+use crate::lane_icons::{ICONS, SIZE};
 
 /// One arrow of a lane, as carpi-core publishes it (`nav.lanes`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -133,106 +19,59 @@ pub struct LaneArrow {
 
 pub type Lane = Vec<LaneArrow>;
 
+/// Arrow size, px.
+pub const AW: usize = SIZE;
+pub const AH: usize = SIZE;
+
+/// The mask for an AA lane shape (a few spellings), if we have one.
+fn mask(shape: &str) -> Option<&'static [u32; SIZE]> {
+    let name = match shape {
+        "right" => "normal_right",
+        "left" => "normal_left",
+        "u_turn_left" => "uturn_left",
+        "u_turn_right" => "uturn_right",
+        s => s,
+    };
+    ICONS.iter().find(|(n, _)| *n == name).map(|(_, m)| m)
+}
+
+/// The arrow a lane shows: the highlighted one, else the first.
+fn shown(lane: &Lane) -> Option<&LaneArrow> {
+    lane.iter().find(|a| a.highlighted).or_else(|| lane.first())
+}
+
 /// Draw `lanes` left to right into a `w` x `h` px strip, centred, each lane in
-/// a `pitch`-px cell, arrows vertically centred. Lanes that don't fit are
-/// dropped from the side away from the highlighted ones.
+/// a `pitch`-px cell, arrows vertically centred.
 pub fn strip(lanes: &[Lane], w: usize, h: usize, pitch: usize) -> Art {
     let mut px = vec![false; w * h];
     let fit = (w / pitch.max(1)).max(1);
     let (mut lo, mut hi) = (0, lanes.len());
+    let first = lanes
+        .iter()
+        .position(|l| l.iter().any(|a| a.highlighted))
+        .unwrap_or(0);
     while hi - lo > fit {
-        // Keep the highlighted lanes on screen: drop from whichever end is
-        // further from the first highlighted lane.
-        let first = lanes.iter().position(|l| l.iter().any(|a| a.highlighted)).unwrap_or(0);
         if first.saturating_sub(lo) > (hi - 1).saturating_sub(first) {
             lo += 1;
         } else {
             hi -= 1;
         }
     }
-    let shown = &lanes[lo..hi];
-    let x0 = (w.saturating_sub(shown.len() * pitch)) / 2;
+    let lanes = &lanes[lo..hi];
+    let x0 = w.saturating_sub(lanes.len() * pitch) / 2;
     let y0 = h.saturating_sub(AH) / 2;
-    for (i, lane) in shown.iter().enumerate() {
+    for (i, lane) in lanes.iter().enumerate() {
+        let Some(a) = shown(lane) else { continue };
+        let Some(m) = mask(&a.shape) else { continue };
         let cx = x0 + i * pitch + pitch.saturating_sub(AW) / 2;
-        // Non-highlighted first, so a highlighted arrow wins where they overlap.
-        let mut arrows: Vec<&LaneArrow> = lane.iter().collect();
-        arrows.sort_by_key(|a| a.highlighted);
-        for a in arrows {
-            let Some((rows, mirror)) = shape_rows(&a.shape) else {
-                continue;
-            };
-            for (y, row) in rows.iter().enumerate() {
-                for (x, c) in row.bytes().enumerate() {
-                    if c != b'#' {
-                        continue;
-                    }
-                    let mx = if mirror { AW - 1 - x } else { x };
-                    let (px_x, px_y) = (cx + mx, y0 + y);
-                    if px_x >= w || px_y >= h {
-                        continue;
-                    }
-                    let on = a.highlighted || (px_x + px_y).is_multiple_of(2);
-                    if on {
-                        px[px_y * w + px_x] = true;
-                    } else if !a.highlighted {
-                        // Checker: leave the off squares alone (a solid arrow
-                        // underneath stays solid).
-                    }
+        for (y, row) in m.iter().enumerate() {
+            for x in 0..AW {
+                let (px_x, px_y) = (cx + x, y0 + y);
+                if row & (0x8000_0000 >> x) == 0 || px_x >= w || px_y >= h {
+                    continue;
                 }
-            }
-        }
-    }
-    Art { w, h, px }
-}
-
-/// The Maps maneuver icon a lane shape looks like.
-fn shape_maneuver(shape: &str) -> Option<crate::icons::Maneuver> {
-    use crate::icons::{Maneuver as M, Side};
-    Some(match shape {
-        "straight" => M::Straight,
-        "slight_right" => M::Slight(Side::Right),
-        "slight_left" => M::Slight(Side::Left),
-        "normal_right" | "right" => M::Turn(Side::Right),
-        "normal_left" | "left" => M::Turn(Side::Left),
-        "sharp_right" => M::Sharp(Side::Right),
-        "sharp_left" => M::Sharp(Side::Left),
-        "uturn_left" | "u_turn_left" | "uturn_right" | "u_turn_right" => M::UTurn,
-        _ => return None,
-    })
-}
-
-/// Like [`strip`], but each arrow is the Maps maneuver icon scaled to
-/// `size` px (the big icon's own art, trial). `overlay`: every arrow of a
-/// lane drawn over each other; else only the one to follow (or the first).
-pub fn strip_maps(lanes: &[Lane], w: usize, h: usize, pitch: usize, size: usize, overlay: bool) -> Art {
-    let mut px = vec![false; w * h];
-    let fit = (w / pitch.max(1)).max(1);
-    let shown = &lanes[..lanes.len().min(fit)];
-    let x0 = (w.saturating_sub(shown.len() * pitch)) / 2;
-    let y0 = h.saturating_sub(size) / 2;
-    for (i, lane) in shown.iter().enumerate() {
-        let cx = x0 + i * pitch + pitch.saturating_sub(size) / 2;
-        let mut arrows: Vec<&LaneArrow> = lane.iter().collect();
-        arrows.sort_by_key(|a| a.highlighted);
-        if !overlay {
-            arrows = arrows.last().copied().into_iter().collect();
-        }
-        for a in arrows {
-            let Some(m) = shape_maneuver(&a.shape) else {
-                continue;
-            };
-            // Right-hand u-turns: the clockwise (left-hand traffic) icon.
-            let lht = matches!(a.shape.as_str(), "uturn_right" | "u_turn_right");
-            let art = crate::icons::draw_scaled(m, lht, size, size, 0, 0, size);
-            for y in 0..size {
-                for x in 0..size {
-                    if !art.get(x, y) || cx + x >= w || y0 + y >= h {
-                        continue;
-                    }
-                    if a.highlighted || (cx + x + y0 + y).is_multiple_of(2) {
-                        px[(y0 + y) * w + cx + x] = true;
-                    }
+                if a.highlighted || (px_x + px_y).is_multiple_of(2) {
+                    px[px_y * w + px_x] = true;
                 }
             }
         }
@@ -255,22 +94,24 @@ mod tests {
     }
 
     #[test]
-    fn masks_are_well_formed() {
-        for m in [&STRAIGHT, &SLIGHT, &TURN, &SHARP, &UTURN_LEFT] {
-            assert!(m.iter().all(|r| r.len() == AW));
+    fn every_shape_has_ink() {
+        for s in [
+            "straight", "slight_left", "slight_right", "normal_left", "normal_right",
+            "sharp_left", "sharp_right", "uturn_left", "uturn_right",
+        ] {
+            assert!(mask(s).is_some_and(|m| m.iter().any(|r| *r != 0)), "{s}");
         }
     }
 
     #[test]
-    fn strip_centres_and_drops_far_lanes() {
-        let lanes = vec![
-            lane(&[("uturn_left", false)]),
-            lane(&[("straight", false)]),
-            lane(&[("straight", true), ("slight_right", true)]),
-            lane(&[("normal_right", false)]),
-        ];
-        let a = strip(&lanes, 40, 14, 12);
-        assert_eq!((a.w, a.h), (40, 14));
-        assert!(a.px.iter().any(|p| *p));
+    fn strip_keeps_the_highlighted_lanes() {
+        let lanes: Vec<Lane> = (0..9).map(|i| lane(&[("straight", i == 8)])).collect();
+        // 3 cells fit: the highlighted last lane must be among them.
+        let a = strip(&lanes, 63, 18, 21);
+        let lit = (42..63)
+            .flat_map(|x| (0..18).map(move |y| (x, y)))
+            .filter(|(x, y)| a.get(*x, *y))
+            .count();
+        assert!(lit > 20, "{lit}");
     }
 }

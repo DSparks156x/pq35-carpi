@@ -10,7 +10,9 @@
 //! `cargo run -p carpi-dis --example small_icons -- <svg dir> <out dir> [sizes...]`
 //!
 //! Writes `small_icons.png` (per shape: the box-filtered downscale vs the
-//! grid fit, at each size, 1x and 4x) and `<shape>_<size>.txt` masks (`#`/`.`).
+//! grid fit, at each size, 1x and 4x), `<shape>_<size>.txt` masks (`#`/`.`),
+//! and with `--rust <size> <file>` the masks at that size as the
+//! `lane_icons.rs` data module carpi-dis ships.
 
 use carpi_dis::icons::{self, Maneuver, Side};
 use image::{Rgb, RgbImage};
@@ -91,11 +93,19 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     assert!(args.len() >= 2, "usage: small_icons <svg dir> <out dir> [sizes...]");
     let (dir, out) = (PathBuf::from(&args[0]), PathBuf::from(&args[1]));
-    let sizes: Vec<u32> = if args.len() > 2 {
-        args[2..].iter().map(|s| s.parse().expect("size")).collect()
-    } else {
-        vec![14, 16, 18, 20]
-    };
+    let mut rust: Option<(u32, PathBuf)> = None;
+    let mut rest = Vec::new();
+    let mut it = args[2..].iter();
+    while let Some(a) = it.next() {
+        if a == "--rust" {
+            let z = it.next().expect("size").parse().expect("size");
+            rust = Some((z, PathBuf::from(it.next().expect("file"))));
+        } else {
+            rest.push(a.parse().expect("size"));
+        }
+    }
+    let sizes: Vec<u32> = if rest.is_empty() { vec![14, 16, 18, 20] } else { rest };
+    let mut data_rows = String::new();
     std::fs::create_dir_all(&out).expect("out dir");
     let s = 4;
     let cell = |z: u32| z * s + 12;
@@ -122,8 +132,38 @@ fn main() {
                 .map(|r| r.iter().map(|p| if *p { '#' } else { '.' }).collect::<String>() + "\n")
                 .collect();
             std::fs::write(out.join(format!("{name}_{z}.txt")), txt).expect("mask");
+            if rust.as_ref().is_some_and(|(rz, _)| *rz == z) {
+                let rows: Vec<String> = f
+                    .px
+                    .chunks(z as usize)
+                    .map(|r| {
+                        let v = r.iter().enumerate().fold(0u32, |v, (x, p)| v | (u32::from(*p) << (31 - x)));
+                        format!("0x{v:08X}")
+                    })
+                    .collect();
+                data_rows += &format!("    (\"{name}\", [{}]),
+", rows.join(", "));
+            }
             eprintln!("{name} {z}px: scale {:.3} (stroke {:.2} px)", f.scale, 2.5 * f.scale);
         }
+    }
+    if let Some((z, file)) = rust {
+        let src = [
+            format!("//! Lane arrows: Drew's Maps SVGs rendered at {z} px and grid-fitted by"),
+            format!("//! `cargo run -p carpi-dis --example small_icons -- <svg dir> <out> --rust {z} <this file>`."),
+            "//! Generated; regenerate rather than edit. Row bit `0x8000_0000 >> x`.".to_string(),
+            String::new(),
+            format!("pub const SIZE: usize = {z};"),
+            String::new(),
+            "#[rustfmt::skip]".to_string(),
+            format!("pub const ICONS: &[(&str, [u32; {z}])] = &["),
+            format!("{data_rows}];"),
+            String::new(),
+        ]
+        .join("
+");
+        std::fs::write(&file, src).expect("rust");
+        eprintln!("wrote {}", file.display());
     }
     let p: &Path = &out.join("small_icons.png");
     img.save(p).expect("png");
