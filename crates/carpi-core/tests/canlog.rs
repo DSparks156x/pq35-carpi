@@ -65,6 +65,9 @@ fn decodes_parked_car() {
     assert_eq!(s.get_num("light.dim_display_pct", end), Some(37.0));
     let temp = s.get_num("ambient.outside_temp_c", end).unwrap();
     assert!((-40.0..60.0).contains(&temp), "outside temp {temp}");
+    // Sun load, indoors by day (PLAN 2.6 baseline).
+    assert_eq!(s.get_num("light.sun_left_wm2", end), Some(100.0));
+    assert_eq!(s.get_num("light.sun_right_wm2", end), Some(68.0));
     let v = s.get_num("power.battery_v", end).unwrap();
     assert!((10.0..15.5).contains(&v), "battery {v}");
 }

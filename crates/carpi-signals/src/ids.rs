@@ -26,6 +26,8 @@ pub const BREMSE_10: u32 = 0x5B5;
 pub const GW_KOMBI: u32 = 0x527;
 pub const KOMBI_K1: u32 = 0x621;
 pub const DIMMUNG: u32 = 0x635;
+/// mClima_2: sun load, climatronic dash-top sensor (via the gateway).
+pub const CLIMA_2: u32 = 0x3E3;
 pub const DIAGNOSE_1: u32 = 0x65D;
 
 // --- Inputs ----------------------------------------------------------------

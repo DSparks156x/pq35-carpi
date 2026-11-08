@@ -100,6 +100,12 @@ pub static MESSAGES: &[Message] = &[
         decode: dimmung,
     },
     Message {
+        id: CLIMA_2,
+        name: "mClima_2",
+        cycle: ms(800),
+        decode: clima_2,
+    },
+    Message {
         id: RADIO_4,
         name: "mRadio_4",
         cycle: ms(1000),
@@ -320,6 +326,13 @@ fn dimmung(d: &[u8], e: Emit) {
     e("light.dim_sensor", num(d, 16, 8, 1.0, 0.0, &[254, 255]));
 }
 
+/// 0x3E3, sun load from the climatronic's dash-top sensor: W/m2 x4, FF =
+/// error (DBC). Parked log, indoors by day: 100 / 68.
+fn clima_2(d: &[u8], e: Emit) {
+    e("light.sun_left_wm2", num(d, 0, 8, 4.0, 0.0, &[255]));
+    e("light.sun_right_wm2", num(d, 8, 8, 4.0, 0.0, &[255]));
+}
+
 /// TV source marker in 0x661 byte 3 (RA4_Radio_Para2).
 pub const RADIO_4_TV: u8 = 0x37;
 
@@ -416,6 +429,14 @@ mod tests {
         let v = run(BSG_3, &[0x02]);
         assert_eq!(v["ignition.kl15"], Some(Value::Bool(true)));
         assert_eq!(v["ignition.kl_p"], Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn sun_load() {
+        let v = run(CLIMA_2, &[0x19, 0x11, 0x95, 0, 0, 0x79, 0, 0]);
+        assert_eq!(v["light.sun_left_wm2"], Some(Value::Num(100.0)));
+        assert_eq!(v["light.sun_right_wm2"], Some(Value::Num(68.0)));
+        assert_eq!(run(CLIMA_2, &[0xFF, 0x00])["light.sun_left_wm2"], None);
     }
 
     #[test]
