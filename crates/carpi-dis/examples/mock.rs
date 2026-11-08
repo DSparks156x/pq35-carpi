@@ -2,7 +2,7 @@
 //! message they'd send to the framebuffer model (real glyphs from the font
 //! capture, native strokes, clips), and write what the centre would show.
 //!
-//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes|nav-stock]`
+//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes|nav-stock|media]`
 //!
 //! Each sheet is a grid of labelled tiles, 4x, lit pixels white on black.
 //! Optional "top lines" above a tile show the two 8-cell radio lines.
@@ -261,6 +261,60 @@ fn nav_stock(out: &Path) {
     sheet(&tiles, 4, &out.join("nav_stock.png"));
 }
 
+/// Media screens with real covers and their real track info: stack layout,
+/// art layout, and the full-centre cover (what the flash shows).
+fn media(out: &Path) {
+    use carpi_dis::image::{CoverParams, cover};
+    use carpi_dis::screens::cover::CoverScreen;
+    use carpi_dis::screens::media::{ART, MediaInput, MediaLayout, MediaScreen};
+    let dir = PathBuf::from(r"C:\Users\raccoon\Documents\carstuff\RNS-E-Hudiy\tools\dis_image_tester\albumcovers");
+    // (file, title, artist, album, position s, length s, playing)
+    let tracks = [
+        ("Daft_Punk-Discovery.png", "One More Time", "Daft Punk", "Discovery", 83, 320, true),
+        ("FooFighters-TheColourAndTheShape.jpg", "Everlong", "Foo Fighters", "The Colour and the Shape", 151, 250, true),
+        ("MeteoraLinkinPark.jpg", "Numb", "Linkin Park", "Meteora", 40, 187, false),
+        ("NirvanaNevermindalbumcover.jpg", "Smells Like Teen Spirit", "Nirvana", "Nevermind", 212, 301, true),
+        ("Levels.jpg", "Levels", "Avicii", "Levels", 15, 199, true),
+        ("Spotify Three Days Grace - One-X.jpg", "Animal I Have Become", "Three Days Grace", "One-X", 120, 231, true),
+    ];
+    let p = CoverParams::default();
+    let mut tiles = Vec::new();
+    for (i, (file, title, artist, album, pos, len, playing)) in tracks.iter().enumerate() {
+        let img = image::open(dir.join(file)).expect("cover").to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        let thumb = cover(img.as_raw(), w, h, usize::from(ART.w) * 2, usize::from(ART.h) * 2, &p);
+        let full = cover(img.as_raw(), w, h, 128, 96, &p);
+        let input = MediaInput {
+            title: Some((*title).into()),
+            artist: Some((*artist).into()),
+            album: Some((*album).into()),
+            playing: *playing,
+            position_ms: Some(pos * 1000),
+            duration_ms: Some(len * 1000),
+            art: Some((i as u64, thumb)),
+            cover: Some((i as u64, full.clone())),
+        };
+        for (layout, name) in [(MediaLayout::Stack, "stack"), (MediaLayout::Art, "art")] {
+            let mut s = MediaScreen::new(layout);
+            let t0 = Instant::now();
+            s.set(t0, input.clone());
+            tiles.push(Tile {
+                label: format!("{name}: {title}"),
+                fb: render_at(&mut s, t0, &[]),
+                top: None,
+            });
+        }
+        let mut c = CoverScreen::new();
+        c.set(Some((i as u64, full)));
+        tiles.push(Tile {
+            label: format!("cover flash: {album}"),
+            fb: render_at(&mut c, Instant::now(), &[]),
+            top: None,
+        });
+    }
+    sheet(&tiles, 3, &out.join("media.png"));
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = PathBuf::from(args.first().expect("usage: mock <out dir> [sheet]"));
@@ -269,6 +323,7 @@ fn main() {
     match which {
         "nav-lanes" => nav_lanes(&out),
         "nav-stock" => nav_stock(&out),
+        "media" => media(&out),
         other => panic!("unknown sheet {other}"),
     }
 }
