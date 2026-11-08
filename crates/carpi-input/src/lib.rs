@@ -11,6 +11,7 @@ mod decode;
 mod gesture;
 mod key;
 mod livi;
+mod names;
 mod route;
 #[cfg(target_os = "linux")]
 mod sink;
@@ -19,6 +20,7 @@ pub use decode::{Decoder, DecoderConfig};
 pub use gesture::{Gesture, GestureConfig, GestureKind, Recogniser, Timing};
 pub use key::{Edge, Key, KeyEvent};
 pub use livi::LiviKey;
+pub use names::{BindingRow, TABLES as BINDING_TABLES};
 pub use route::{
     Call, CarAction, Context, DisKey, Focus, Page, Route, RouteConfig, SystemAction, Trigger, route,
 };
