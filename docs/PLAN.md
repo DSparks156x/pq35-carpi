@@ -197,7 +197,10 @@ Drew's design (2026-11-07). The stock pattern is bad: with the scroll at minimum
   - **manual**: editable points;
   - **learned**: manual nudges are stored at the current ambient and blended into the curve, like phone auto-brightness.
 - **Scroll trim** (toggle): when on, the car's dimming output shifts the curve up or down. When off, it's ignored.
-- **Night** (dark theme for LIVI, AA and CarPlay): a separate threshold on ambient, with hysteresis and a minimum dwell. Headlights only as a fallback when both sensors are invalid.
+- **Night / dark mode** (LIVI, AA and CarPlay), Drew 2026-11-07. Headlights decide, as in the old repo, including its conditioning against brief flips (old `hudiy_client/dark_mode_api.py` is the reference for the behaviour).
+  - With the ignition off, the headlights always read off. Then use the car's clock (0x65D; the RNS-E keeps the bus awake): dark between sunset and sunrise for the date and a configured rough location, or fixed evening and morning hours if no location is set.
+  - As soon as Kl15 is on and the headlight signal is real, headlights take over again.
+  - Ambient sensors drive brightness only, not dark mode.
 - **Output**: an absolute `BB` level, sent only on a change of 2 % or more, at most about 2 Hz.
 
 **Defaults** (Drew: it should just work, options out of the way): auto brightness on, learned mode on, starting from a default curve whose night end sits around 10–15 %; scroll trim on but gentle. The firmware treats `BB` 1–5 as 6, and 6 is already darker than most want, so learning can go down to 6 but the default doesn't. The page shows the plot and a brightness nudge first; manual curve editing is an advanced switch.
