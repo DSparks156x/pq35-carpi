@@ -442,6 +442,10 @@ impl Car {
                     },
                 }
             }
+            // carpid answers this itself (it owns the journal and the logs folder).
+            Request::Capture { .. } => Response::Error {
+                message: "capture is handled by carpid".into(),
+            },
         }
     }
 

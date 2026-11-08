@@ -191,6 +191,15 @@ fn print(resp: Response) -> anyhow::Result<()> {
                 println!("{:w$}  {:>12}  {:>6} ms", r.name, v, r.age_ms);
             }
         }
+        Response::Captured {
+            label,
+            dir,
+            summary,
+            ..
+        } => println!(
+            "{label}: {summary}
+{dir}"
+        ),
         Response::Bus { buses } => {
             for b in buses {
                 println!(

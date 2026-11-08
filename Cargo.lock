@@ -305,6 +305,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "carpi-logs"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "carpi-nm"
 version = "0.1.0"
 dependencies = [

@@ -40,6 +40,14 @@ pub enum Request {
     SaveCapture {
         path: Option<String>,
     },
+    /// Save a capture into the logs folder (docs/PAGES.md 3): the last few
+    /// minutes of CAN, the journal, values and config, as the next
+    /// `<date> #NN`. Answers [`Response::Captured`]; LIVI also gets a
+    /// [`Command::Toast`].
+    Capture {
+        /// `key`, `page`, `portal`, `cli`, ...
+        trigger: String,
+    },
     /// Stream values whose names start with any of `prefixes`. The daemon
     /// sends `Update { sub }` at most every `period_ms`, and only when
     /// something changed (a value, or valid <-> invalid). The first update
@@ -390,6 +398,21 @@ pub enum Command {
     /// it to Android Auto keycodes or CarPlay commands for the active session
     /// (PLAN 2.4). Sent only while the projection has focus.
     Input { action: InputAction },
+    /// A short message over whatever is on screen ("Capture 2026-11-08 #03").
+    Toast {
+        text: String,
+        #[serde(default)]
+        level: ToastLevel,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToastLevel {
+    #[default]
+    Info,
+    Warn,
+    Error,
 }
 
 /// Actions the fork maps per session (AA keycode / CarPlay command).
@@ -565,6 +588,18 @@ pub enum Response {
     CaptureSaved {
         path: String,
         frames: usize,
+    },
+    /// Reply to `Capture`.
+    Captured {
+        /// `2026-11-08`.
+        date: String,
+        number: u32,
+        /// `2026-11-08 #03`.
+        label: String,
+        /// The entry's folder on the Pi.
+        dir: String,
+        /// One line: what went in.
+        summary: String,
     },
     Error {
         message: String,

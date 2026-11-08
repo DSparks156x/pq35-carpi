@@ -28,6 +28,7 @@ carpi-sim = { path = "crates/carpi-sim" }
 carpi-diag = { path = "crates/carpi-diag" }
 carpi-dis = { path = "crates/carpi-dis" }
 carpi-portal = { path = "crates/carpi-portal" }
+carpi-logs = { path = "crates/carpi-logs" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
