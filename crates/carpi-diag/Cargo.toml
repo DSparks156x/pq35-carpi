@@ -16,3 +16,4 @@ carpi-state.workspace = true
 
 [dev-dependencies]
 carpi-sim.workspace = true
+carpi-signals.workspace = true

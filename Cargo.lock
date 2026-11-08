@@ -282,6 +282,7 @@ version = "0.1.0"
 dependencies = [
  "carpi-can",
  "carpi-kwp",
+ "carpi-signals",
  "carpi-sim",
  "carpi-state",
  "carpi-tp2",

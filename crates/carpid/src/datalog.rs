@@ -1121,7 +1121,7 @@ pub(crate) mod tests {
             &c,
             &v(&[
                 "engine.boost.actual",
-                "engine.oil_temp_c",
+                "engine.timing_retard.cyl1_deg",
                 "engine.fuel_rail.actual_bar",
                 "engine.lambda.actual",
                 "awd.oil_temp_c",

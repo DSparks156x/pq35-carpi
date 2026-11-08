@@ -209,7 +209,11 @@ fn api_prefixes_map_to_diag_subscriptions() {
     let t0 = r.now;
     // "" maps to nothing: a page asking for everything never starts polling.
     assert!(r.car.diag_subscribe(&["".into()], period, t0).is_empty());
-    let ids = r.car.diag_subscribe(&["engine.boost.".into()], period, t0);
+    let ids = r.car.diag_subscribe(
+        &["engine.boost.actual".into(), "engine.boost.specified".into()],
+        period,
+        t0,
+    );
     assert_eq!(ids.len(), 2);
     let rpm = r.car.diag_subscribe(&["engine.rpm".into()], period, t0);
     assert_eq!(rpm.len(), 1);

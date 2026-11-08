@@ -1,9 +1,13 @@
 //! Value catalog: one name per value, and the places it can come from.
 //!
-//! A Rust table, not a TOML file: it's ~40 rows, the compiler checks every
-//! row, there's no file to ship out of step with the binary, and a sans-IO
-//! crate shouldn't read files. Per-ECU group tables (keyed by `1A 9B` part
-//! number) can become data later if they grow.
+//! A Rust table, not a TOML file: the compiler checks every row, there's no
+//! file to ship out of step with the binary, and a sans-IO crate shouldn't
+//! read files. Per-ECU group tables (keyed by `1A 9B` part number) can become
+//! data later. The table itself is in [`seed`](self::seed()), ~400 rows: every
+//! value carpi-signals emits, and the old project's diag values.
+//!
+//! Each value has a label and a place (category, sub-group) for the picker
+//! (PAGES 2). The table's order is the picker's curated order.
 //!
 //! Refs:
 //! - `[pdf]` owner's "Measuring Groups - Engine - 01.pdf", via RNS-E-Hudiy
@@ -18,6 +22,9 @@
 //! - `[awd]` "Measuring Groups - AWD - 22.pdf" via `vehicle_data/consumer_definitions.py`.
 //!   The PDF is headed 22 (VCDS address); the old code polled TP2 0x0A. The
 //!   install list should settle it; until then 0x0A is a guess.
+//! - `[trans]` "Measuring Groups - Transmission - 02.pdf" via
+//!   `consumer_definitions.py`: DSG groups 6-8, 11-14, 16, 19 on TP2 0x02, as
+//!   the old code polled it. No trace from Drew's DSG yet.
 
 use carpi_kwp::group::{self, Record};
 use carpi_state::Value;
@@ -32,6 +39,8 @@ pub enum Basis {
     EnginePdfTrace,
     /// `[awd]`. Guessed, address unreconciled.
     AwdPdf,
+    /// `[trans]`. Guessed for Drew's DSG.
+    TransmissionPdf,
     /// Tests and hand-made tables.
     Custom,
 }
@@ -61,10 +70,67 @@ pub enum Unit {
     Expect(&'static str),
 }
 
+/// Picker category (PAGES 2). Sub-groups are free text in the table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Category {
+    Engine,
+    Driving,
+    Transmission,
+    Haldex,
+    FuelTrip,
+    Electrical,
+    Body,
+    Lights,
+    Rnse,
+    /// Bridge values (nav, media, calls). None in this table: they come from
+    /// the LIVI bridge, not a bus.
+    PhoneNav,
+    Other,
+}
+
+impl Category {
+    /// In picker order.
+    pub const ALL: [Category; 11] = [
+        Category::Engine,
+        Category::Driving,
+        Category::Transmission,
+        Category::Haldex,
+        Category::FuelTrip,
+        Category::Electrical,
+        Category::Body,
+        Category::Lights,
+        Category::Rnse,
+        Category::PhoneNav,
+        Category::Other,
+    ];
+
+    /// What the picker shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::Engine => "Engine",
+            Category::Driving => "Driving",
+            Category::Transmission => "Transmission",
+            Category::Haldex => "Haldex",
+            Category::FuelTrip => "Fuel & trip",
+            Category::Electrical => "Electrical",
+            Category::Body => "Body",
+            Category::Lights => "Lights",
+            Category::Rnse => "RNS-E",
+            Category::PhoneNav => "Phone & nav",
+            Category::Other => "Other",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValueDef {
     /// Dotted store name.
     pub name: &'static str,
+    /// What the picker shows. The name itself when the table gives none.
+    pub label: &'static str,
+    pub category: Category,
+    /// Sub-group header inside the category; empty for none.
+    pub sub: &'static str,
     pub unit: Unit,
     /// Decode diag fields with this formula instead of the ECU's formula byte.
     /// For ECUs that send a wrong one. None in the seed.
@@ -77,6 +143,9 @@ impl ValueDef {
     pub fn new(name: &'static str, unit: Unit) -> Self {
         ValueDef {
             name,
+            label: name,
+            category: Category::Other,
+            sub: "",
             unit,
             formula: None,
             providers: Vec::new(),
@@ -98,6 +167,58 @@ impl ValueDef {
     pub fn formula(mut self, f: u8) -> Self {
         self.formula = Some(f);
         self
+    }
+    pub fn label(mut self, label: &'static str) -> Self {
+        self.label = label;
+        self
+    }
+    pub fn place(mut self, category: Category, sub: &'static str) -> Self {
+        self.category = category;
+        self.sub = sub;
+        self
+    }
+    /// Engine `[pdf]` locations; groups 3 and 113 are `[trace]`.
+    pub fn engine(mut self, locs: &[(u8, u8)]) -> Self {
+        for &(group, field) in locs {
+            let basis = if TRACE_GROUPS.contains(&group) {
+                Basis::EnginePdfTrace
+            } else {
+                Basis::EnginePdf
+            };
+            self = self.diag(ENGINE, group, field, basis);
+        }
+        self
+    }
+    /// Transmission `[trans]` locations.
+    pub fn trans(mut self, locs: &[(u8, u8)]) -> Self {
+        for &(group, field) in locs {
+            self = self.diag(TRANSMISSION, group, field, Basis::TransmissionPdf);
+        }
+        self
+    }
+    /// Haldex `[awd]` locations.
+    pub fn awd(mut self, locs: &[(u8, u8)]) -> Self {
+        for &(group, field) in locs {
+            self = self.diag(HALDEX, group, field, Basis::AwdPdf);
+        }
+        self
+    }
+
+    /// The unit to show: the expected one, or `""` when the ECU decides.
+    pub fn unit_label(&self) -> &'static str {
+        match self.unit {
+            Unit::Expect(u) => u,
+            Unit::Reported => "",
+        }
+    }
+
+    /// Whether reading this value costs polling (no ICAN provider).
+    pub fn is_diag(&self) -> bool {
+        self.ican_name().is_none()
+            && self
+                .providers
+                .iter()
+                .any(|p| matches!(p, Provider::Diag { .. }))
     }
 
     /// First ICAN provider, if any.
@@ -185,100 +306,19 @@ impl Catalog {
 
 /// TP2 ID of the engine. Proven `[trace]`.
 pub const ENGINE: u8 = 0x01;
+/// TP2 ID the old code used for the DSG. Not checked against the install list.
+pub const TRANSMISSION: u8 = 0x02;
 /// TP2 ID the old code used for the Haldex. Guess, see `[awd]`.
 pub const HALDEX: u8 = 0x0A;
+/// Engine groups seen in `[trace]`.
+const TRACE_GROUPS: [u8; 2] = [3, 113];
 
-/// The seed table. Modest on purpose: the values the old dashboards used,
-/// with ICAN names that carpi-signals already emits.
+mod seed;
+
+/// The seed table: every value carpi-signals emits, with its diag
+/// locations where it has any, then the diag-only values.
 pub fn seed() -> Vec<ValueDef> {
-    use Basis::{AwdPdf, EnginePdf, EnginePdfTrace};
-    use Unit::{Expect, Reported};
-    const E: u8 = ENGINE;
-    const H: u8 = HALDEX;
-    let mut v = vec![
-        // ICAN first; diag locations kept so the catalog says where else it lives.
-        ValueDef::new("engine.rpm", Expect("rpm"))
-            .ican("engine.rpm")
-            .diag(E, 3, 1, EnginePdfTrace)
-            .diag(E, 113, 1, EnginePdfTrace),
-        ValueDef::new("engine.coolant_c", Expect("°C"))
-            .ican("engine.coolant_c")
-            .diag(E, 1, 2, EnginePdf)
-            .diag(E, 4, 3, EnginePdf),
-        ValueDef::new("vehicle.speed_kmh", Expect("km/h"))
-            .ican("vehicle.speed_kmh")
-            .diag(E, 5, 3, EnginePdf),
-        ValueDef::new("ambient.outside_temp_c", Reported).ican("ambient.outside_temp_c"),
-        ValueDef::new("power.battery_v", Reported).ican("power.battery_v"),
-        // Engine, diag only.
-        ValueDef::new("engine.maf_gs", Expect("g/s"))
-            .diag(E, 3, 2, EnginePdfTrace)
-            .diag(E, 2, 4, EnginePdf),
-        ValueDef::new("engine.throttle_pct", Expect("%"))
-            .diag(E, 3, 3, EnginePdfTrace)
-            .diag(E, 113, 3, EnginePdfTrace),
-        ValueDef::new("engine.ignition_timing_deg", Expect("deg"))
-            .diag(E, 3, 4, EnginePdfTrace)
-            .diag(E, 10, 4, EnginePdf),
-        ValueDef::new("engine.load_pct", Expect("%"))
-            .diag(E, 113, 2, EnginePdfTrace)
-            .diag(E, 115, 2, EnginePdf)
-            .diag(E, 2, 2, EnginePdf),
-        ValueDef::new("engine.atmospheric_mbar", Expect("mbar")).diag(E, 113, 4, EnginePdfTrace),
-        // Absolute, per the PDF.
-        ValueDef::new("engine.boost.actual", Expect("mbar"))
-            .diag(E, 115, 4, EnginePdf)
-            .diag(E, 118, 4, EnginePdf),
-        ValueDef::new("engine.boost.specified", Expect("mbar"))
-            .diag(E, 115, 3, EnginePdf)
-            .diag(E, 117, 4, EnginePdf),
-        ValueDef::new("engine.n75_duty_pct", Expect("%"))
-            .diag(E, 114, 4, EnginePdf)
-            .diag(E, 118, 3, EnginePdf),
-        ValueDef::new("engine.intake_temp_c", Expect("°C"))
-            .diag(E, 4, 4, EnginePdf)
-            .diag(E, 6, 3, EnginePdf)
-            .diag(E, 102, 3, EnginePdf),
-        ValueDef::new("engine.oil_temp_c", Expect("°C")).diag(E, 134, 1, EnginePdf),
-        // Old code accepted this only with a time unit; same here.
-        ValueDef::new("engine.injection_ms", Expect("ms"))
-            .diag(E, 2, 3, EnginePdf)
-            .diag(E, 102, 4, EnginePdf),
-        ValueDef::new("engine.fuel_rail.actual_bar", Expect("bar")).diag(E, 106, 2, EnginePdf),
-        ValueDef::new("engine.fuel_rail.specified_bar", Expect("bar")).diag(E, 106, 1, EnginePdf),
-        ValueDef::new("engine.pedal_pct", Expect("%"))
-            .diag(E, 62, 3, EnginePdf)
-            .diag(E, 63, 1, EnginePdf),
-        // Unit not in the PDF: take the ECU's.
-        ValueDef::new("engine.lambda.actual", Reported).diag(E, 31, 1, EnginePdf),
-        ValueDef::new("engine.lambda.specified", Reported).diag(E, 31, 2, EnginePdf),
-        // ECU's terminal 30; not the BCM battery reading on ICAN.
-        ValueDef::new("engine.terminal30_v", Expect("V"))
-            .diag(E, 4, 2, EnginePdf)
-            .diag(E, 61, 2, EnginePdf),
-        // Haldex. No Haldex trace exists, so units are whatever it reports.
-        ValueDef::new("awd.oil_temp_c", Reported).diag(H, 1, 1, AwdPdf),
-        ValueDef::new("awd.plate_temp_c", Reported).diag(H, 1, 2, AwdPdf),
-        ValueDef::new("awd.supply_v", Reported).diag(H, 1, 3, AwdPdf),
-        ValueDef::new("awd.oil_pressure_bar", Reported).diag(H, 3, 1, AwdPdf),
-        // The old catalog flagged this one estimated.
-        ValueDef::new("awd.estimated_torque_nm", Reported).diag(H, 3, 2, AwdPdf),
-        ValueDef::new("awd.valve_opening_pct", Reported).diag(H, 3, 3, AwdPdf),
-        ValueDef::new("awd.valve_current", Reported).diag(H, 3, 4, AwdPdf),
-    ];
-    // Knock retard per cylinder: group 20 fields 1-4 `[pdf]`.
-    for (c, name) in [
-        "engine.timing_retard.cyl1_deg",
-        "engine.timing_retard.cyl2_deg",
-        "engine.timing_retard.cyl3_deg",
-        "engine.timing_retard.cyl4_deg",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        v.push(ValueDef::new(name, Expect("deg")).diag(E, 20, c as u8 + 1, EnginePdf));
-    }
-    v
+    seed::seed()
 }
 
 #[cfg(test)]
@@ -288,9 +328,97 @@ mod tests {
     #[test]
     fn seed_is_valid() {
         let c = Catalog::seed();
-        assert!(c.len() >= 30);
+        assert!(c.len() >= 400);
         assert_eq!(c.get("engine.rpm").unwrap().ican_name(), Some("engine.rpm"));
         assert!(c.get("engine.maf_gs").unwrap().ican_name().is_none());
+    }
+
+    #[test]
+    fn every_value_is_labelled_and_placed() {
+        for d in Catalog::seed().iter() {
+            assert!(!d.label.is_empty() && d.label != d.name, "{}", d.name);
+            assert!(!d.sub.is_empty(), "{}", d.name);
+            assert_ne!(d.category, Category::PhoneNav, "{}", d.name);
+        }
+    }
+
+    #[test]
+    fn table_is_in_picker_order() {
+        // Category order, and each sub-group in one run.
+        let c = Catalog::seed();
+        let defs: Vec<_> = c.iter().collect();
+        let rank = |cat| Category::ALL.iter().position(|&x| x == cat).unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        for w in defs.windows(2) {
+            assert!(rank(w[0].category) <= rank(w[1].category), "{}", w[1].name);
+            if (w[0].category, w[0].sub) != (w[1].category, w[1].sub) {
+                assert!(seen.insert((w[0].category, w[0].sub)), "{} split", w[0].sub);
+            }
+        }
+    }
+
+    /// A watch subscribes names as prefixes, and every catalog value under a
+    /// prefix gets a diag subscription. So no polled value may start with
+    /// another name, or with a prefix the LIVI bridge subscribes
+    /// (`livi-carpi/src/values.rs`).
+    #[test]
+    fn no_polled_value_hides_under_a_prefix() {
+        const BRIDGE: [&str; 14] = [
+            "vehicle.speed_kmh",
+            "vehicle.odometer_km",
+            "engine.rpm",
+            "engine.coolant_c",
+            "power.battery_v",
+            "fuel.",
+            "brakes.",
+            "trans.selector",
+            "lights.",
+            "body.",
+            "ambient.outside_temp_c",
+            "steering.angle_deg",
+            "light.night",
+            "light.dim_display_pct",
+        ];
+        let c = Catalog::seed();
+        let names: Vec<_> = c.iter().map(|d| d.name).collect();
+        for d in c.iter().filter(|d| d.is_diag()) {
+            for p in names.iter().copied().chain(BRIDGE) {
+                assert!(
+                    p == d.name || !d.name.starts_with(p),
+                    "{} starts with {p}",
+                    d.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn modules_and_basis() {
+        let c = Catalog::seed();
+        let has = |name: &str, m: u8, b: Basis| {
+            c.get(name).unwrap().providers.iter().any(
+                |p| matches!(*p, Provider::Diag { module, basis, .. } if module == m && basis == b),
+            )
+        };
+        assert!(has("engine.rpm", ENGINE, Basis::EnginePdfTrace));
+        assert!(has("engine.rpm", ENGINE, Basis::EnginePdf));
+        assert!(has(
+            "trans.fluid_temp_c",
+            TRANSMISSION,
+            Basis::TransmissionPdf
+        ));
+        assert!(has(
+            "trans.k1.pressure_bar",
+            TRANSMISSION,
+            Basis::TransmissionPdf
+        ));
+        assert!(has("awd.oil_temp_c", HALDEX, Basis::AwdPdf));
+        // Oil temperature now has ICAN 0x555 first, so it's never polled.
+        assert_eq!(
+            c.get("engine.oil_temp_c").unwrap().ican_name(),
+            Some("engine.oil_temp_c")
+        );
+        assert!(c.get("trans.fluid_temp_c").unwrap().is_diag());
     }
 
     #[test]

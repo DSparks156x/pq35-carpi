@@ -29,7 +29,7 @@ pub mod catalog;
 mod diag;
 mod job;
 
-pub use catalog::{Basis, Catalog, CatalogError, Provider, Unit, ValueDef};
+pub use catalog::{Basis, Catalog, CatalogError, Category, Provider, Unit, ValueDef};
 pub use diag::{
     ChannelError, ChannelState, ChannelStatus, Config, Degraded, Diag, Event, Mode, ModeError,
     Sample, Source, SubError, SubId, SubStatus, Subscription, VCDS_TESTER_RX,
