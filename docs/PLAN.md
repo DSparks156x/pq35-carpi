@@ -195,6 +195,8 @@ Drew's design (2026-11-07). The stock pattern is bad: with the scroll at minimum
 - **Night** (dark theme for LIVI, AA and CarPlay): a separate threshold on ambient, with hysteresis and a minimum dwell. Headlights only as a fallback when both sensors are invalid.
 - **Output**: an absolute `BB` level, sent only on a change of 2 % or more, at most about 2 Hz.
 
+**Defaults** (Drew: it should just work, options out of the way): auto brightness on, learned mode on, starting from a default curve whose night end sits around 10–15 %; scroll trim on but gentle. The firmware treats `BB` 1–5 as 6, and 6 is already darker than most want, so learning can go down to 6 but the default doesn't. The page shows the plot and a brightness nudge first; manual curve editing is an advanced switch.
+
 **Auto brightness off**: send `BB 00` once to hand control back to the RNS-E, then send nothing; the RNS-E does its own thing.
 
 **Light settings page** (in the fork):
@@ -210,7 +212,6 @@ Settings live in carpid's settings API; learned points are persisted by carpid.
 **Consumers**: `carpi-rnse` (the BB level), the bridge (LIVI dark mode, AA/CarPlay night sensor), and the DIS. Nothing else decides day or night.
 
 Open:
-- Is the firmware's `BB` floor (1–5 act as the stock minimum 6) a hardware limit, or could the firmware go darker?
 - One capture driving from daylight into dark, to seed the default curve.
 
 ### 2.7 DIS
