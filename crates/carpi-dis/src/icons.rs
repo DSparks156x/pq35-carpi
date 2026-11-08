@@ -178,6 +178,39 @@ pub fn draw(m: Maneuver, left_hand_traffic: bool, w: usize, h: usize, x0: usize,
     Art { w, h, px }
 }
 
+/// Icon `m` scaled to `size` x `size` px (box-filtered, 50 % coverage) at
+/// (`x0`, `y0`) in a `w` x `h` box. For layouts that need a smaller icon.
+pub fn draw_scaled(
+    m: Maneuver,
+    left_hand_traffic: bool,
+    w: usize,
+    h: usize,
+    x0: usize,
+    y0: usize,
+    size: usize,
+) -> Art {
+    assert!(x0 + size <= w && y0 + size <= h, "icon box too small");
+    let bits = mask(&m.icon_name(left_hand_traffic));
+    let at = |x: usize, y: usize| bits[y * SIZE / 8 + x / 8] & (0x80 >> (x % 8)) != 0;
+    let mut px = vec![false; w * h];
+    for oy in 0..size {
+        for ox in 0..size {
+            let (sx0, sx1) = (ox * SIZE / size, ((ox + 1) * SIZE).div_ceil(size));
+            let (sy0, sy1) = (oy * SIZE / size, ((oy + 1) * SIZE).div_ceil(size));
+            let mut on = 0;
+            let mut n = 0;
+            for y in sy0..sy1.min(SIZE) {
+                for x in sx0..sx1.min(SIZE) {
+                    on += usize::from(at(x, y));
+                    n += 1;
+                }
+            }
+            px[(y0 + oy) * w + x0 + ox] = on * 2 >= n.max(1);
+        }
+    }
+    Art { w, h, px }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

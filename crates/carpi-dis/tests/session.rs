@@ -281,6 +281,7 @@ fn nav_with_refine_paces_strokes() {
             roundabout_angle: Some(45),
             distance_m: Some(420.0),
             road: Some("Very long road name for the marquee".into()),
+            lanes: Vec::new(),
         },
     );
     w.run(ms(100));

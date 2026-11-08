@@ -133,6 +133,7 @@ fn nav_input(store: &Store, now: Instant) -> NavInput {
         roundabout_angle: store.get_num("nav.roundabout_angle", now).map(|a| a as i32),
         distance_m: store.get_num("nav.distance_m", now),
         road: text(store, "nav.road", now),
+        ..Default::default()
     }
 }
 

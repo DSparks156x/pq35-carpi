@@ -8,12 +8,12 @@
 //! from the start and for the whole run.
 
 use carpi_can::Frame;
-use carpi_dis::screens::nav::NavInput;
 use carpi_dis::icons::Art;
 use carpi_dis::image::dither;
 use carpi_dis::screens::call::CallInput;
 use carpi_dis::screens::egg::Egg;
 use carpi_dis::screens::media::{ART, MediaInput, MediaLayout};
+use carpi_dis::screens::nav::NavInput;
 use carpi_dis::screens::readings::{ReadingCell, ReadingsInput, ReadingsPage};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::{Dis, DisConfig, ScreenId, SessionEvent};
@@ -64,7 +64,10 @@ fn bench_eggs() -> &'static [Egg] {
             .filter(|p| p.extension().is_some_and(|e| e == "egg"))
             .collect();
         files.sort();
-        files.iter().filter_map(|f| Egg::parse(&std::fs::read(f).ok()?)).collect()
+        files
+            .iter()
+            .filter_map(|f| Egg::parse(&std::fs::read(f).ok()?))
+            .collect()
     })
 }
 
@@ -222,7 +225,11 @@ pub fn media_at(t: Duration) -> MediaInput {
         into - 3
     };
     let base = 20 + (k as u64) * 40;
-    let pos = if into >= 15 { (base + played).saturating_sub(30) } else { base + played };
+    let pos = if into >= 15 {
+        (base + played).saturating_sub(30)
+    } else {
+        base + played
+    };
     MediaInput {
         title: Some(title.into()),
         artist: Some(artist.into()),
@@ -234,7 +241,6 @@ pub fn media_at(t: Duration) -> MediaInput {
         cover: Some((s / TRACK_SECS, full_cover((s / TRACK_SECS) as usize))),
     }
 }
-
 
 pub fn stop_file() -> std::path::PathBuf {
     std::env::var_os("CARPI_BENCH_STOP").map_or_else(|| "dis-bench.stop".into(), Into::into)
@@ -312,6 +318,37 @@ pub fn nav_at(t: Duration) -> NavInput {
         roundabout_angle: angle,
         distance_m: Some(d.max(0.0)),
         road: Some(road.into()),
+        lanes: bench_lanes(m, side),
+    }
+}
+
+/// Plausible lanes per scripted maneuver, left to right.
+pub fn bench_lanes(m: &str, side: Option<&str>) -> Vec<carpi_dis::lanes::Lane> {
+    let a = |shape: &str, hl: bool| carpi_dis::lanes::LaneArrow {
+        shape: shape.into(),
+        highlighted: hl,
+    };
+    let right = side == Some("right");
+    match m {
+        "turn" if right => vec![
+            vec![a("normal_left", false)],
+            vec![a("straight", false)],
+            vec![a("straight", false), a("normal_right", true)],
+            vec![a("normal_right", true)],
+        ],
+        "turn" => vec![
+            vec![a("uturn_left", false), a("normal_left", true)],
+            vec![a("normal_left", true)],
+            vec![a("straight", false)],
+            vec![a("straight", false)],
+            vec![a("normal_right", false)],
+        ],
+        "slight_turn" => vec![
+            vec![a("straight", false)],
+            vec![a("straight", false)],
+            vec![a("slight_left", true)],
+        ],
+        _ => Vec::new(),
     }
 }
 
@@ -550,7 +587,10 @@ impl Bench {
             if self.screens == Screens::Accel && now >= self.next_speed {
                 self.dis.set_speed(now, speed_at(now - self.t0));
                 // 50 ms +- 10 ms, like a real bus rate with jitter.
-                self.speed_n = self.speed_n.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                self.speed_n = self
+                    .speed_n
+                    .wrapping_mul(1_103_515_245)
+                    .wrapping_add(12_345);
                 let jitter = (self.speed_n >> 16) % 21;
                 self.next_speed = now + Duration::from_millis(40 + u64::from(jitter));
             }
@@ -580,7 +620,12 @@ impl Bench {
                 let mut b = Op::Clear(carpi_dis::proto::FULL).encode();
                 b.push(0x39);
                 let say = Some(format!("probe round {round}: blank"));
-                (vec![msg(b)], ProbeStage::Bar(0), Duration::from_secs(2), say)
+                (
+                    vec![msg(b)],
+                    ProbeStage::Bar(0),
+                    Duration::from_secs(2),
+                    say,
+                )
             }
             ProbeStage::Bar(i) => {
                 let next = if i + 1 >= PROBE_SEGMENTS {
@@ -638,7 +683,11 @@ impl Bench {
                 // Loop for about 15 s of the 25 s track.
                 let len: Duration = egg.frames.iter().map(|(_, d)| *d).sum();
                 let loops = (15.0 / len.as_secs_f64().max(0.1)).ceil() as u32;
-                let msg = format!("egg {} ({} frames, {loops} loops)", track as usize % eggs.len() + 1, egg.frames.len());
+                let msg = format!(
+                    "egg {} ({} frames, {loops} loops)",
+                    track as usize % eggs.len() + 1,
+                    egg.frames.len()
+                );
                 self.say(now, msg);
                 self.dis.play_egg(now, egg, loops);
             }
@@ -662,9 +711,7 @@ impl Bench {
             | Screens::MediaArt
             | Screens::Call
             | Screens::Accel
-            | Screens::Eggs => {
-                ScreenId::Readings
-            }
+            | Screens::Eggs => ScreenId::Readings,
         };
         if self.screens != Screens::Readings {
             self.dis.set_nav(now, nav_at(t));

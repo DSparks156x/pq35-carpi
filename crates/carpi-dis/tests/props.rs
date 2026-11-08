@@ -242,6 +242,7 @@ fn random_screen_inputs_never_break_limits() {
                     roundabout_angle: Some(r.range(0, 359) as i32 - 180),
                     distance_m: r.coin(90).then(|| r.range(0, 20_000) as f64),
                     road: Some(roads[r.range(0, 3) as usize].into()),
+                    lanes: Vec::new(),
                 },
             );
             let mut values = [None; 8];

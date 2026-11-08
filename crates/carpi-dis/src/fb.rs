@@ -5,8 +5,9 @@
 //! Model choices (all from `[dis]` §2 unless noted):
 //! - `52` sets the clip; flag 0x02 clears, 0x03 fills. Bench.
 //! - `57` glyphs advance by the measured widths; opaque ink paints the advance
-//!   over a 14 px cell (native 12x14 cell). Glyph pixels aren't modelled: the
-//!   text layer records the character at its left cell instead.
+//!   over a 14 px cell (native 12x14 cell), then the captured glyph pixels
+//!   (`glyphs`). The text layer also records the character at its left cell,
+//!   for readable ASCII goldens.
 //! - `55` rows are 2x2 blocks per logical bit; mode sets the ROP latch. Bench.
 //! - `63` V = left px column, H = top px row, dot = top-left px; XOR toggles,
 //!   other modes set (set/draw guess). Bench planes model (`dc/native_bitmap.py`).
@@ -48,6 +49,11 @@ impl Fb {
 
     pub fn pixel(&self, x: usize, y: usize) -> bool {
         self.px[y * PX_W + x]
+    }
+
+    /// The whole centre, 128x96 px, row-major, lit = true.
+    pub fn pixels(&self) -> &[bool] {
+        &self.px
     }
 
     pub fn apply(&mut self, msg: &[u8]) {
@@ -124,6 +130,25 @@ impl Fb {
                             self.text[i] = Some(' ');
                         }
                     }
+                }
+            }
+            // Glyph ink from the captured charts (`glyphs`).
+            for gy in 0..crate::glyphs::H {
+                let bits = crate::glyphs::row(font, b, gy);
+                for gx in 0..crate::glyphs::W {
+                    if bits & (0x8000 >> gx) == 0 {
+                        continue;
+                    }
+                    let (px, py) = (cx + gx, ly * 2 + gy);
+                    if !self.in_clip_px(px, py) {
+                        continue;
+                    }
+                    let p = &mut self.px[py * PX_W + px];
+                    *p = match ink {
+                        Ink::Black => false,
+                        Ink::Xor => !*p,
+                        Ink::Opaque | Ink::Transparent => true,
+                    };
                 }
             }
             let c = display_char(font, b);
