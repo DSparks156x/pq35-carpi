@@ -98,8 +98,14 @@ pub struct NavConfig {
     /// `Flip`: lanes this long, then the road this long.
     pub flip_lanes: Duration,
     pub flip_road: Duration,
-    /// Show the trip-info pocket.
+    /// Show the trip-info pocket at all (its pages below).
     pub pocket: bool,
+    /// Distance to the maneuver (value and unit column).
+    pub show_distance: bool,
+    /// Pocket pages.
+    pub show_eta: bool,
+    pub show_time_left: bool,
+    pub show_dest_distance: bool,
     pub units: Units,
     pub clock: Clock,
     pub style: NavStyle,
@@ -144,6 +150,10 @@ impl Default for NavConfig {
             flip_lanes: Duration::from_secs(4),
             flip_road: Duration::from_secs(2),
             pocket: true,
+            show_distance: true,
+            show_eta: true,
+            show_time_left: true,
+            show_dest_distance: true,
             units: Units::Auto,
             clock: Clock::Auto,
             style: NavStyle::Fancy,
@@ -235,10 +245,16 @@ pub fn bar_level(d: Option<f64>, range: f64) -> usize {
 /// that fits is shown, a page with none that fits is skipped.
 pub fn pocket_pages(i: &NavInput, cfg: &NavConfig) -> Vec<Vec<String>> {
     let mut out = Vec::new();
-    if let Some(e) = i.eta.as_ref().filter(|e| !e.is_empty()) {
+    if !cfg.pocket {
+        return out;
+    }
+    if let Some(e) = i.eta.as_ref().filter(|e| !e.is_empty() && cfg.show_eta) {
         out.push(eta_forms(e, cfg.clock));
     }
-    if let Some(s) = i.time_to_destination_s.filter(|s| s.is_finite() && *s >= 0.0) {
+    if let Some(s) = i
+        .time_to_destination_s
+        .filter(|s| s.is_finite() && *s >= 0.0 && cfg.show_time_left)
+    {
         let min = (s / 60.0).round() as u64;
         out.push(if min < 60 {
             vec![format!("{min} min"), format!("{min}min"), format!("{min}m")]
@@ -250,7 +266,10 @@ pub fn pocket_pages(i: &NavInput, cfg: &NavConfig) -> Vec<Vec<String>> {
             ]
         });
     }
-    if let Some(d) = i.destination_distance_m.filter(|d| d.is_finite() && *d >= 0.0) {
+    if let Some(d) = i
+        .destination_distance_m
+        .filter(|d| d.is_finite() && *d >= 0.0 && cfg.show_dest_distance)
+    {
         let (v, u) = format_distance_in(Some(d), imperial(i, cfg));
         // Never without its unit (Drew: a bare "9.9" reads as nothing).
         out.push(vec![format!("{v} {u}"), format!("{v}{u}")]);
@@ -262,6 +281,17 @@ pub fn pocket_pages(i: &NavInput, cfg: &NavConfig) -> Vec<Vec<String>> {
 pub const STOCK_ICON: Rect = Rect::new(0, 0, 54, 40);
 /// Stock road row.
 pub const STOCK_ROAD_Y: u8 = 41;
+/// Stock with info: the arrow's area (the fancy icon area, rows 0..37).
+pub const STOCK_INFO_ICON: Rect = Rect::new(0, 0, 40, 38);
+
+/// Stock with no info at all: the RNS-E's own layout (arrow in the 54x40
+/// area, road at y=41). Any info on puts the ROM arrow in the fancy layout.
+pub fn pure_stock(cfg: &NavConfig) -> bool {
+    cfg.style == NavStyle::Stock
+            && !cfg.show_distance
+            && !(cfg.pocket && (cfg.show_eta || cfg.show_time_left || cfg.show_dest_distance))
+            && cfg.lanes == LaneLayout::Off
+}
 
 /// The stock ROM object for a maneuver: `(type, direction)`, see `stock_nav`.
 pub fn stock_object(m: Maneuver, left_hand_traffic: bool) -> (u8, u8) {
@@ -315,6 +345,68 @@ fn stock_records((t, d): (u8, u8)) -> Vec<Op> {
         i += n;
     }
     out
+}
+
+/// A stock arrow recentred in the fancy icon area (0..80 px across, bottom
+/// clear of the road row), for Stock with info shown. Returns the shifted
+/// records and their ink as art in [`ICON`] coordinates (for the pocket).
+fn stock_placed(obj: (u8, u8)) -> (Vec<Op>, Art) {
+    let recs = stock_records(obj);
+    // Ink in centre px.
+    let mut ink = Vec::new();
+    for op in &recs {
+        if let Op::Text { x, y, flags, bytes, .. } = op {
+            let font = Font::from_flags(*flags);
+            for (k, b) in bytes.iter().enumerate() {
+                for gy in 0..crate::glyphs::H {
+                    let row = crate::glyphs::row(font, *b, gy);
+                    for gx in 0..crate::glyphs::W {
+                        if row & (0x8000 >> gx) != 0 {
+                            ink.push((
+                                i32::from(*x) * 2 + (k * 12 + gx) as i32,
+                                i32::from(*y) * 2 + gy as i32,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let (minx, maxx) = ink
+        .iter()
+        .fold((i32::MAX, i32::MIN), |(a, b), (x, _)| (a.min(*x), b.max(*x)));
+    let maxy = ink.iter().map(|(_, y)| *y).max().unwrap_or(0);
+    // Whole logical steps: centre on x=40 px, bottom at most y=75 px.
+    let dx = ((80 - (minx + maxx + 1)) as f32 / 4.0).round() as i32;
+    let dy = ((75 - maxy).min(0) as f32 / 2.0).floor() as i32;
+    let ops = recs
+        .into_iter()
+        .map(|op| match op {
+            Op::Text {
+                clip,
+                x,
+                y,
+                flags,
+                bytes,
+            } => Op::Text {
+                clip,
+                x: (i32::from(x) + dx).clamp(0, 63) as u8,
+                y: (i32::from(y) + dy).clamp(0, 47) as u8,
+                flags,
+                bytes,
+            },
+            other => other,
+        })
+        .collect();
+    let (w, h) = (usize::from(ICON.w) * 2, usize::from(ICON.h) * 2);
+    let mut px = vec![false; w * h];
+    for (x, y) in ink {
+        let (x, y) = (x + dx * 2, y + dy * 2 - i32::from(ICON.y) * 2);
+        if (0..w as i32).contains(&x) && (0..h as i32).contains(&y) {
+            px[y as usize * w + x as usize] = true;
+        }
+    }
+    (ops, Art { w, h, px })
 }
 
 /// The icon as it fills [`ICON`].
@@ -375,7 +467,7 @@ impl NavScreen {
             unit: CentredField::new(UNIT_Y, 40, 56, Font::Prop),
             road: {
                 // Stock: the RNS-E's road row (y=0x29).
-                let y = if cfg.style == NavStyle::Stock { STOCK_ROAD_Y } else { 39 };
+                let y = if pure_stock(&cfg) { STOCK_ROAD_Y } else { 39 };
                 let mut r = ScrollText::new(y, 1, 63, Font::Prop);
                 r.centred = true;
                 r
@@ -455,11 +547,18 @@ impl NavScreen {
             // The RNS-E's own sequence: clear the icon area, then the ROM
             // glyph records. Up to 140 B, more than one message: the clear
             // and the first records go together, the rest follow at once
-            // (the RNS-E splits them too).
+            // (the RNS-E splits them too). With info shown, the arrow sits
+            // recentred in the fancy icon area instead.
+            let obj = stock_object(m, self.cfg.left_hand_traffic);
+            let (area, records) = if pure_stock(&self.cfg) {
+                (STOCK_ICON, stock_records(obj))
+            } else {
+                (STOCK_INFO_ICON, stock_placed(obj).0)
+            };
             let mut groups = Vec::new();
-            let mut ops = vec![Op::Clear(STOCK_ICON)];
+            let mut ops = vec![Op::Clear(area)];
             let mut bytes = 7;
-            for op in stock_records(stock_object(m, self.cfg.left_hand_traffic)) {
+            for op in records {
                 let n = op.encode().len();
                 if bytes + n > 90 {
                     groups.push(Group::new("stock-icon", std::mem::take(&mut ops)));
@@ -476,7 +575,20 @@ impl NavScreen {
         self.icon.set(cx, m, &art)
     }
 
+    /// The icon's ink, whichever style draws it (the pocket fits beside it).
+    fn current_art(&self) -> Art {
+        let m = self.input.maneuver();
+        if self.cfg.style == NavStyle::Stock {
+            stock_placed(stock_object(m, self.cfg.left_hand_traffic)).1
+        } else {
+            icon_art(m, self.cfg.left_hand_traffic)
+        }
+    }
+
     fn distance_groups(&mut self, cx: &Ctx) -> Vec<Group> {
+        if !self.cfg.show_distance {
+            return Vec::new();
+        }
         let (v, u) = format_distance_in(self.input.distance_m, imperial(&self.input, &self.cfg));
         let mut out: Vec<Group> = self.dist.set(cx, "dist", &v).into_iter().collect();
         out.extend(self.unit.set(cx, "unit", u));
@@ -516,7 +628,7 @@ impl NavScreen {
     fn pocket_groups(&mut self, now: Instant, cx: &Ctx) -> Vec<Group> {
         let m = &cx.metrics;
         let pages = if self.cfg.pocket { pocket_pages(&self.input, &self.cfg) } else { Vec::new() };
-        let left = pocket_left(&icon_art(self.input.maneuver(), self.cfg.left_hand_traffic));
+        let left = pocket_left(&self.current_art());
         let room = u16::from(POCKET_RIGHT - left) * 2;
         let fitting: Vec<Vec<u8>> = pages
             .iter()
@@ -547,7 +659,7 @@ impl NavScreen {
 impl Screen for NavScreen {
     fn enter(&mut self, now: Instant, cx: &Ctx) -> Vec<Group> {
         self.icon_shown = None;
-        if self.cfg.style == NavStyle::Stock {
+        if pure_stock(&self.cfg) {
             self.road.reset();
             self.bar.reset();
             self.wake = None;
@@ -575,7 +687,7 @@ impl Screen for NavScreen {
 
     fn update(&mut self, now: Instant, cx: &Ctx) -> Vec<Group> {
         self.wake = None;
-        if self.cfg.style == NavStyle::Stock {
+        if pure_stock(&self.cfg) {
             let mut g = self.bar_groups();
             g.extend(self.road.poll(now, cx, "road"));
             g.extend(self.icon_groups(cx));

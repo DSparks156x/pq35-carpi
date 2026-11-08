@@ -244,11 +244,20 @@ fn nav_stock(out: &Path) {
     let top = Some(("One More".to_string(), "4.5\u{B0}C".to_string()));
     let mut tiles = Vec::new();
     for (name, inp) in cases {
-        for (style, sname) in [(NavStyle::Stock, "stock"), (NavStyle::Fancy, "fancy")] {
-            let mut s = NavScreen::new(NavConfig {
-                style,
-                ..NavConfig::default()
-            });
+        let pure = NavConfig {
+            style: NavStyle::Stock,
+            show_distance: false,
+            pocket: false,
+            lanes: carpi_dis::screens::nav::LaneLayout::Off,
+            ..NavConfig::default()
+        };
+        let info = NavConfig {
+            style: NavStyle::Stock,
+            ..NavConfig::default()
+        };
+        let fancy = NavConfig::default();
+        for (cfg, sname) in [(pure, "stock"), (info, "stock + info"), (fancy, "fancy")] {
+            let mut s = NavScreen::new(cfg);
             let t0 = Instant::now();
             s.set(t0, inp.clone());
             tiles.push(Tile {
@@ -258,7 +267,7 @@ fn nav_stock(out: &Path) {
             });
         }
     }
-    sheet(&tiles, 4, &out.join("nav_stock.png"));
+    sheet(&tiles, 3, &out.join("nav_stock.png"));
 }
 
 /// Media screens with real covers and their real track info: stack layout,
