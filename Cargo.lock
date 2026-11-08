@@ -235,6 +235,8 @@ dependencies = [
  "anyhow",
  "carpi-can",
  "carpi-core",
+ "carpi-input",
+ "carpi-power",
  "carpi-proto",
  "clap",
  "serde",

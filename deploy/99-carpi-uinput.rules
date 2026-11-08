@@ -1,0 +1,4 @@
+# Lets the input group create the carpid virtual keyboard for LIVI.
+# Install: sudo cp deploy/99-carpi-uinput.rules /etc/udev/rules.d/
+#          sudo usermod -aG input $USER   (log out and back in)
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"

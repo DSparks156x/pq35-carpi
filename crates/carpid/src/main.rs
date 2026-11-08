@@ -1,9 +1,12 @@
 //! carpid: the car daemon.
 //!
-//! Step 1 of the plan: read-only. It opens every configured interface,
-//! decodes ICAN into the value store, watches the NM ring, keeps a rolling
-//! capture, and answers the local API. It sends nothing on any bus.
+//! Opens every configured interface, decodes ICAN into the value store,
+//! watches the NM ring, keeps a rolling capture and answers the local API.
+//! The car model decides what to send (RNS-E label/brightness), which keys go
+//! to LIVI, and when to power off; `act` carries that out. Sending and
+//! powering off stay off until enabled in the config.
 
+mod act;
 mod api;
 mod config;
 
@@ -18,7 +21,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
 
 #[derive(Parser)]
-#[command(version, about = "pq35-carpi car daemon (read-only for now)")]
+#[command(version, about = "pq35-carpi car daemon")]
 struct Args {
     /// Config file. Without one, ICAN and diag are both on can0.
     #[arg(long, default_value = "/etc/carpi/carpid.toml")]
@@ -67,6 +70,11 @@ async fn main() -> anyhow::Result<()> {
     let ifaces = cfg.ifaces();
     let recorder = Recorder::new(Duration::from_secs(cfg.recorder.minutes * 60), 2_000_000);
     let mut car = Car::new(ifaces.clone(), recorder, cfg.recorder.dir.clone());
+    let mut act = act::Actuators::new(
+        &cfg,
+        ifaces.iter().map(|i| i.name.clone()).collect(),
+        args.replay.is_some(),
+    );
 
     let (tx, mut rx) = mpsc::channel::<Msg>(4096);
 
@@ -119,10 +127,16 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Msg::ConnClosed(conn) => car.conn_closed(conn, Instant::now()),
                 }
+                for o in car.drain_outputs() {
+                    act.act(o, &car);
+                }
             }
             _ = tick.tick() => {
                 for ev in car.tick(Instant::now()) {
                     info!("{}: bus {} -> {}", ev.iface, ev.transition.from, ev.transition.to);
+                }
+                for o in car.drain_outputs() {
+                    act.act(o, &car);
                 }
             }
             _ = tokio::signal::ctrl_c() => {

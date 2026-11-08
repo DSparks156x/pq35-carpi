@@ -245,6 +245,16 @@ impl Car {
         }
     }
 
+    /// Saves the rolling capture under the capture directory; returns a
+    /// line for the log.
+    pub fn save_default_capture(&self) -> String {
+        let path = self.capture_dir.join(capture_name());
+        match self.save_capture(&path) {
+            Ok(n) => format!("{n} frames -> {}", path.display()),
+            Err(e) => format!("saving {} failed: {e}", path.display()),
+        }
+    }
+
     pub fn save_capture(&self, path: &Path) -> std::io::Result<usize> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;

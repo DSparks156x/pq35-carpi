@@ -15,3 +15,15 @@ iface = "can0"
 [recorder]
 minutes = 10
 # dir = "/home/pi/captures"
+
+# Off: frames the gate approves (RNS-E label/brightness) are logged, not sent.
+[tx]
+enabled = false
+
+# Off: when the bus goes silent with Kl15 off, the shutdown is logged, not run.
+[power]
+shutdown = false
+
+# Keys to LIVI through a uinput keyboard (needs deploy/99-carpi-uinput.rules).
+[input]
+uinput = true

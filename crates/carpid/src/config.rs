@@ -17,6 +17,15 @@ use std::path::{Path, PathBuf};
 /// [recorder]
 /// minutes = 10
 /// dir = "/var/lib/carpi/captures"
+///
+/// [tx]
+/// enabled = false      # off: gate-approved frames are logged, not sent
+///
+/// [power]
+/// shutdown = false     # off: a shutdown request is logged, not acted on
+///
+/// [input]
+/// uinput = true        # keys to LIVI through a virtual keyboard
 /// ```
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +35,45 @@ pub struct Config {
     pub api: Api,
     #[serde(default)]
     pub recorder: RecorderCfg,
+    #[serde(default)]
+    pub tx: Tx,
+    #[serde(default)]
+    pub power: Power,
+    #[serde(default)]
+    pub input: Input,
+}
+
+/// Off by default: the first runs on the car log what they would send.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tx {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+/// Off by default: the first runs on the car log the shutdown request.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Power {
+    #[serde(default)]
+    pub shutdown: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Input {
+    #[serde(default = "yes")]
+    pub uinput: bool,
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Input { uinput: true }
+    }
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +163,9 @@ impl Config {
             bus,
             api: Api::default(),
             recorder: RecorderCfg::default(),
+            tx: Tx::default(),
+            power: Power::default(),
+            input: Input::default(),
         }
     }
 
