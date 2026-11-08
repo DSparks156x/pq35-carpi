@@ -9,9 +9,9 @@ pub mod diagnostics;
 pub mod display;
 
 pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
-pub use control::{AmbientSource, CurveMode, DarkSetup, DarkSource, LightSetup, Location, Output};
 pub use carpi_dis::ScreenId as DisScreen;
 pub use carpi_dis::screens::media::MediaLayout as DisMediaLayout;
+pub use control::{AmbientSource, CurveMode, DarkSetup, DarkSource, LightSetup, Location, Output};
 pub use display::{DisSetup, Reading};
 
 use carpi_can::RxFrame;
