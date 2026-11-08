@@ -951,6 +951,11 @@ pub enum BridgeUpdate {
     Media {
         media: Option<MediaState>,
     },
+    /// The playing track's cover, sent only when it changes. `None`: no
+    /// cover, or one over [`MEDIA_ART_MAX_BYTES`].
+    MediaArt {
+        art: Option<MediaArt>,
+    },
     Call {
         call: Option<CallState>,
     },
@@ -1045,6 +1050,47 @@ pub struct MediaState {
     pub duration_ms: Option<u64>,
 }
 
+/// Largest cover LIVI forwards, in image bytes (before base64). A bigger one
+/// goes as `MediaArt { art: None }`.
+pub const MEDIA_ART_MAX_BYTES: usize = 1024 * 1024;
+
+/// A track's cover as the phone sent it: the original image bytes, not
+/// re-encoded. Android Auto and CarPlay both send JPEG or PNG.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MediaArt {
+    /// [`media_art_id`] of the image bytes: changes when the cover does.
+    pub id: u64,
+    /// `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/bmp`, or
+    /// `application/octet-stream` when the bytes match none of them.
+    pub mime: String,
+    /// The image bytes, standard base64 with padding.
+    pub data_base64: String,
+}
+
+/// FNV-1a 64 of a cover's image bytes, kept to 53 bits so it survives an
+/// `f64` (the value store's numbers).
+pub fn media_art_id(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h & ((1 << 53) - 1)
+}
+
+/// The image type from its first bytes.
+pub fn media_art_mime(bytes: &[u8]) -> &'static str {
+    let webp = bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(&b"WEBP"[..]);
+    match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
+        [0x89, b'P', b'N', b'G', ..] => "image/png",
+        [b'G', b'I', b'F', b'8', ..] => "image/gif",
+        _ if webp => "image/webp",
+        [b'B', b'M', ..] => "image/bmp",
+        _ => "application/octet-stream",
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct CallState {
     /// `"ringing"`, `"dialing"`, `"active"`, `"held"`.
@@ -1133,6 +1179,29 @@ mod tests {
         let n = body_len(bytes[..4].try_into().unwrap()).unwrap();
         assert_eq!(n, bytes.len() - 4);
         assert_eq!(decode::<Request>(&bytes[4..]).unwrap(), r);
+    }
+
+    #[test]
+    fn media_art_roundtrip_and_shape() {
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let art = MediaArt {
+            id: media_art_id(&png),
+            mime: media_art_mime(&png).into(),
+            data_base64: "iVBORw0KGgo=".into(),
+        };
+        assert_eq!(art.mime, "image/png");
+        assert!(art.id < 1 << 53);
+        assert_ne!(art.id, media_art_id(&png[..7]));
+        let r = Request::Bridge {
+            update: Box::new(BridgeUpdate::MediaArt { art: Some(art) }),
+        };
+        let bytes = encode(&r);
+        assert_eq!(decode::<Request>(&bytes[4..]).unwrap(), r);
+        let json = serde_json::to_string(&BridgeUpdate::MediaArt { art: None }).unwrap();
+        assert_eq!(json, r#"{"kind":"media_art","art":null}"#);
+        assert_eq!(media_art_mime(&[0xFF, 0xD8, 0xFF, 0xE0]), "image/jpeg");
+        assert_eq!(media_art_mime(b"RIFF\0\0\0\0WEBPVP8 "), "image/webp");
+        assert_eq!(media_art_mime(&[1, 2]), "application/octet-stream");
     }
 
     #[test]

@@ -77,6 +77,22 @@ pub fn apply(store: &mut Store, update: &BridgeUpdate, now: Instant) {
             );
         }
         BridgeUpdate::NavIcon { png_base64 } => set("nav.icon_png_base64", text(png_base64)),
+        // Image bytes first, id last: a reader keyed on `media.art_id` finds
+        // the bytes and mime already in place.
+        BridgeUpdate::MediaArt { art } => {
+            set(
+                "media.art_base64",
+                art.as_ref().map(|a| Value::Text(a.data_base64.clone())),
+            );
+            set(
+                "media.art_mime",
+                art.as_ref().map(|a| Value::Text(a.mime.clone())),
+            );
+            set(
+                "media.art_id",
+                art.as_ref().map(|a| Value::Num(a.id as f64)),
+            );
+        }
         BridgeUpdate::Media { media } => {
             let m = media.clone().unwrap_or_default();
             set("media.active", Some(Value::Bool(media.is_some())));
@@ -211,5 +227,44 @@ mod tests {
         clear(&mut s, now);
         assert_eq!(s.get("ui.focus", now), None);
         assert_eq!(s.get_bool("projection.connected", now), Some(false));
+    }
+
+    #[test]
+    fn media_art_lands_and_clears() {
+        let now = Instant::now();
+        let mut s = Store::new();
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0];
+        let art = carpi_proto::MediaArt {
+            id: carpi_proto::media_art_id(&jpeg),
+            mime: "image/jpeg".into(),
+            data_base64: "/9j/4A==".into(),
+        };
+        apply(&mut s, &BridgeUpdate::MediaArt { art: Some(art) }, now);
+        assert_eq!(
+            s.get("media.art_base64", now),
+            Some(&Value::Text("/9j/4A==".into()))
+        );
+        assert_eq!(
+            s.get("media.art_mime", now),
+            Some(&Value::Text("image/jpeg".into()))
+        );
+        let id = s.get_num("media.art_id", now).unwrap();
+        assert_eq!(id as u64, carpi_proto::media_art_id(&jpeg));
+
+        apply(&mut s, &BridgeUpdate::MediaArt { art: None }, now);
+        for key in ["media.art_base64", "media.art_mime", "media.art_id"] {
+            assert_eq!(s.get(key, now), None, "{key}");
+        }
+
+        // LIVI going away clears it too.
+        let art = carpi_proto::MediaArt {
+            id: 1,
+            mime: "image/png".into(),
+            data_base64: "iVBO".into(),
+        };
+        apply(&mut s, &BridgeUpdate::MediaArt { art: Some(art) }, now);
+        clear(&mut s, now);
+        assert_eq!(s.get("media.art_id", now), None);
+        assert_eq!(s.get("media.art_base64", now), None);
     }
 }
