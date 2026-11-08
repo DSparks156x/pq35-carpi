@@ -62,6 +62,12 @@ use std::path::{Path, PathBuf};
 /// units = "auto"       # or "metric", "imperial" (auto: as the phone shows)
 /// clock = "auto"       # or "12h", "24h" (auto: 12 h if the phone's ETA has AM/PM)
 /// nav_style = "fancy"  # or "stock" (the RNS-E's own look)
+/// nav_distance = true  # nav info, either look: maneuver distance column,
+/// nav_pocket = true    #   the pocket (all of it) and its pages,
+/// nav_eta = true
+/// nav_time_left = true
+/// nav_dest_distance = true
+/// nav_lanes = "flip"   # or "swap" (lanes instead of the road near a turn), "off"
 /// # readings = [ { key = "engine.rpm", label = "RPM", decimals = 0, scale = 1.0 }, ... ]
 /// # Named pages (the wheel steps through them); any store or diag value:
 /// # pages = [ { name = "Daily", cells = [ { key = "engine.oil_temp_c", unit = "°F" },
@@ -222,6 +228,20 @@ pub struct Dis {
     pub units: DisUnits,
     pub clock: DisClock,
     pub nav_style: DisNavStyle,
+    pub nav_distance: bool,
+    pub nav_pocket: bool,
+    pub nav_eta: bool,
+    pub nav_time_left: bool,
+    pub nav_dest_distance: bool,
+    pub nav_lanes: DisLanes,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisLanes {
+    Off,
+    Swap,
+    Flip,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -268,6 +288,12 @@ impl Default for Dis {
             units: DisUnits::Auto,
             clock: DisClock::Auto,
             nav_style: DisNavStyle::Fancy,
+            nav_distance: true,
+            nav_pocket: true,
+            nav_eta: true,
+            nav_time_left: true,
+            nav_dest_distance: true,
+            nav_lanes: DisLanes::Flip,
         }
     }
 }
@@ -724,6 +750,16 @@ impl Config {
                 nav_style: match self.dis.nav_style {
                     DisNavStyle::Fancy => carpi_core::DisNavStyle::Fancy,
                     DisNavStyle::Stock => carpi_core::DisNavStyle::Stock,
+                },
+                nav_distance: self.dis.nav_distance,
+                nav_pocket: self.dis.nav_pocket,
+                nav_eta: self.dis.nav_eta,
+                nav_time_left: self.dis.nav_time_left,
+                nav_dest_distance: self.dis.nav_dest_distance,
+                nav_lanes: match self.dis.nav_lanes {
+                    DisLanes::Off => carpi_core::DisLanes::Off,
+                    DisLanes::Swap => carpi_core::DisLanes::Swap,
+                    DisLanes::Flip => carpi_core::DisLanes::Flip,
                 },
             },
             light: carpi_core::LightSetup {

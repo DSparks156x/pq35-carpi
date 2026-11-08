@@ -90,6 +90,16 @@ pub fn get(cfg: &Config) -> Settings {
                 crate::config::DisNavStyle::Fancy => carpi_proto::DisNavStyle::Fancy,
                 crate::config::DisNavStyle::Stock => carpi_proto::DisNavStyle::Stock,
             },
+            nav_distance: cfg.dis.nav_distance,
+            nav_pocket: cfg.dis.nav_pocket,
+            nav_eta: cfg.dis.nav_eta,
+            nav_time_left: cfg.dis.nav_time_left,
+            nav_dest_distance: cfg.dis.nav_dest_distance,
+            nav_lanes: match cfg.dis.nav_lanes {
+                crate::config::DisLanes::Off => carpi_proto::DisLanes::Off,
+                crate::config::DisLanes::Swap => carpi_proto::DisLanes::Swap,
+                crate::config::DisLanes::Flip => carpi_proto::DisLanes::Flip,
+            },
             readings: cfg
                 .readings()
                 .into_iter()
@@ -369,6 +379,24 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         if let Some(v) = d.nav_style {
             doc["dis"]["nav_style"] = value(snake(&v));
         }
+        if let Some(v) = d.nav_distance {
+            doc["dis"]["nav_distance"] = value(v);
+        }
+        if let Some(v) = d.nav_pocket {
+            doc["dis"]["nav_pocket"] = value(v);
+        }
+        if let Some(v) = d.nav_eta {
+            doc["dis"]["nav_eta"] = value(v);
+        }
+        if let Some(v) = d.nav_time_left {
+            doc["dis"]["nav_time_left"] = value(v);
+        }
+        if let Some(v) = d.nav_dest_distance {
+            doc["dis"]["nav_dest_distance"] = value(v);
+        }
+        if let Some(v) = d.nav_lanes {
+            doc["dis"]["nav_lanes"] = value(snake(&v));
+        }
     }
     if let Some(b) = &patch.bindings {
         table(&mut doc, "input")?;
@@ -555,6 +583,8 @@ mod tests {
                     }]),
                     clock: Some(carpi_proto::DisClock::H12),
                     nav_style: Some(carpi_proto::DisNavStyle::Stock),
+                    nav_eta: Some(false),
+                    nav_lanes: Some(carpi_proto::DisLanes::Swap),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -573,6 +603,9 @@ mod tests {
         assert_eq!(cfg.core().dis.pages[0].cells[0].icon.as_deref(), Some("boost"));
         assert_eq!(after.dis.clock, carpi_proto::DisClock::H12);
         assert_eq!(after.dis.nav_style, carpi_proto::DisNavStyle::Stock);
+        assert!(!after.dis.nav_eta && after.dis.nav_time_left);
+        assert_eq!(after.dis.nav_lanes, carpi_proto::DisLanes::Swap);
+        assert_eq!(cfg.core().dis.nav_lanes, carpi_core::DisLanes::Swap);
         assert_eq!(cfg.core().dis.nav_style, carpi_core::DisNavStyle::Stock);
         // And what the car model gets.
         let core = cfg.core().dis;

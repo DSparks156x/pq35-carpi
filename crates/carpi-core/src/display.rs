@@ -15,7 +15,9 @@
 use carpi_can::Frame;
 use carpi_dis::screens::call::CallInput;
 use carpi_dis::screens::media::{MediaInput, MediaLayout};
-use carpi_dis::screens::nav::{Clock, NavConfig, NavInput, NavStyle, Units, format_distance_in};
+use carpi_dis::screens::nav::{
+    Clock, LaneLayout, NavConfig, NavInput, NavStyle, Units, format_distance_in,
+};
 use carpi_dis::screens::readings::{ReadingCell, ReadingSpec, ReadingsInput, ReadingsPage, unit_for};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::top::TopLines;
@@ -82,6 +84,15 @@ pub struct DisSetup {
     pub clock: Clock,
     /// Nav screen look: our icons and layout, or the stock RNS-E look.
     pub nav_style: NavStyle,
+    /// Nav info, in either look: the maneuver distance column, the pocket
+    /// (master switch) and its ETA / time left / distance left pages, and
+    /// where lanes go. Stock with all off is the RNS-E's own layout.
+    pub nav_distance: bool,
+    pub nav_pocket: bool,
+    pub nav_eta: bool,
+    pub nav_time_left: bool,
+    pub nav_dest_distance: bool,
+    pub nav_lanes: LaneLayout,
 }
 
 impl Default for DisSetup {
@@ -103,6 +114,12 @@ impl Default for DisSetup {
             units: Units::Auto,
             clock: Clock::Auto,
             nav_style: NavStyle::Fancy,
+            nav_distance: true,
+            nav_pocket: true,
+            nav_eta: true,
+            nav_time_left: true,
+            nav_dest_distance: true,
+            nav_lanes: LaneLayout::Flip,
         }
     }
 }
@@ -226,6 +243,12 @@ fn nav_config(setup: &DisSetup) -> NavConfig {
         units: setup.units,
         clock: setup.clock,
         style: setup.nav_style,
+        show_distance: setup.nav_distance,
+        pocket: setup.nav_pocket,
+        show_eta: setup.nav_eta,
+        show_time_left: setup.nav_time_left,
+        show_dest_distance: setup.nav_dest_distance,
+        lanes: setup.nav_lanes,
         ..NavConfig::default()
     }
 }

@@ -90,6 +90,13 @@ cover_flash_s = 4           # full cover on a new track once drawn; 0 = off
 units = "auto"              # or "metric", "imperial" (auto: as the phone shows)
 clock = "auto"              # or "12h", "24h" (auto: 12 h if the phone's ETA has AM/PM)
 nav_style = "fancy"         # or "stock" (the RNS-E's own look)
+# Nav info, in either look ("stock" with all off is the RNS-E's own layout).
+nav_distance = true         # the maneuver distance column
+nav_pocket = true           # the trip-info pocket, all of it...
+nav_eta = true              # ...and its pages
+nav_time_left = true
+nav_dest_distance = true
+nav_lanes = "flip"          # near a turn: "flip" with the road, "swap" for it, "off"
 
 # Phone portal: http://<pi>:5003/files. Uploads need the PIN once one is set
 # (set it through the settings API).

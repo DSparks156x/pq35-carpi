@@ -425,6 +425,32 @@ pub struct DisSettings {
     pub clock: DisClock,
     #[serde(default)]
     pub nav_style: DisNavStyle,
+    /// Nav info, either look: maneuver distance column, the pocket (master
+    /// switch) and its pages, where lanes go.
+    #[serde(default = "yes")]
+    pub nav_distance: bool,
+    #[serde(default = "yes")]
+    pub nav_pocket: bool,
+    #[serde(default = "yes")]
+    pub nav_eta: bool,
+    #[serde(default = "yes")]
+    pub nav_time_left: bool,
+    #[serde(default = "yes")]
+    pub nav_dest_distance: bool,
+    #[serde(default)]
+    pub nav_lanes: DisLanes,
+}
+
+/// Where nav lanes go near a turn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisLanes {
+    Off,
+    /// Instead of the road.
+    Swap,
+    /// Taking turns with the road.
+    #[default]
+    Flip,
 }
 
 /// Nav screen look.
@@ -553,6 +579,18 @@ pub struct DisPatch {
     pub clock: Option<DisClock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_style: Option<DisNavStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_distance: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_pocket: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_eta: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_time_left: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_dest_distance: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_lanes: Option<DisLanes>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
