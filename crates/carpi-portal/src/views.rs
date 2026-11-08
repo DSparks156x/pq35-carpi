@@ -5,7 +5,7 @@
 use crate::page::{self, Access};
 use crate::{Reject, Shared, files};
 use axum::Form;
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use carpi_logs::EntryId;
@@ -174,10 +174,53 @@ pub async fn entry(
     }
     let meta = s.logs.meta(&id);
     let files = s.logs.files(&id);
+    // A data log gets the trim form.
+    let csv = meta
+        .as_ref()
+        .filter(|m| m.kind == carpi_logs::Kind::Datalog)
+        .and_then(|_| s.logs.file(&id, CSV));
+    let outline = match csv {
+        Some(path) => tokio::task::spawn_blocking(move || crate::trim::outline(&path).ok())
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
     v.html(
         StatusCode::OK,
-        page::entry(v.access, &id, meta.as_ref(), &files),
+        page::entry(v.access, &id, meta.as_ref(), &files, outline.as_ref()),
     )
+}
+
+/// A data log's rows.
+const CSV: &str = "data.csv";
+
+/// `data.csv` trimmed to the columns and time range the form picked.
+pub async fn trim(
+    State(s): State<Arc<Shared>>,
+    headers: HeaderMap,
+    UrlPath((date, nn)): UrlPath<(String, String)>,
+    RawQuery(query): RawQuery,
+) -> Result<Response, Reject> {
+    s.check_read(&headers)?;
+    let (id, file) = entry_file(&s, &date, &nn, CSV)?;
+    let path = file.clone();
+    let outline = tokio::task::spawn_blocking(move || crate::trim::outline(&path))
+        .await
+        .map_err(|e| Reject::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|_| Reject::not_found())?;
+    let t = crate::trim::parse(query.as_deref().unwrap_or(""), outline.columns.len())
+        .map_err(|e| Reject::new(StatusCode::BAD_REQUEST, e))?;
+    let permit = s.zip_permit()?;
+    let body = crate::archive::stream_with(
+        move |w| {
+            let f = std::io::BufReader::new(std::fs::File::open(&file)?);
+            crate::trim::copy(f, w, &t).map(|_| ())
+        },
+        permit,
+    );
+    let name = format!("carpi-{}-trim.csv", id.slug());
+    Ok((crate::attachment(&name, "text/csv; charset=utf-8"), body).into_response())
 }
 
 /// Entry and file from the URL, or 404.

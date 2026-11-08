@@ -16,6 +16,7 @@
 //! GET  /v/<date>/<NN>/<path>   the same as text/plain, first 1 MiB
 //! GET  /zip/day/<date>         carpi-<date>.zip, a folder per entry
 //! GET  /zip/e/<date>/<NN>      carpi-<date>-<NN>.zip
+//! GET  /trim/<date>/<NN>?...   a data log's data.csv, some columns, a time range
 //! POST /star/<date>/<NN>       toggle the star            (PIN)
 //! POST /delete/<date>/<NN>     confirm=yes                 (PIN)
 //! POST /capture                runs the capture hook       (PIN)
@@ -43,7 +44,7 @@
 //!   and only paths the entry listing itself produced. Symlinks are skipped.
 //! - Star, delete and capture are writes: PIN when one is set. Delete also
 //!   needs `confirm=yes`.
-//! - At most two zips build at once, one capture at a time.
+//! - At most two zips or trimmed CSVs build at once, one capture at a time.
 //! - Uploads have size caps, and firmware only lands as a new, valid Intel HEX
 //!   file (never overwrites). Config is validated by the caller before it
 //!   replaces anything, and the old file is backed up first.
@@ -55,6 +56,7 @@
 mod archive;
 mod files;
 mod page;
+mod trim;
 mod views;
 
 use axum::extract::{DefaultBodyLimit, Multipart, Path as UrlPath, Request, State};
@@ -251,6 +253,7 @@ impl Portal {
             .route("/v/{date}/{nn}/{*path}", get(views::view))
             .route("/zip/day/{date}", get(views::zip_day))
             .route("/zip/e/{date}/{nn}", get(views::zip_entry))
+            .route("/trim/{date}/{nn}", get(views::trim))
             .route("/star/{date}/{nn}", post(views::star))
             .route("/delete/{date}/{nn}", post(views::delete))
             .route("/capture", post(views::capture))

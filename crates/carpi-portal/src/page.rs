@@ -372,7 +372,13 @@ pub fn is_text(path: &str) -> bool {
     )
 }
 
-pub fn entry(access: Access, id: &EntryId, meta: Option<&Meta>, files: &[FileInfo]) -> String {
+pub fn entry(
+    access: Access,
+    id: &EntryId,
+    meta: Option<&Meta>,
+    files: &[FileInfo],
+    csv: Option<&crate::trim::Outline>,
+) -> String {
     let total: u64 = files.iter().map(|f| f.bytes).sum();
     let mut b = format!(
         "<div class=phead><a class=back href=\"/day/{d}#e{f}\">{ld}</a>\
@@ -446,6 +452,9 @@ pub fn entry(access: Access, id: &EntryId, meta: Option<&Meta>, files: &[FileInf
         );
     }
     b.push_str("</section>");
+    if let Some(o) = csv {
+        trim_form(&mut b, id, o);
+    }
 
     // Delete: PIN (when not unlocked) and a confirm box; JS adds a dialog.
     let _ = write!(
@@ -472,6 +481,35 @@ pub fn entry(access: Access, id: &EntryId, meta: Option<&Meta>, files: &[FileInf
         n = num(id)
     );
     layout(&id.to_string(), Tab::None, access, &b)
+}
+
+/// Columns (all on) and a time range (all of it) for `/trim`. A GET form:
+/// it's a download.
+fn trim_form(o: &mut String, id: &EntryId, csv: &crate::trim::Outline) {
+    let _ = write!(
+        o,
+        "<h2>Trim CSV</h2><form class=\"card pad trim\" method=get action=\"/trim/{}\">\
+         <input type=hidden name=pick value=1><fieldset><legend>Columns</legend>",
+        tail(id)
+    );
+    for (i, c) in csv.columns.iter().enumerate() {
+        let _ = write!(
+            o,
+            "<label class=check><input type=checkbox name=c value={} checked><span class=mono>{}</span></label>",
+            i + 1,
+            esc(c)
+        );
+    }
+    let secs = |t: Option<f64>| t.map_or_else(String::new, |t| format!("{t}"));
+    let _ = write!(
+        o,
+        "</fieldset><div class=range>\
+         <label>From, s<input name=from type=number step=any inputmode=decimal value=\"{}\"></label>\
+         <label>To, s<input name=to type=number step=any inputmode=decimal value=\"{}\"></label></div>\
+         <button class=\"btn pri wide\">{I_DL}<span>Download trimmed CSV</span></button></form>",
+        secs(csv.first),
+        secs(csv.last)
+    );
 }
 
 /// One loose file for the setup lists.
@@ -727,6 +765,14 @@ output.err{color:var(--bad)}output.ok{color:var(--ok)}
 .danger input[type=password]{margin-bottom:12px}
 .check{display:flex;align-items:center;gap:12px;min-height:48px;margin-bottom:10px;font-weight:650}
 .check input{width:24px;height:24px;accent-color:var(--bad);flex:none}
+.trim fieldset{border:0;margin:0 0 6px;padding:0}
+.trim legend,.range label{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;font-weight:650;padding:0;margin-bottom:6px}
+.trim .check{margin-bottom:0;min-height:44px}
+.trim .check input{accent-color:var(--acc)}
+.trim .check span{overflow-wrap:anywhere}
+.range{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 16px}
+.range label{display:flex;flex-direction:column;gap:6px}
+.range input{min-height:48px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;font-size:1rem;text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums}
 .okline{display:flex;align-items:center;gap:10px;color:var(--ok);font-weight:650}
 .btns{margin-top:16px}
 .gap{height:10px}

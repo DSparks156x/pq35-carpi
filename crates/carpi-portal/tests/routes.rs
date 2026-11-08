@@ -18,6 +18,11 @@ const HEX: &[u8] = b":0400000001020304F2\n:00000001FF\n";
 const GOOD_TOML: &str = "[bus.ican]\niface = \"can0\"\n";
 const JOURNAL: &[u8] = b"Nov 08 10:04:00 carpid[1]: hello\n";
 const ZST: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3];
+const CSV: &str = "time_s,engine.rpm,engine.boost.actual,nav.road\n\
+                   0.000,900,1010,\"A9, south\"\n\
+                   0.100,910,,\n\
+                   0.200,,1240,A9\n\
+                   0.300,950,1300,A9\n";
 
 fn setup() -> (TempDir, PortalConfig) {
     let t = tempfile::tempdir().unwrap();
@@ -45,7 +50,7 @@ fn setup() -> (TempDir, PortalConfig) {
     let (_, dir) = logs
         .create(Kind::Datalog, "2026-11-08", "boost", "2026-11-08T11:00:00")
         .unwrap();
-    fs::write(dir.join("data.csv"), "t,boost\n0,1.2\n").unwrap();
+    fs::write(dir.join("data.csv"), CSV).unwrap();
     logs.create(Kind::Capture, "2026-11-07", "page", "2026-11-07T09:00:00")
         .unwrap();
 
@@ -442,8 +447,126 @@ async fn day_zip_contents() {
             "02/entry.json",
         ]
     );
-    assert_eq!(z["02/data.csv"].0, b"t,boost\n0,1.2\n");
+    assert_eq!(z["02/data.csv"].0, CSV.as_bytes());
     assert_eq!(z["01/journal.txt"].0, JOURNAL);
+}
+
+#[tokio::test]
+async fn datalog_entry_trims_its_csv() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    let html = page(&app, "/e/2026-11-08/02").await;
+    for want in [
+        "Trim CSV",
+        "action=\"/trim/2026-11-08/02\"",
+        "name=c value=1 checked><span class=mono>engine.rpm",
+        "name=c value=3 checked><span class=mono>nav.road",
+        "name=from type=number step=any inputmode=decimal value=\"0\"",
+        "name=to type=number step=any inputmode=decimal value=\"0.3\"",
+    ] {
+        assert!(html.contains(want), "{want}");
+    }
+    assert!(!page(&app, "/e/2026-11-08/01").await.contains("Trim CSV"));
+
+    // The form as sent: two columns, part of the range.
+    let (code, h, body) = send(
+        &app,
+        get("/trim/2026-11-08/02?pick=1&c=3&c=1&from=0.1&to=0.25")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(h[header::CONTENT_TYPE], "text/csv; charset=utf-8");
+    assert!(
+        h[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("carpi-2026-11-08-02-trim.csv")
+    );
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        "time_s,engine.rpm,nav.road\n0.100,910,\n0.200,,A9\n"
+    );
+    // Quoted fields stay whole; the defaults are all of it.
+    let (_, _, body) = send(
+        &app,
+        get("/trim/2026-11-08/02?pick=1&c=3&to=0")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(body, b"time_s,nav.road\n0.000,\"A9, south\"\n");
+    let (_, _, body) = send(
+        &app,
+        get("/trim/2026-11-08/02").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(body, CSV.as_bytes());
+
+    for (uri, want) in [
+        ("/trim/2026-11-08/02?pick=1", StatusCode::BAD_REQUEST),
+        ("/trim/2026-11-08/02?pick=1&c=4", StatusCode::BAD_REQUEST),
+        ("/trim/2026-11-08/02?from=1&to=0", StatusCode::BAD_REQUEST),
+        ("/trim/2026-11-08/02?from=x", StatusCode::BAD_REQUEST),
+        ("/trim/2026-11-08/01", StatusCode::NOT_FOUND),
+        ("/trim/2026-11-08/09", StatusCode::NOT_FOUND),
+        ("/trim/2026-11-08/2", StatusCode::NOT_FOUND),
+        ("/trim/2026-11-08/..", StatusCode::NOT_FOUND),
+        ("/trim/2026-11-08/%2E%2E", StatusCode::NOT_FOUND),
+        ("/trim/..%2F..%2F2026-11-08/02", StatusCode::NOT_FOUND),
+        (
+            "/trim/2026-11-08/02/../../secret.txt",
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (code, _, body) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(code, want, "{uri}");
+        assert!(!String::from_utf8_lossy(&body).contains("secret"), "{uri}");
+    }
+    // The Host guard covers it like everything else.
+    let req = Request::get("/trim/2026-11-08/02")
+        .header(header::HOST, "evil.example")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn trim_needs_the_pin_when_downloads_do() {
+    let (_t, mut cfg) = setup();
+    cfg.pin = Some("4711".into());
+    cfg.protect_downloads = true;
+    let app = app(cfg);
+    let uri = "/trim/2026-11-08/02?pick=1&c=1";
+    let (code, _, body) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+    assert!(!String::from_utf8_lossy(&body).contains("910"));
+    let req = get(uri)
+        .header("x-carpi-pin", "4711")
+        .body(Body::empty())
+        .unwrap();
+    let (code, _, body) = send(&app, req).await;
+    assert_eq!(code, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains("0.100,910"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn trim_refuses_a_symlinked_csv() {
+    let (t, cfg) = setup();
+    let csv = t.path().join("logs/2026-11-08/02/data.csv");
+    fs::remove_file(&csv).unwrap();
+    std::os::unix::fs::symlink(t.path().join("secret.txt"), &csv).unwrap();
+    let app = app(cfg);
+    let (code, _, body) = send(
+        &app,
+        get("/trim/2026-11-08/02").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    assert!(!String::from_utf8_lossy(&body).contains("secret"));
+    assert!(!page(&app, "/e/2026-11-08/02").await.contains("Trim CSV"));
 }
 
 #[tokio::test]

@@ -125,6 +125,14 @@ pub fn write(items: Vec<Item>, out: impl Write) -> zip::result::ZipResult<()> {
 /// Builds the zip on a blocking thread and returns the body that streams
 /// it. `permit` is held until the build ends.
 pub fn stream(items: Vec<Item>, permit: OwnedSemaphorePermit) -> Body {
+    stream_with(move |w| write(items, w).map_err(io::Error::other), permit)
+}
+
+/// Runs `work` on a blocking thread and streams what it writes.
+pub fn stream_with<F>(work: F, permit: OwnedSemaphorePermit) -> Body
+where
+    F: FnOnce(&mut dyn Write) -> io::Result<()> + Send + 'static,
+{
     let (tx, rx) = mpsc::channel::<io::Result<Bytes>>(4);
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -132,12 +140,10 @@ pub fn stream(items: Vec<Item>, permit: OwnedSemaphorePermit) -> Body {
             tx: tx.clone(),
             buf: Vec::with_capacity(CHUNK),
         };
-        let r = write(items, &mut w)
-            .map_err(io::Error::other)
-            .and_then(|()| w.flush());
+        let r = work(&mut w).and_then(|()| w.flush());
         if let Err(e) = r {
             if e.kind() != io::ErrorKind::BrokenPipe {
-                tracing::warn!("portal: zip failed: {e}");
+                tracing::warn!("portal: download failed: {e}");
             }
             // Cuts the response short so the phone sees a failed download.
             let _ = tx.blocking_send(Err(e));
