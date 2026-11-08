@@ -50,7 +50,7 @@ use std::path::{Path, PathBuf};
 /// [dis]
 /// enabled = false      # off: nothing is sent to the cluster
 /// claim = "always"     # or "tab": idle as a cluster-menu tab until picked
-/// default_page = "readings"   # or "accel"
+/// default_page = "readings"   # or "accel", "media"
 /// auto_nav = true      # nav guidance, calls, media each take the centre
 /// auto_phone = true    #   while they have content, and give it back
 /// auto_media = true
@@ -233,6 +233,8 @@ pub enum Claim {
 pub enum DisPage {
     Readings,
     Accel,
+    /// The old client's default start page (`dc/dis_display.py` `startup_app`).
+    Media,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -575,6 +577,7 @@ impl Config {
                 default_page: match self.dis.default_page {
                     DisPage::Readings => carpi_core::DisScreen::Readings,
                     DisPage::Accel => carpi_core::DisScreen::Accel,
+                    DisPage::Media => carpi_core::DisScreen::Media,
                 },
                 auto_nav: self.dis.auto_nav,
                 auto_phone: self.dis.auto_phone,

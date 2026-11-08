@@ -75,7 +75,7 @@ enabled = false
 # "always": our default page holds the centre whenever nothing else wants it.
 # "tab": idle as a tab in the cluster menu until it's picked there.
 claim = "always"
-default_page = "readings"   # or "accel"
+default_page = "readings"   # or "accel", or "media" (the old client's start page)
 # Each takes the centre while it has content and gives it back after.
 auto_nav = true
 auto_phone = true

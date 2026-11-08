@@ -59,7 +59,7 @@ pub struct DisSetup {
     /// Our default page holds the centre whenever nothing else wants it;
     /// off: we idle as a tab in the cluster menu until it's picked.
     pub claim_always: bool,
-    /// What "always" shows and the menu tab opens to: readings or accel.
+    /// What "always" shows and the menu tab opens to: readings, accel or media.
     pub default_page: ScreenId,
     /// Each takes the centre while it has content, and gives it back.
     pub auto_nav: bool,

@@ -151,3 +151,14 @@ fn tab_mode_leaves_the_centre_alone() {
     assert_eq!(r.text("dis.state").as_deref(), Some("ready"));
     assert_eq!(r.text("dis.window").as_deref(), Some("idle"));
 }
+
+#[test]
+fn media_as_the_default_page_like_the_old_client() {
+    let mut r = Rig::new(DisSetup {
+        default_page: carpi_core::DisScreen::Media,
+        ..enabled()
+    });
+    r.run(Duration::from_secs(5));
+    assert!(r.cl.owner);
+    assert_eq!(r.text("dis.shown").as_deref(), Some("media"));
+}
