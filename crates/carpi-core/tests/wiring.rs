@@ -210,7 +210,10 @@ fn api_prefixes_map_to_diag_subscriptions() {
     // "" maps to nothing: a page asking for everything never starts polling.
     assert!(r.car.diag_subscribe(&["".into()], period, t0).is_empty());
     let ids = r.car.diag_subscribe(
-        &["engine.boost.actual".into(), "engine.boost.specified".into()],
+        &[
+            "engine.boost.actual".into(),
+            "engine.boost.specified".into(),
+        ],
         period,
         t0,
     );
@@ -434,4 +437,36 @@ fn nudge_over_the_api_and_by_key() {
     assert_eq!(resp, carpi_proto::Response::Ok);
     run_lit(&mut r, 10);
     assert_eq!(bb_levels(&mut r).last(), Some(&base));
+}
+
+#[test]
+fn catalog_lists_values_for_the_picker() {
+    let mut r = Rig::new(false);
+    let now = r.now;
+    let carpi_proto::Response::Catalog { categories, values } =
+        r.car.handle(0, Request::Catalog, now)
+    else {
+        panic!("not a catalog")
+    };
+    assert_eq!(categories[0], "Engine");
+    assert!(categories.iter().any(|c| c == "Transmission"));
+    assert!(values.len() >= 400);
+    let get = |n: &str| values.iter().find(|v| v.name == n).unwrap();
+    let boost = get("engine.boost.actual");
+    assert_eq!(
+        (boost.category.as_str(), boost.sub.as_str()),
+        ("Engine", "Boost")
+    );
+    assert_eq!(boost.unit, "mbar");
+    assert_eq!(
+        boost.source,
+        carpi_proto::ValueSource::Diag { modules: vec![1] }
+    );
+    assert_eq!(get("engine.rpm").source, carpi_proto::ValueSource::Ican);
+    let dsg = get("trans.fluid_temp_c");
+    assert_eq!(dsg.category, "Transmission");
+    assert_eq!(
+        dsg.source,
+        carpi_proto::ValueSource::Diag { modules: vec![2] }
+    );
 }

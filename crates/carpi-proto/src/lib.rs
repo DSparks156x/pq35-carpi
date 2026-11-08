@@ -34,6 +34,10 @@ pub enum Request {
     Values {
         prefix: String,
     },
+    /// Every value carpid knows by name, for pickers: label, unit, category,
+    /// sub-group and source, in the picker's order. Replies
+    /// [`Response::Catalog`].
+    Catalog,
     Bus,
     /// Write the rolling capture to a file. `None` picks a name in the
     /// daemon's capture directory.
@@ -1116,6 +1120,14 @@ pub enum Response {
     Values {
         items: Vec<Reading>,
     },
+    /// Reply to `Catalog`.
+    Catalog {
+        /// Category labels in picker order, including ones with no values
+        /// in `values` (`Phone & nav`).
+        categories: Vec<String>,
+        /// In picker order: category, sub-group, then curated.
+        values: Vec<CatalogEntry>,
+    },
     /// Unsolicited, for a `Subscribe`. Only changed readings after the first.
     Update {
         sub: u32,
@@ -1357,6 +1369,31 @@ pub struct Reading {
     /// `None` when the source sent an error/init value or it timed out.
     pub value: Option<Value>,
     pub age_ms: u64,
+}
+
+/// One catalog value, for pickers (docs/PAGES.md 2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    /// Store name, e.g. `engine.boost.actual`.
+    pub name: String,
+    pub label: String,
+    /// `mbar`, `°C`, ...; empty when the ECU's own unit decides, or for flags.
+    pub unit: String,
+    /// `Engine`, `Fuel & trip`, ...
+    pub category: String,
+    /// Sub-group header inside the category, e.g. `Boost`.
+    pub sub: String,
+    pub source: ValueSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ValueSource {
+    /// Decoded from ICAN: free, always there while the car is awake.
+    Ican,
+    /// Polled over diagnostics from these TP2 modules (`1` engine, `2`
+    /// transmission, `10` Haldex): costs channel time, the `diag` tag.
+    Diag { modules: Vec<u8> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

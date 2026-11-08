@@ -40,6 +40,8 @@ enum Cmd {
         #[arg(default_value = "")]
         prefix: String,
     },
+    /// The value catalog: name, unit, category / sub-group, source.
+    Catalog,
     /// Bus and NM ring state from carpid.
     Bus,
     /// Save a capture into carpid's logs folder: the last few minutes of
@@ -140,6 +142,7 @@ fn main() -> anyhow::Result<()> {
             gap_ms,
         } => replay(file, &prefix, gap_ms),
         Cmd::Values { prefix } => print(call(args.socket, Request::Values { prefix })?),
+        Cmd::Catalog => print(call(args.socket, Request::Catalog)?),
         Cmd::Bus => print(call(args.socket, Request::Bus)?),
         Cmd::Capture { trigger } => print(call(args.socket, Request::Capture { trigger })?),
         Cmd::Log { cmd } => log(args.socket, cmd),
@@ -221,6 +224,19 @@ fn print(resp: Response) -> anyhow::Result<()> {
             "{label}: {summary}
 {dir}"
         ),
+        Response::Catalog { values, .. } => {
+            let w = values.iter().map(|v| v.name.len()).max().unwrap_or(0);
+            for v in values {
+                let src = match v.source {
+                    carpi_proto::ValueSource::Ican => "ican".to_string(),
+                    carpi_proto::ValueSource::Diag { modules } => format!("diag {modules:02X?}"),
+                };
+                println!(
+                    "{:w$}  {:>7}  {} / {}  {}  ({})",
+                    v.name, v.unit, v.category, v.sub, v.label, src
+                );
+            }
+        }
         Response::Bus { buses } => {
             for b in buses {
                 println!(

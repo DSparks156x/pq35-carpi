@@ -485,6 +485,11 @@ impl Car {
             Request::Values { prefix } => Response::Values {
                 items: self.readings(&[prefix], now),
             },
+            Request::Catalog => {
+                static CATALOG: std::sync::OnceLock<carpi_diag::Catalog> =
+                    std::sync::OnceLock::new();
+                diagnostics::catalog_response(CATALOG.get_or_init(carpi_diag::Catalog::seed))
+            }
             Request::Bus => Response::Bus {
                 buses: self.buses(now),
             },

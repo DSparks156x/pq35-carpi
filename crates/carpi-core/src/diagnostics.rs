@@ -41,6 +41,43 @@ pub(crate) struct Diagnostics {
     jobs: Vec<(JobId, Vec<proto::JobEvent>)>,
 }
 
+/// The catalog for pickers (`Request::Catalog`). Static: it's the same
+/// table whether or not there's a diag bus.
+pub fn catalog_response(catalog: &Catalog) -> proto::Response {
+    use carpi_diag::{Category, Provider};
+    let values = catalog
+        .iter()
+        .map(|d| {
+            let source = if d.ican_name().is_some() {
+                proto::ValueSource::Ican
+            } else {
+                let mut modules: Vec<u8> = d
+                    .providers
+                    .iter()
+                    .filter_map(|p| match *p {
+                        Provider::Diag { module, .. } => Some(module),
+                        Provider::Ican(_) => None,
+                    })
+                    .collect();
+                modules.dedup();
+                proto::ValueSource::Diag { modules }
+            };
+            proto::CatalogEntry {
+                name: d.name.into(),
+                label: d.label.into(),
+                unit: d.unit_label().into(),
+                category: d.category.label().into(),
+                sub: d.sub.into(),
+                source,
+            }
+        })
+        .collect();
+    proto::Response::Catalog {
+        categories: Category::ALL.iter().map(|c| c.label().into()).collect(),
+        values,
+    }
+}
+
 pub fn mode_name(m: Mode) -> &'static str {
     match m {
         Mode::Normal => "normal",
