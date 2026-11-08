@@ -1,0 +1,16 @@
+# LIVI (the pq35-carpi fork), from the installed bundle. User service, like carpid.
+[Unit]
+Description=LIVI (pq35-carpi fork)
+After=carpid.service
+
+[Service]
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=LIVI_ROOT=/opt/carpi/current/livi
+WorkingDirectory=/opt/carpi/current/livi
+ExecStartPre=/bin/sh -c "until [ -S $XDG_RUNTIME_DIR/wayland-0 ]; do sleep 1; done"
+ExecStart=/opt/carpi/current/livi/out/bin/livi-core
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -7,6 +7,7 @@
 # Expects, relative to the repo root:
 #   target/release/{carpid,carpi[,carpi-update]}   (--pq-bin to point elsewhere)
 #   livi/out/bin/{LIVI,livi-core,livi-helperd,livi-gst-host,livi-compositor}   (cargo xtask build-native)
+#   livi/assets/linux/*   (LIVI's unit and sudoers templates; bundled with the binaries as livi/...)
 #   sdlink/bin/{rnv3enc,avlink,wlcap}   (make in sdlink)
 #   sdlink/pi/run/*, deploy/*
 # Teensy firmware is optional and only included with --teensy (CI doesn't build PlatformIO yet).
@@ -53,7 +54,7 @@ mkdir "$STAGE"
 # put SRC DEST MODE: copy into the stage; binaries must be aarch64 ELF (e_machine 0xB7).
 put() {
   [ -f "$1" ] || die "missing $1"
-  if [ "$3" = 0755 ] && [[ $2 == bin/* ]]; then
+  if [ "$3" = 0755 ] && [[ $2 == bin/* || $2 == livi/out/bin/* ]]; then
     [ "$(od -An -tx1 -j18 -N2 "$1" | tr -d ' \n')" = b700 ] || die "$1 is not an aarch64 ELF"
   fi
   install -D -m "$3" "$1" "$STAGE/$2"
@@ -63,8 +64,16 @@ put "$PQBIN/carpid" bin/carpid 0755
 put "$PQBIN/carpi" bin/carpi 0755
 [ -f "$PQBIN/carpi-update" ] && put "$PQBIN/carpi-update" bin/carpi-update 0755
 
+# LIVI in its own repo layout: livi-core finds its helpers at $LIVI_ROOT/out/bin and its
+# unit/sudoers templates at $LIVI_ROOT/assets/linux. The service sets LIVI_ROOT=current/livi.
 for b in LIVI livi-core livi-helperd livi-gst-host livi-compositor; do
-  put "$ROOT/livi/out/bin/$b" "bin/$b" 0755
+  put "$ROOT/livi/out/bin/$b" "livi/out/bin/$b" 0755
+done
+for f in "$ROOT"/livi/assets/linux/*; do
+  [ -f "$f" ] || continue
+  n=$(basename "$f")
+  case $n in *.template|*.xml) m=0644 ;; *) m=0755 ;; esac
+  put "$f" "livi/assets/linux/$n" $m
 done
 for b in rnv3enc avlink wlcap; do
   put "$ROOT/sdlink/bin/$b" "bin/$b" 0755
@@ -77,6 +86,7 @@ done
 
 put "$ROOT/deploy/carpid.toml" share/config/carpid.toml 0644
 put "$ROOT/deploy/carpid.service" share/systemd/user/carpid.service 0644
+put "$ROOT/deploy/livi.service" share/systemd/user/livi.service 0644
 put "$ROOT/deploy/99-carpi-uinput.rules" share/udev/99-carpi-uinput.rules 0644
 
 FIRMWARE=()

@@ -38,16 +38,15 @@ manifest.json.minisig
 bin/carpid
 bin/carpi
 bin/carpi-update                    only once the crate exists
-bin/LIVI                            LIVI UI (livi-ui package)
-bin/livi-core
-bin/livi-helperd
-bin/livi-gst-host
-bin/livi-compositor
+livi/out/bin/LIVI                   LIVI UI (livi-ui package)
+livi/out/bin/livi-core
+livi/out/bin/...                    the other LIVI binaries; livi/assets/linux/* its templates
 bin/rnv3enc                         sdlink: encoder
 bin/avlink                          sdlink: link to the Teensy
 bin/wlcap                           sdlink: screen capture
 share/config/carpid.toml            default config, reference only
 share/systemd/user/carpid.service
+share/systemd/user/livi.service
 share/udev/99-carpi-uinput.rules
 share/sdlink/run/...                sdlink pi/run, as-is (scripts, units, avsd.env)
 firmware/teensy/sdemu.hex           only if the build had a Teensy image

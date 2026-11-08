@@ -71,6 +71,20 @@ enum Cmd {
 }
 
 fn emit(e: JobEvent) {
+    // Progress only when the whole percent (or, without a total, the MiB) moves.
+    if let JobEvent::Progress { stage, done, total } = &e {
+        use std::sync::Mutex;
+        static LAST: Mutex<Option<(String, u64)>> = Mutex::new(None);
+        let step = match total {
+            Some(t) if *t > 0 => done * 100 / t,
+            _ => done >> 20,
+        };
+        let mut last = LAST.lock().unwrap();
+        if last.as_ref().is_some_and(|(s, n)| s == stage && *n == step) {
+            return;
+        }
+        *last = Some((stage.clone(), step));
+    }
     if let Ok(line) = serde_json::to_string(&e) {
         let mut out = std::io::stdout().lock();
         let _ = writeln!(out, "{line}");
