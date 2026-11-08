@@ -2,7 +2,7 @@
 //! message they'd send to the framebuffer model (real glyphs from the font
 //! capture, native strokes, clips), and write what the centre would show.
 //!
-//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes]`
+//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes|lane-art]`
 //!
 //! Each sheet is a grid of labelled tiles, 4x, lit pixels white on black.
 //! Optional "top lines" above a tile show the two 8-cell radio lines.
@@ -18,31 +18,35 @@ use carpi_dis::screens::nav::{LaneLayout, NavConfig, NavInput, NavScreen};
 use carpi_dis::screens::{Screen, build_frame};
 use image::{Rgb, RgbImage};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const S: u32 = 4;
 const LIT: Rgb<u8> = Rgb([240, 244, 255]);
 const DARK: Rgb<u8> = Rgb([0, 0, 0]);
 const BG: Rgb<u8> = Rgb([48, 48, 56]);
 const LABEL: Rgb<u8> = Rgb([200, 200, 210]);
-/// Height of the top-lines strip above a tile (two 14 px lines + gap), px.
-const TOP_H: u32 = 32;
+/// Height of one top line above a tile: a 14 px glyph at the tile scale, px.
+const TOP_H: u32 = 60;
 
-/// Run `s` from enter until it has nothing left to send.
-fn render(s: &mut dyn Screen) -> Fb {
+/// Enter `s` at `t0`, run it until idle, then step its clock to each of
+/// `at` (offsets from `t0`) and run it until idle again. The screen as it
+/// stands after the last one.
+fn render_at(s: &mut dyn Screen, t0: Instant, at: &[Duration]) -> Fb {
     let cx = Ctx::new(Profile::WHITE);
-    let now = Instant::now();
     let mut fb = Fb::new(cx.metrics);
     let mut regs = Registers::default();
     let mut enter = true;
-    for _ in 0..2000 {
-        let f = build_frame(s, now, &cx, regs, enter).expect("pack");
-        enter = false;
-        let idle = f.messages.iter().all(|m| m.bytes == [0x39]) || f.messages.is_empty();
-        f.messages.iter().for_each(|m| fb.apply(&m.bytes));
-        regs = f.regs;
-        if idle {
-            break;
+    let times: Vec<Instant> = std::iter::once(t0).chain(at.iter().map(|d| t0 + *d)).collect();
+    for now in times {
+        for _ in 0..2000 {
+            let f = build_frame(s, now, &cx, regs, enter).expect("pack");
+            enter = false;
+            let idle = f.messages.iter().all(|m| m.bytes == [0x39]) || f.messages.is_empty();
+            f.messages.iter().for_each(|m| fb.apply(&m.bytes));
+            regs = f.regs;
+            if idle {
+                break;
+            }
         }
     }
     assert!(fb.errors.is_empty(), "{:?}", fb.errors);
@@ -95,8 +99,12 @@ fn sheet(tiles: &[Tile], cols: u32, out: &Path) {
                     img.put_pixel(xx, yy, DARK);
                 }
             }
-            text(&mut img, x0 + 8, y + 2, a, Font::Fixed, 2);
-            text(&mut img, x0 + 8, y + 2 + TOP_H, b, Font::Fixed, 2);
+            // The cluster centres the 8-cell lines in its proportional font.
+            for (k, line) in [a, b].iter().enumerate() {
+                let w = m_width(line) * 2;
+                let x = x0 + tw.saturating_sub(w * 2) / 2;
+                text(&mut img, x, y + 2 + TOP_H * k as u32, line, Font::Prop, 4);
+            }
             y += TOP_H * 2 + 8;
         }
         let px = t.fb.pixels();
@@ -123,17 +131,31 @@ fn lane(arrows: &[(&str, bool)]) -> Lane {
         .collect()
 }
 
-fn nav(layout: LaneLayout, input: NavInput) -> Fb {
+fn m_width(s: &str) -> u32 {
+    let m = carpi_dis::font::Metrics::for_variant(carpi_dis::proto::Variant::White);
+    u32::from(m.width(Font::Prop, &audscii(s)))
+}
+
+/// Nav at `t` seconds after it was entered.
+fn nav(layout: LaneLayout, input: NavInput, t: f64) -> Fb {
     let mut s = NavScreen::new(NavConfig {
         lanes: layout,
         ..NavConfig::default()
     });
-    s.set(Instant::now(), input);
-    render(&mut s)
+    let t0 = Instant::now();
+    s.set(t0, input);
+    let steps: Vec<Duration> = (1..=(t * 2.0) as u32).map(|k| Duration::from_millis(500 * u64::from(k))).collect();
+    render_at(&mut s, t0, &steps)
 }
 
 fn nav_lanes(out: &Path) {
-    let right = NavInput {
+    let trip = |mut i: NavInput| {
+        i.eta = Some("14:32".into());
+        i.time_to_destination_s = Some(15.0 * 60.0);
+        i.destination_distance_m = Some(12_400.0);
+        i
+    };
+    let right = trip(NavInput {
         maneuver: Some("turn".into()),
         side: Some("right".into()),
         distance_m: Some(250.0),
@@ -145,8 +167,12 @@ fn nav_lanes(out: &Path) {
             lane(&[("normal_right", true)]),
         ],
         ..Default::default()
+    });
+    let far = NavInput {
+        distance_m: Some(800.0),
+        ..right.clone()
     };
-    let left5 = NavInput {
+    let left5 = trip(NavInput {
         maneuver: Some("turn".into()),
         side: Some("left".into()),
         distance_m: Some(180.0),
@@ -156,35 +182,105 @@ fn nav_lanes(out: &Path) {
             lane(&[("normal_left", true)]),
             lane(&[("straight", false)]),
             lane(&[("straight", false)]),
-            lane(&[("normal_right", false)]),
+            lane(&[("normal_right", false), ("slight_right", false)]),
         ],
         ..Default::default()
-    };
-    let top = Some(("ETA14:32".to_string(), "12km 15m".to_string()));
-    let mut tiles = Vec::new();
-    for (name, inp) in [("right, 4 lanes", &right), ("left, 5 lanes", &left5)] {
-        tiles.push(Tile {
-            label: format!("Now (no lanes) - {name}"),
-            fb: nav(LaneLayout::Off, inp.clone()),
-            top: top.clone(),
-        });
-        tiles.push(Tile {
-            label: format!("Swap road - {name}"),
-            fb: nav(LaneLayout::SwapRoad, inp.clone()),
-            top: top.clone(),
-        });
-        tiles.push(Tile {
-            label: format!("Pocket - {name}"),
-            fb: nav(LaneLayout::Pocket, inp.clone()),
-            top: top.clone(),
-        });
-        tiles.push(Tile {
-            label: format!("Shrink icon - {name}"),
-            fb: nav(LaneLayout::ShrinkIcon, inp.clone()),
-            top: top.clone(),
-        });
-    }
+    });
+    let straight = trip(NavInput {
+        maneuver: Some("straight".into()),
+        distance_m: Some(2400.0),
+        road: Some("M5".into()),
+        ..Default::default()
+    });
+    let roundabout = trip(NavInput {
+        maneuver: Some("roundabout_enter_and_exit".into()),
+        side: Some("right".into()),
+        roundabout_angle: Some(270),
+        distance_m: Some(600.0),
+        road: Some("Ring Road".into()),
+        ..Default::default()
+    });
+    let top = Some(("One More".to_string(), "Time".to_string()));
+    let f = LaneLayout::Flip;
+    let tiles = vec![
+        Tile { label: "800 m, pocket: ETA".into(), fb: nav(f, far.clone(), 0.0), top: top.clone() },
+        Tile { label: "pocket after 3 s: time".into(), fb: nav(f, far.clone(), 3.0), top: top.clone() },
+        Tile { label: "pocket after 6 s: distance".into(), fb: nav(f, far, 6.0), top: top.clone() },
+        Tile { label: "straight: narrow pocket".into(), fb: nav(f, straight, 0.0), top: top.clone() },
+        Tile { label: "250 m, flip: lanes 4 s".into(), fb: nav(f, right.clone(), 0.0), top: top.clone() },
+        Tile { label: "flip: road 2 s".into(), fb: nav(f, right, 4.5), top: top.clone() },
+        Tile { label: "5 lanes".into(), fb: nav(f, left5, 0.0), top: top.clone() },
+        Tile { label: "roundabout: pocket".into(), fb: nav(f, roundabout, 0.0), top },
+    ];
     sheet(&tiles, 4, &out.join("nav_lanes.png"));
+}
+
+/// Lane arrow styles side by side: each row a style, each column a lane set,
+/// the 128x18 px road-row strip at the tile scale.
+fn lane_art(out: &Path) {
+    use carpi_dis::icons::Art;
+    use carpi_dis::lanes::{strip, strip_maps};
+    let sets: Vec<(&str, Vec<Lane>)> = vec![
+        (
+            "right, 4 lanes",
+            vec![
+                lane(&[("normal_left", false)]),
+                lane(&[("straight", false)]),
+                lane(&[("straight", false), ("normal_right", true)]),
+                lane(&[("normal_right", true)]),
+            ],
+        ),
+        (
+            "left, 5 lanes",
+            vec![
+                lane(&[("uturn_left", false), ("normal_left", true)]),
+                lane(&[("normal_left", true)]),
+                lane(&[("straight", false)]),
+                lane(&[("straight", false)]),
+                lane(&[("normal_right", false), ("slight_right", false)]),
+            ],
+        ),
+        (
+            "keep left, 3 lanes",
+            vec![
+                lane(&[("slight_left", true)]),
+                lane(&[("straight", false), ("slight_left", true)]),
+                lane(&[("straight", false)]),
+            ],
+        ),
+    ];
+    let (w, h) = (128usize, 18usize);
+    let styles: Vec<(&str, Box<dyn Fn(&[Lane]) -> Art>)> = vec![
+        ("pixel art 12x16 (now)", Box::new(move |l: &[Lane]| strip(l, w, h, 14))),
+        ("Maps icons 18 px, the arrow to take", Box::new(move |l: &[Lane]| strip_maps(l, w, h, 21, 18, false))),
+        ("Maps icons 18 px, all arrows overlaid", Box::new(move |l: &[Lane]| strip_maps(l, w, h, 21, 18, true))),
+        ("Maps icons 16 px, the arrow to take", Box::new(move |l: &[Lane]| strip_maps(l, w, h, 19, 16, false))),
+    ];
+    let (cw, ch) = (w as u32 * S + 24, h as u32 * S + 40);
+    let label_w = 560;
+    let mut img = RgbImage::from_pixel(label_w + cw * sets.len() as u32, 40 + ch * styles.len() as u32, BG);
+    for (c, (name, _)) in sets.iter().enumerate() {
+        text(&mut img, label_w + c as u32 * cw + 12, 8, name, Font::Prop, 2);
+    }
+    for (r, (sname, f)) in styles.iter().enumerate() {
+        let y0 = 40 + r as u32 * ch;
+        text(&mut img, 12, y0 + 24, sname, Font::Prop, 2);
+        for (c, (_, lanes)) in sets.iter().enumerate() {
+            let a = f(lanes);
+            let x0 = label_w + c as u32 * cw + 12;
+            for y in 0..h as u32 {
+                for x in 0..w as u32 {
+                    let col = if a.get(x as usize, y as usize) { LIT } else { DARK };
+                    for d in 0..S * S {
+                        img.put_pixel(x0 + x * S + d % S, y0 + 12 + y * S + d / S, col);
+                    }
+                }
+            }
+        }
+    }
+    let p = out.join("lane_art.png");
+    img.save(&p).expect("png");
+    println!("{}", p.display());
 }
 
 fn main() {
@@ -194,6 +290,7 @@ fn main() {
     let which = args.get(1).map_or("nav-lanes", String::as_str);
     match which {
         "nav-lanes" => nav_lanes(&out),
+        "lane-art" => lane_art(&out),
         other => panic!("unknown sheet {other}"),
     }
 }

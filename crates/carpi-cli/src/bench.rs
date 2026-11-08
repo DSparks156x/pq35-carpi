@@ -319,6 +319,7 @@ pub fn nav_at(t: Duration) -> NavInput {
         distance_m: Some(d.max(0.0)),
         road: Some(road.into()),
         lanes: bench_lanes(m, side),
+        ..Default::default()
     }
 }
 

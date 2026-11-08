@@ -22,6 +22,7 @@ fn nav_input(maneuver: &str, side: &str, d: f64, road: &str) -> NavInput {
         distance_m: Some(d),
         road: Some(road.into()),
         lanes: Vec::new(),
+        ..Default::default()
     }
 }
 
