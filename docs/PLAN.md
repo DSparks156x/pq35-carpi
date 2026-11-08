@@ -189,49 +189,55 @@ Output `{ambient, lights_on, night (with hysteresis), panel_level}`. Three consu
 
 ### 2.7 DIS
 
-**Provisional.** A dedicated design pass is under way and will replace this section. The cluster is not a framebuffer: text, graphics-font text and lines are quick, bitmaps are slow, and full-res bitmaps are very slow. Content has to be built from the cheap primitives, with bitmaps used sparingly. There is no generic render toolkit that turns arbitrary content into commands. A small toolkit of helpers is fine, but each screen is designed by hand around the cluster's text and bitmap commands, including the order things are drawn in and what gets resent when a value changes. Shared code covers only the transport, the session, command encoding, message packing and text metrics. The "scene diff renderer" below is out.
+The full design is in [DIS.md](DIS.md). Its claims are tagged as measured on the bench, confirmed by Drew by eye, car estimates, or guesses. This section is the summary.
 
-Pattern, Drew's nav screen:
-1. Draw the turn icon fast: a low-res bitmap, or a stock-nav clone built from graphics-font glyphs.
-2. Draw the text: distance, street.
-3. Finish a high-res pass on a bitmap icon in the background. A glyph icon needs none.
-4. Keep the text updating throughout: distance and street scroll.
+The cluster isn't a framebuffer. There's no engine that turns arbitrary content into commands. Each screen is designed by hand: what gets drawn in what order, and what gets resent when a value changes. A small toolkit of helpers sits underneath.
 
-So screens refine progressively. Something usable goes up in the first message or two. Slow detail work is interleaved behind the fast text updates, and a refinement in flight is cancelled when the content changes, e.g. a new maneuver.
+**Cost model (from the A3 bench; the TT cluster is the same):**
+- Cheap:
+  - text runs, 5+n B
+  - graphics-font glyph cells, 6 B
+  - lines, 6 B
+  - clears, 7–14 B
+- A whole stock nav screen built from ROM glyphs is 135 B in 4 messages.
+- Logical full-centre bitmap: 625–639 B. That's 4–5.7 updates/s on the bench, an estimated 2–3/s in the car.
+- Native 128×96 strokes: 12 B each. A full icon is ~1.4 KB and needs ≥10 ms between messages.
+- Hard limits:
+  - a message is at most 105 B (208 froze the display)
+  - no `55` records with LEN ≥0x80
+  - at most 44 glyphs per `57`
+  - `39` isn't atomic
+  - lines inherit SET/XOR from the last `55`.
+- In the car, every byte crosses the shared 100 kbit/s ICAN and every ACK crosses the gateway twice. That's about 30 ms per ACK block, against 9 ms on the bench. Cluster-side rules carry over from the bench; throughput doesn't.
 
-The old DIS was three processes and a pile of if-chains, touched by 237 commits. The rebuild has five layers, each testable alone.
+**Layers:**
+1. **Transport**: `carpi-tp2` link on 0x6C0/0x6C1. It adds per-message gaps and adaptive pacing after 9n.
+2. **Session**:
+   - handshake, claim `52 05 82 00 1B 40 30` → `53 85` grant
+   - busy/free/reinit (84/05/2E/2F)
+   - a generation counter
+   - a register file for the current clip window and ROP mode, which resets with the generation.
+3. **Shared layer**, built on that register file:
+   - a command encoder that checks the limits
+   - a state tracker that inserts the clip/SET selector each command needs
+   - an order-preserving packer
+   - text metrics
+   - a frame pacer: one frame in flight, latest wins
+   - an exact cost estimator.
+4. **Helpers**: `NumberField`, `ScrollText`, `QuickThenRefineIcon`, `GlyphCells`, `InverseLabel`. Lane displays fit as `GlyphCells`.
+5. **Screens**, written by hand. Each has `enter`, update rules and a fallback ladder (native bitmap → logical bitmap → glyphs → text). Each screen has two lanes:
+   - **update** (distance, scrolling text) always goes first;
+   - **refine** (high-res passes in slices of ≤3 messages) uses only leftover budget, and is cancelled when its slot changes.
 
-1. **Transport.** `carpi-tp2` data link on the fixed 0x6C0/0x6C1 channel: data frames 2n/0n/1n, ACK Bn, receiver-not-ready 9n (wait, resend), keepalive A3 ~2 s, close A8.
-2. **DDP session.**
-   - Handshake: 15 → 00/01 → 08/09 → 20/21 → 33.
-   - Claim `52 05 82 00 1B 40 30`; it's owned only on a `53 85` grant.
-   - Cluster arbitration: busy 53 84 → free 53 05 → reinit 2E → confirm 2F → reclaim.
-   - Output is events (`Ready`, `Busy`, `Lost`, `Error`) and a **generation counter** that bumps on any session or ownership change, so the renderer can never draw into a stale session.
-   - Hard limits:
-     - application message ≤105 B (195 worked, 208 froze the display while ACKs kept coming)
-     - no `55` records with LEN ≥ 0x80
-     - `39` commit is a separate message and isn't atomic.
-3. **Surfaces.**
-   - `Centre`: the white cluster only grants (0,27,64,48) logical = 128×96 physical.
-   - `TopLines`: 2×8 chars over 0x363/0x365, separate from DDP.
-   - A capability profile describes each; red/other clusters are another profile behind the same trait.
-4. **Scene and renderer.**
-   - Sources produce a retained scene per surface: text (cluster font id), 1-bit bitmap, built-in glyph, line, rect.
-   - The renderer diffs the new scene against what the cluster holds and emits the smallest command batch within the limits and the bus budget.
-   - Logical 64×48 by default, native 128×96 where it matters (nav icons).
-   - The renderer also produces a PNG of what it believes is on the cluster, for tests and for the help site.
-5. **Arbiter and sources.**
-   - Each source posts an `Offer { surface, class, priority, min_dwell, expires }` with its scene.
+   The nav screen in Drew's order: fast icon, text, bar, commit, then refine. A distance tick costs 8–10 B. In the readings grid, a value change is one ~10 B text run with no clear.
+6. **Arbiter**: picks which screen is shown.
    - Classes: `Alert` > `NavManeuver` (near a turn) > `Call` > `UserPage` > `Media` > `StockRadio` > `Idle`.
-   - The arbiter picks a winner per surface independently, from a declared rule table: auto-switch to nav within N m of a maneuver, return to the previous page T s after, user page selection via DIS focus.
-   - Sources:
-     - AA nav from the bridge: maneuver, distance, road, lanes once the fork parses them.
-     - Media and call from the bridge.
-     - Readings pages: catalog values, using the diag scheduler.
-     - Alerts.
-     - Stock radio (below).
+   - Rules are declared in a table: auto-switch to nav near a maneuver, return after T s, user selection via DIS focus.
+   - Top lines (0x363/0x365) are written only while the RNS-E is on TV; otherwise the firmware writes them itself.
 
-**Stock radio source.** With FIS-Control on, the RNS-E's DDP session moves to 0x7B2/0x7B3 and its radio text to 0x7B4/0x7B5 (sent only while TV is the source, every 800 ms). `carpi-dis` plays the cluster toward the RNS-E on 0x7B2/0x7B3: it runs the peer side of the same transport and session, accepts its draw commands, and turns them into a scene. The stock radio and nav then compete in the arbiter like any other source. 0x604 is RNS-E nav status, not DIS content; it feeds context.
+**Stock radio source.** With FIS-Control on, the RNS-E's session moves to 0x7B2/0x7B3 and its text to 0x7B4/0x7B5. The Pi plays the cluster toward it and always grants it the screen, keeping a copy of its records. When the radio wins the arbiter, the copy is replayed through our session. If always-grant misbehaves, the fallback is to answer it "busy"; `2E` still forces it to repaint. 0x604 is RNS-E nav status, not DIS content.
+
+**DIS bus share**: proposed 20% of ICAN (Q17).
 
 ### 2.8 Diagnostics
 
@@ -385,7 +391,7 @@ Answered so far (2026-11-07):
 - **Keep awake**: the Pi never holds the bus awake after ignition off.
 - **Buses**: diagnostics must work on a separate OBD interface; many gateways won't route diagnostics from ICAN (the TT's does). Interfaces are named, not numbered.
 - **Values**: keep validity simple. A value is the value or nothing, plus a timestamp.
-- **Cluster**: the A3 and TT white clusters are basically identical. The cluster isn't a framebuffer: text, graphics-font text and lines are fast, bitmaps are slow, and full-res bitmaps are very slow. It needs its own design pass (in progress).
+- **Cluster**: the A3 and TT white clusters are basically identical. The cluster isn't a framebuffer: text, graphics-font text and lines are fast, bitmaps are slow, and full-res bitmaps are very slow. Its design is in DIS.md.
 - **`B7`**: Drew is checking it on the current firmware.
 
 Still open:
@@ -406,3 +412,11 @@ Still open:
 14. Does LIVI's own AP and Bluetooth replace the NetworkManager hotspot setup on the Pi?
 15. Does your phone negotiate HEVC with LIVI? (Pi 5 has no H.264 hardware decode.) The trial answers it.
 16. Is the visible TT odometer about 238,600 km? Sanity check for the 0x65D decode.
+17. DIS: what share of ICAN can it take? Proposed 20%.
+18. DIS: one passive capture of the TT cluster with FIS-Control off, to confirm the capability record and the centre-only claim?
+19. DIS: can the bench cluster run through a real gateway, so the 100k path is measured rather than simulated?
+20. DIS: keep native 128x96 icons in the car at all? Estimated 0.5-1 s per icon change.
+21. DIS: ROM-glyph arrows as the default nav icon, with a 32x38 bitmap for maneuvers the catalog lacks?
+22. DIS: is the RNS-E's own nav used? That decides how early the 0x7B2 mirror is built.
+23. DIS: on TV, should the top lines show the radio's text or our media/nav text?
+24. DIS: long text: marquee, page-flip or truncate, and at what speed? Is a brief blank on a page switch OK?
