@@ -61,6 +61,7 @@ use std::path::{Path, PathBuf};
 /// cover_flash_s = 4    # full cover on a new track, after it's drawn; 0 = off
 /// units = "auto"       # or "metric", "imperial" (auto: as the phone shows)
 /// clock = "auto"       # or "12h", "24h" (auto: 12 h if the phone's ETA has AM/PM)
+/// nav_style = "fancy"  # or "stock" (the RNS-E's own look)
 /// # readings = [ { key = "engine.rpm", label = "RPM", decimals = 0, scale = 1.0 }, ... ]
 /// # Named pages (the wheel steps through them); any store or diag value:
 /// # pages = [ { name = "Daily", cells = [ { key = "engine.oil_temp_c", unit = "°F" },
@@ -220,6 +221,14 @@ pub struct Dis {
     pub cover_flash_s: f64,
     pub units: DisUnits,
     pub clock: DisClock,
+    pub nav_style: DisNavStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisNavStyle {
+    Fancy,
+    Stock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -258,6 +267,7 @@ impl Default for Dis {
             cover_flash_s: 4.0,
             units: DisUnits::Auto,
             clock: DisClock::Auto,
+            nav_style: DisNavStyle::Fancy,
         }
     }
 }
@@ -710,6 +720,10 @@ impl Config {
                     DisClock::Auto => carpi_core::DisClock::Auto,
                     DisClock::H12 => carpi_core::DisClock::H12,
                     DisClock::H24 => carpi_core::DisClock::H24,
+                },
+                nav_style: match self.dis.nav_style {
+                    DisNavStyle::Fancy => carpi_core::DisNavStyle::Fancy,
+                    DisNavStyle::Stock => carpi_core::DisNavStyle::Stock,
                 },
             },
             light: carpi_core::LightSetup {

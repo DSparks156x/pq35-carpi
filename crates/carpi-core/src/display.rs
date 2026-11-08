@@ -15,7 +15,7 @@
 use carpi_can::Frame;
 use carpi_dis::screens::call::CallInput;
 use carpi_dis::screens::media::{MediaInput, MediaLayout};
-use carpi_dis::screens::nav::{Clock, NavConfig, NavInput, Units, format_distance_in};
+use carpi_dis::screens::nav::{Clock, NavConfig, NavInput, NavStyle, Units, format_distance_in};
 use carpi_dis::screens::readings::{ReadingCell, ReadingSpec, ReadingsInput, ReadingsPage, unit_for};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::top::TopLines;
@@ -80,6 +80,8 @@ pub struct DisSetup {
     pub units: Units,
     /// ETA clock (`Auto`: 12 h if the phone's ETA has AM/PM).
     pub clock: Clock,
+    /// Nav screen look: our icons and layout, or the stock RNS-E look.
+    pub nav_style: NavStyle,
 }
 
 impl Default for DisSetup {
@@ -100,6 +102,7 @@ impl Default for DisSetup {
             cover_flash: Some(Duration::from_secs(4)),
             units: Units::Auto,
             clock: Clock::Auto,
+            nav_style: NavStyle::Fancy,
         }
     }
 }
@@ -222,6 +225,7 @@ fn nav_config(setup: &DisSetup) -> NavConfig {
     NavConfig {
         units: setup.units,
         clock: setup.clock,
+        style: setup.nav_style,
         ..NavConfig::default()
     }
 }

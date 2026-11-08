@@ -86,6 +86,10 @@ pub fn get(cfg: &Config) -> Settings {
                 crate::config::DisClock::H12 => carpi_proto::DisClock::H12,
                 crate::config::DisClock::H24 => carpi_proto::DisClock::H24,
             },
+            nav_style: match cfg.dis.nav_style {
+                crate::config::DisNavStyle::Fancy => carpi_proto::DisNavStyle::Fancy,
+                crate::config::DisNavStyle::Stock => carpi_proto::DisNavStyle::Stock,
+            },
             readings: cfg
                 .readings()
                 .into_iter()
@@ -362,6 +366,9 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         if let Some(v) = d.clock {
             doc["dis"]["clock"] = value(snake(&v));
         }
+        if let Some(v) = d.nav_style {
+            doc["dis"]["nav_style"] = value(snake(&v));
+        }
     }
     if let Some(b) = &patch.bindings {
         table(&mut doc, "input")?;
@@ -547,6 +554,7 @@ mod tests {
                         }],
                     }]),
                     clock: Some(carpi_proto::DisClock::H12),
+                    nav_style: Some(carpi_proto::DisNavStyle::Stock),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -564,6 +572,8 @@ mod tests {
         assert_eq!(after.dis.pages[0].cells[0].unit.as_deref(), Some("psi"));
         assert_eq!(cfg.core().dis.pages[0].cells[0].icon.as_deref(), Some("boost"));
         assert_eq!(after.dis.clock, carpi_proto::DisClock::H12);
+        assert_eq!(after.dis.nav_style, carpi_proto::DisNavStyle::Stock);
+        assert_eq!(cfg.core().dis.nav_style, carpi_core::DisNavStyle::Stock);
         // And what the car model gets.
         let core = cfg.core().dis;
         assert!(!core.claim_always);

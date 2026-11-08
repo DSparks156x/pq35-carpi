@@ -423,6 +423,19 @@ pub struct DisSettings {
     pub units: DisUnits,
     #[serde(default)]
     pub clock: DisClock,
+    #[serde(default)]
+    pub nav_style: DisNavStyle,
+}
+
+/// Nav screen look.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisNavStyle {
+    /// Our icons, pocket and lanes.
+    #[default]
+    Fancy,
+    /// The RNS-E's own look (ROM glyph arrows).
+    Stock,
 }
 
 /// A named DIS readings page.
@@ -538,6 +551,8 @@ pub struct DisPatch {
     pub units: Option<DisUnits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock: Option<DisClock>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_style: Option<DisNavStyle>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
