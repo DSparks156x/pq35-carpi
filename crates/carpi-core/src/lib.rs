@@ -398,8 +398,11 @@ impl Car {
             | Request::CommandDone { .. }
             | Request::Update { .. }
             | Request::Diag { .. }
-            | Request::Settings { .. } => Response::Error {
-                message: "subscriptions, commands and jobs are handled per connection".into(),
+            | Request::Settings { .. }
+            // carpid's capture module: it owns the journal and the logs folder.
+            | Request::Capture { .. } => Response::Error {
+                message: "subscriptions, commands, jobs and captures are handled per connection"
+                    .into(),
             },
             Request::Hello { version, .. } => {
                 if version == proto::PROTOCOL_VERSION {
@@ -426,7 +429,7 @@ impl Car {
                 items: self.readings(&[prefix], now),
             },
             Request::Bus => Response::Bus {
-                buses: self.ifaces.iter().map(|i| bus_info(i, now)).collect(),
+                buses: self.buses(now),
             },
             Request::SaveCapture { path } => {
                 let path = path
@@ -442,11 +445,17 @@ impl Car {
                     },
                 }
             }
-            // carpid answers this itself (it owns the journal and the logs folder).
-            Request::Capture { .. } => Response::Error {
-                message: "capture is handled by carpid".into(),
-            },
         }
+    }
+
+    /// Every interface's counters and ring state.
+    pub fn buses(&self, now: Instant) -> Vec<proto::BusInfo> {
+        self.ifaces.iter().map(|i| bus_info(i, now)).collect()
+    }
+
+    /// Copies of the frames recorded in the last `back`, per interface.
+    pub fn capture_window(&self, back: Duration, now: Instant) -> Vec<(String, Vec<RxFrame>)> {
+        self.recorder.window(back, now)
     }
 
     /// Saves the rolling capture under the capture directory; returns a

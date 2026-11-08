@@ -18,8 +18,15 @@ use std::path::{Path, PathBuf};
 /// socket = "/run/user/1000/carpid.sock"
 ///
 /// [recorder]
-/// minutes = 10
-/// dir = "/var/lib/carpi/captures"
+/// minutes = 10         # RAM ring; at least [logs] capture_minutes
+///
+/// [logs]               # captures (docs/PAGES.md 3)
+/// dir = "~/logs"       # <dir>/<date>/<NN>/
+/// capture_minutes = 5  # how far back a capture goes
+/// max_pct = 25         # oldest unstarred entries go above this % of the disk
+///
+/// [clock]
+/// set_from_car = true  # set the Pi clock from the car's (0x65D) when off by > 2 min
 ///
 /// [tx]
 /// enabled = false      # off: gate-approved frames are logged, not sent
@@ -59,6 +66,10 @@ pub struct Config {
     pub api: Api,
     #[serde(default)]
     pub recorder: RecorderCfg,
+    #[serde(default)]
+    pub logs: LogsCfg,
+    #[serde(default)]
+    pub clock: ClockCfg,
     #[serde(default)]
     pub tx: Tx,
     #[serde(default)]
@@ -301,16 +312,69 @@ impl Default for Api {
 pub struct RecorderCfg {
     #[serde(default = "default_minutes")]
     pub minutes: u64,
-    #[serde(default = "default_capture_dir")]
-    pub dir: PathBuf,
+    /// Old key, ignored: captures go to `[logs] dir`. Still parses so old
+    /// files load; carpid warns once.
+    pub dir: Option<PathBuf>,
 }
 
 impl Default for RecorderCfg {
     fn default() -> Self {
         RecorderCfg {
             minutes: default_minutes(),
-            dir: default_capture_dir(),
+            dir: None,
         }
+    }
+}
+
+/// `[logs]`: the logs folder and what a capture takes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct LogsCfg {
+    /// `~/` is the home folder.
+    pub dir: PathBuf,
+    pub capture_minutes: u64,
+    /// Logs use at most this much of the filesystem they're on.
+    pub max_pct: u8,
+}
+
+impl Default for LogsCfg {
+    fn default() -> Self {
+        LogsCfg {
+            dir: "~/logs".into(),
+            capture_minutes: 5,
+            max_pct: 25,
+        }
+    }
+}
+
+impl LogsCfg {
+    /// `dir` with `~/` expanded.
+    pub fn root(&self) -> PathBuf {
+        let home = || {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+        };
+        match self.dir.to_str() {
+            Some("~") => home(),
+            Some(s) if s.starts_with("~/") => home().join(&s[2..]),
+            _ => self.dir.clone(),
+        }
+    }
+}
+
+/// `[clock]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ClockCfg {
+    /// Set the Pi clock from the car's when they differ by over 2 minutes
+    /// and network time hasn't synced.
+    pub set_from_car: bool,
+}
+
+impl Default for ClockCfg {
+    fn default() -> Self {
+        ClockCfg { set_from_car: true }
     }
 }
 
@@ -326,7 +390,8 @@ fn default_minutes() -> u64 {
     10
 }
 
-fn default_capture_dir() -> PathBuf {
+/// Where `SaveCapture` without a path writes (the raw ring dump).
+pub fn raw_capture_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -386,6 +451,12 @@ impl Config {
             if parse_hhmm(v).is_none() {
                 return Err(format!("[light] {name}: \"HH:MM\", got \"{v}\""));
             }
+        }
+        if !(1..=60).contains(&self.logs.capture_minutes) {
+            return Err("[logs] capture_minutes must be 1-60".into());
+        }
+        if !(1..=90).contains(&self.logs.max_pct) {
+            return Err("[logs] max_pct must be 1-90".into());
         }
         if let Some(r) = &self.dis.readings {
             if r.len() > 8 {
@@ -506,6 +577,8 @@ impl Config {
             bus,
             api: Api::default(),
             recorder: RecorderCfg::default(),
+            logs: LogsCfg::default(),
+            clock: ClockCfg::default(),
             tx: Tx::default(),
             power: Power::default(),
             input: Input::default(),
@@ -599,5 +672,26 @@ mod tests {
             Config::parse(&format!("{base}[dis]\nreadings = [{}]\n", nine.join(","))).unwrap_err();
         assert!(e.contains("at most 8"), "{e}");
         assert!(Config::parse("[bus.diag]\niface='can0'\n").is_err());
+    }
+
+    #[test]
+    fn logs_section_and_old_recorder_dir() {
+        let base = "[bus.ican]\niface='can0'\n";
+        let c = Config::parse(base).unwrap();
+        assert_eq!(c.logs.capture_minutes, 5);
+        assert_eq!(c.logs.max_pct, 25);
+        assert!(c.clock.set_from_car);
+        assert!(c.logs.root().ends_with("logs"));
+        // Old files still load; the key is ignored.
+        let c = Config::parse(&format!("{base}[recorder]\nminutes = 10\ndir = '/x'\n")).unwrap();
+        assert_eq!(c.recorder.dir.as_deref(), Some(Path::new("/x")));
+        let c = Config::parse(&format!(
+            "{base}[logs]\ndir = '/data/logs'\ncapture_minutes = 2\n[clock]\nset_from_car = false\n"
+        ))
+        .unwrap();
+        assert_eq!(c.logs.root(), PathBuf::from("/data/logs"));
+        assert!(!c.clock.set_from_car);
+        assert!(Config::parse(&format!("{base}[logs]\nmax_pct = 0\n")).is_err());
+        assert!(Config::parse(&format!("{base}[logs]\ncapture_minutes = 0\n")).is_err());
     }
 }

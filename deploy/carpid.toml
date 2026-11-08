@@ -12,9 +12,23 @@ iface = "can0"
 [bus.diag]
 iface = "can0"
 
+# RAM ring of every bus. Always holds at least [logs] capture_minutes.
 [recorder]
 minutes = 10
-# dir = "/home/pi/captures"
+
+# Captures (docs/PAGES.md 3): ~/logs/<date>/<NN>/. A capture is the last
+# capture_minutes of CAN and journal, the values, the config files and
+# info.txt. Oldest unstarred entries go once the logs pass max_pct of the disk.
+[logs]
+dir = "~/logs"
+capture_minutes = 5
+max_pct = 25
+
+# Set the Pi clock from the car's (0x65D) when they differ by more than
+# 2 minutes and network time hasn't synced. Needs os/profile.sh (polkit rule)
+# and the Pi's timezone set to the car's (profile --tz).
+[clock]
+set_from_car = true
 
 # Off: frames the gate approves (RNS-E label/brightness) are logged, not sent.
 [tx]

@@ -2,6 +2,8 @@
 [Unit]
 Description=LIVI (pq35-carpi fork)
 After=carpid.service
+# A crash makes a capture (deploy/carpi-capture@.service).
+OnFailure=carpi-capture@%n.service
 
 [Service]
 Environment=WAYLAND_DISPLAY=wayland-0

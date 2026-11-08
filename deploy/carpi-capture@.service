@@ -1,0 +1,14 @@
+# A capture after a user service failed: deploy/livi.service has
+#   OnFailure=carpi-capture@%n.service
+# so a LIVI crash runs `carpi capture --trigger crash:livi.service` (carpid
+# names it crash:livi and rate limits it). Install next to the other units:
+#   cp deploy/carpi-capture@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+[Unit]
+Description=carpi capture after %i failed
+After=carpid.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/carpi/current/bin/carpi capture --trigger crash:%i
+TimeoutStartSec=60

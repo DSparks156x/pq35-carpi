@@ -7,9 +7,10 @@
 //! whose prefixes cover diag catalog values also holds diag subscriptions:
 //! leased for 3x the period, renewed on every poll, dropped with it.
 //! Commands to LIVI, update jobs and diag jobs are per connection too
-//! (`commands.rs`, `update.rs`).
+//! (`commands.rs`, `update.rs`). `Capture` goes to `capture.rs`.
 
 use crate::Msg;
+use crate::capture::Captures;
 use crate::update::Jobs;
 use carpi_proto::{Reading, Value};
 use std::collections::HashMap;
@@ -34,7 +35,12 @@ pub fn diff(seen: &mut HashMap<String, Option<Value>>, items: Vec<Reading>) -> V
 }
 
 #[cfg(unix)]
-pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) -> anyhow::Result<()> {
+pub fn spawn(
+    path: &Path,
+    tx: mpsc::Sender<Msg>,
+    jobs: Arc<Jobs>,
+    captures: Captures,
+) -> anyhow::Result<()> {
     use anyhow::Context;
     use std::os::unix::fs::PermissionsExt;
     use tokio::net::UnixListener;
@@ -59,8 +65,9 @@ pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) -> anyhow::Res
                     next_conn += 1;
                     let tx = tx.clone();
                     let jobs = jobs.clone();
+                    let captures = captures.clone();
                     tokio::spawn(async move {
-                        serve(conn, stream, tx.clone(), jobs).await;
+                        serve(conn, stream, tx.clone(), jobs, captures).await;
                         let _ = tx.send(Msg::ConnClosed(conn)).await;
                     });
                 }
@@ -75,7 +82,13 @@ pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) -> anyhow::Res
 }
 
 #[cfg(unix)]
-async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) {
+async fn serve(
+    conn: u64,
+    stream: tokio::net::UnixStream,
+    tx: mpsc::Sender<Msg>,
+    jobs: Arc<Jobs>,
+    captures: Captures,
+) {
     use carpi_proto::{DiagAction, Request, Response};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::oneshot;
@@ -177,6 +190,7 @@ async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>,
                     }
                 }
             }
+            Ok(Request::Capture { trigger }) => captures.capture(&trigger).await,
             Ok(Request::Settings { action }) => {
                 let (rtx, rrx) = oneshot::channel();
                 if tx.send(Msg::Settings(action, rtx)).await.is_err() {
@@ -306,7 +320,12 @@ pub fn cleanup(path: &Path) {
 }
 
 #[cfg(not(unix))]
-pub fn spawn(path: &Path, _tx: mpsc::Sender<Msg>, _jobs: Arc<Jobs>) -> anyhow::Result<()> {
+pub fn spawn(
+    path: &Path,
+    _tx: mpsc::Sender<Msg>,
+    _jobs: Arc<Jobs>,
+    _captures: Captures,
+) -> anyhow::Result<()> {
     tracing::warn!(
         "no Unix sockets on this platform; API at {} disabled",
         path.display()

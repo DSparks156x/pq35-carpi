@@ -7,12 +7,19 @@
 //! power off; `act` carries that out. Sending and powering off stay off until
 //! enabled in the config. Update jobs run `carpi-update` and ask LIVI to drop
 //! its hotspot while they fetch. With `[portal]`, the phone portal runs too.
+//! Captures go to the logs folder (`capture`), automatically on crashes and
+//! bad CAN or update faults (`runmark`, `faults`); the Pi clock follows the
+//! car's until network time syncs (`clock`).
 
 mod act;
 mod api;
+pub mod capture;
+mod clock;
 mod commands;
 mod config;
+mod faults;
 mod portal;
+mod runmark;
 mod settings;
 mod update;
 
@@ -24,6 +31,8 @@ use carpi_proto::{DiagAction, JobEvent, Response, SettingsAction};
 use clap::Parser;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
@@ -71,6 +80,8 @@ pub enum Msg {
     DiagStatus(oneshot::Sender<Result<(), String>>, JobEvents),
     Settings(SettingsAction, oneshot::Sender<Response>),
     ConnClosed(u64),
+    /// The ring's last `Duration` and the value store, for a capture.
+    Snapshot(Duration, oneshot::Sender<capture::Snapshot>),
 }
 
 /// What the main loop owns besides the car model.
@@ -85,6 +96,14 @@ struct Daemon {
     portal_status: watch::Sender<carpi_portal::Status>,
     /// Learned light points not yet in the file, and when they changed.
     learned_dirty: Option<Instant>,
+    captures: capture::Captures,
+    replay: bool,
+    /// This run's crash marker (not in replay) and its last heartbeat.
+    mark: Option<Arc<runmark::RunMark>>,
+    beat_at: Instant,
+    /// Next car-clock comparison; true while one is setting the clock.
+    clock_at: Instant,
+    clock_busy: Arc<AtomicBool>,
 }
 
 /// Nudges are saved this long after the last one, so a run of key presses
@@ -112,9 +131,30 @@ async fn main() -> anyhow::Result<()> {
         );
         config::Config::fallback()
     };
+    if cfg.recorder.dir.is_some() {
+        warn!(
+            "[recorder] dir is no longer used; captures go to [logs] dir ({})",
+            cfg.logs.root().display()
+        );
+    }
+    let replay = args.replay.is_some();
+    // Not in replay: a dev run mustn't touch the car's crash marker.
+    let (mark, previous) = if replay {
+        (None, runmark::Previous::Clean)
+    } else {
+        let (m, p) = runmark::RunMark::start(&runmark::state_dir());
+        (Some(Arc::new(m)), p)
+    };
+    let (panic_tx, mut panic_rx) = mpsc::unbounded_channel::<String>();
+    if let Some(m) = &mark {
+        runmark::install_panic_hook(m.path().to_path_buf(), panic_tx);
+    }
+
     let ifaces = cfg.ifaces();
-    let recorder = Recorder::new(Duration::from_secs(cfg.recorder.minutes * 60), 2_000_000);
-    let mut car = Car::new(ifaces.clone(), recorder, cfg.recorder.dir.clone());
+    // The ring always covers a capture.
+    let ring_min = cfg.recorder.minutes.max(cfg.logs.capture_minutes);
+    let recorder = Recorder::new(Duration::from_secs(ring_min * 60), 2_000_000);
+    let mut car = Car::new(ifaces.clone(), recorder, config::raw_capture_dir());
     car.configure(cfg.core(), Instant::now());
     let mut act = act::Actuators::new(
         &cfg,
@@ -150,7 +190,44 @@ async fn main() -> anyhow::Result<()> {
         args.config.clone(),
     ));
     act.set_hub(jobs.hub.clone());
-    api::spawn(&cfg.api.socket, tx.clone(), jobs)?;
+    let captures = capture::Captures::new(
+        capture::Setup::new(&cfg, &args.config),
+        tx.clone(),
+        jobs.hub.clone(),
+    );
+    act.set_captures(captures.clone());
+    api::spawn(&cfg.api.socket, tx.clone(), jobs, captures.clone())?;
+    captures.prune_now();
+    match previous {
+        runmark::Previous::Clean => {}
+        runmark::Previous::PowerLoss => info!("the last run ended with the power; no capture"),
+        runmark::Previous::Crashed { pid, end, panic } => {
+            warn!("the last carpid run (pid {pid:?}) didn't stop cleanly");
+            let mut note = format!(
+                "carpid crashed; the journal ends where the last run (pid {}) did",
+                pid.map_or("?".into(), |p| p.to_string())
+            );
+            if let Some(p) = panic {
+                note.push_str(&format!("; {p}"));
+            }
+            captures.crash(capture::After { end, note });
+        }
+    }
+    {
+        let c = captures.clone();
+        tokio::spawn(async move {
+            while let Some(reason) = panic_rx.recv().await {
+                c.auto(reason);
+            }
+        });
+    }
+    if !replay {
+        faults::spawn(
+            ifaces.iter().map(|i| i.name.clone()).collect(),
+            captures.clone(),
+            runmark::state_dir(),
+        );
+    }
 
     let (portal_status, status_rx) = watch::channel(carpi_portal::Status {
         version: env!("CARGO_PKG_VERSION").into(),
@@ -172,10 +249,18 @@ async fn main() -> anyhow::Result<()> {
         diag_jobs: HashMap::new(),
         portal_status,
         learned_dirty: None,
+        captures,
+        replay,
+        mark,
+        beat_at: Instant::now(),
+        clock_at: Instant::now() + Duration::from_secs(10),
+        clock_busy: Arc::new(AtomicBool::new(false)),
     };
 
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let stop = stop_signal();
+    tokio::pin!(stop);
     loop {
         // DIS and diag timers can be finer than the 100 ms tick.
         let now = Instant::now();
@@ -193,11 +278,12 @@ async fn main() -> anyhow::Result<()> {
                 }
                 d.publish_status(&car);
                 d.save_learned(false);
+                d.housekeeping(&car);
             }
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
                 car.service(Instant::now());
             }
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut stop => {
                 info!("stopping");
                 break;
             }
@@ -205,7 +291,26 @@ async fn main() -> anyhow::Result<()> {
         d.flush(&mut car);
     }
     api::cleanup(&socket);
+    if let Some(m) = &d.mark {
+        m.clean();
+    }
     Ok(())
+}
+
+/// Ctrl-C, or SIGTERM from systemd.
+async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 impl Daemon {
@@ -223,7 +328,12 @@ impl Daemon {
             Msg::PortEnded(idx, err) => {
                 let name = &ifaces[idx].name;
                 match err {
-                    Some(e) => warn!("{name}: read failed: {e}"),
+                    Some(e) => {
+                        warn!("{name}: read failed: {e}");
+                        if !self.replay {
+                            self.captures.auto(format!("error:{name}-gone"));
+                        }
+                    }
                     None => info!("{name}: replay finished"),
                 }
             }
@@ -269,7 +379,74 @@ impl Daemon {
                 let _ = reply.send(self.settings(car, action, now));
             }
             Msg::ConnClosed(conn) => car.conn_closed(conn, now),
+            Msg::Snapshot(back, reply) => {
+                let _ = reply.send(capture::Snapshot::take(car, back, now));
+            }
         }
+    }
+
+    /// Heartbeat for the crash marker, and the car clock. Both run off the
+    /// loop.
+    fn housekeeping(&mut self, car: &Car) {
+        let now = Instant::now();
+        if let Some(m) = &self.mark
+            && now.duration_since(self.beat_at) >= runmark::BEAT
+        {
+            self.beat_at = now;
+            let m = m.clone();
+            tokio::task::spawn_blocking(move || m.beat());
+        }
+        if self.replay || !self.cfg.clock.set_from_car || now < self.clock_at {
+            return;
+        }
+        self.clock_at = now + clock::CHECK_EVERY;
+        if self.clock_busy.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some(carpi_proto::Reading {
+            value: Some(carpi_proto::Value::Text(dt)),
+            age_ms,
+            ..
+        }) = car
+            .readings(&["clock.datetime".to_string()], now)
+            .into_iter()
+            .find(|r| r.name == "clock.datetime")
+        else {
+            return;
+        };
+        let Some(car_t) = clock::car_now(&dt, age_ms) else {
+            return;
+        };
+        let pi = clock::local_now().naive;
+        let Some(target) = clock::needs_set(pi, car_t) else {
+            return;
+        };
+        let busy = self.clock_busy.clone();
+        busy.store(true, Ordering::Relaxed);
+        tokio::spawn(async move {
+            let r = tokio::task::spawn_blocking(move || clock::set_from_car(target, pi)).await;
+            // Synced or failing: look again in 10 minutes, not every minute.
+            let wait = match r {
+                Ok(Ok(Some(changed))) => {
+                    warn!("clock: {changed}");
+                    Duration::ZERO
+                }
+                Ok(Ok(None)) => {
+                    info!("clock: car and Pi differ, but network time is synced; leaving it");
+                    Duration::from_secs(600)
+                }
+                Ok(Err(e)) => {
+                    warn!("clock: {e}");
+                    Duration::from_secs(600)
+                }
+                Err(e) => {
+                    warn!("clock: {e}");
+                    Duration::from_secs(600)
+                }
+            };
+            tokio::time::sleep(wait).await;
+            busy.store(false, Ordering::Relaxed);
+        });
     }
 
     fn settings(&mut self, car: &mut Car, action: SettingsAction, now: Instant) -> Response {

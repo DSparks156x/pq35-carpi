@@ -24,6 +24,8 @@ pub struct Actuators {
     keyboard: Option<carpi_input::LiviKeyboard>,
     /// Bridge commands to LIVI, for key actions while AA/CarPlay has focus.
     hub: Option<Arc<crate::commands::CommandHub>>,
+    /// The capture key gesture.
+    captures: Option<crate::capture::Captures>,
 }
 
 impl Actuators {
@@ -63,11 +65,16 @@ impl Actuators {
             #[cfg(target_os = "linux")]
             keyboard,
             hub: None,
+            captures: None,
         }
     }
 
     pub fn set_hub(&mut self, hub: Arc<crate::commands::CommandHub>) {
         self.hub = Some(hub);
+    }
+
+    pub fn set_captures(&mut self, captures: crate::capture::Captures) {
+        self.captures = Some(captures);
     }
 
     /// Sends input actions to LIVI in order. False if no LIVI is attached.
@@ -141,10 +148,13 @@ impl Actuators {
                 }
             }
             Output::Dis(k) => debug!("DIS key {k:?}"),
-            Output::Action(SystemAction::SaveCapture) => {
-                let resp = car.save_default_capture();
-                info!("capture: {resp}");
-            }
+            Output::Action(SystemAction::SaveCapture) => match &self.captures {
+                Some(c) => {
+                    let c = c.clone();
+                    tokio::spawn(async move { c.capture("key").await });
+                }
+                None => info!("capture: {}", car.save_default_capture()),
+            },
             Output::Action(a @ (SystemAction::Shutdown | SystemAction::Reboot)) => {
                 if !self.shutdown_enabled {
                     info!("would run {a:?} ([power] shutdown = false)");

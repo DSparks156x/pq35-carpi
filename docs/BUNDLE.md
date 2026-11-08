@@ -47,6 +47,7 @@ bin/wlcap                           sdlink: screen capture
 share/config/carpid.toml            default config, reference only
 share/systemd/user/carpid.service
 share/systemd/user/livi.service
+share/systemd/user/carpi-capture@.service
 share/udev/99-carpi-uinput.rules
 share/sdlink/run/...                sdlink pi/run, as-is (scripts, units, avsd.env)
 firmware/teensy/sdemu.hex           only if the build had a Teensy image

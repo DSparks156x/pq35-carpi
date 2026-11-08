@@ -17,6 +17,7 @@ carpi-proto.workspace = true
 carpi-state.workspace = true
 carpi-light.workspace = true
 carpi-portal.workspace = true
+carpi-logs.workspace = true
 toml_edit = "0.25"
 anyhow.workspace = true
 clap.workspace = true
@@ -26,6 +27,9 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

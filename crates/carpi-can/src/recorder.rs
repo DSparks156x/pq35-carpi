@@ -4,7 +4,7 @@
 use crate::{RxFrame, candump};
 use std::collections::VecDeque;
 use std::io::{self, Write};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 struct Entry {
     bus: u8,
@@ -61,6 +61,26 @@ impl Recorder {
         self.frames.is_empty()
     }
 
+    /// How far back the ring holds.
+    pub fn keep(&self) -> Duration {
+        self.keep
+    }
+
+    /// Copies of the frames received in the last `back` before `now`, per
+    /// bus in the order buses were registered (empty buses included).
+    pub fn window(&self, back: Duration, now: Instant) -> Vec<(String, Vec<RxFrame>)> {
+        let mut out: Vec<(String, Vec<RxFrame>)> =
+            self.buses.iter().map(|b| (b.clone(), Vec::new())).collect();
+        // Frames are pushed in receive order, so the window is a suffix.
+        let from = self
+            .frames
+            .partition_point(|e| now.saturating_duration_since(e.rx.at) > back);
+        for e in self.frames.range(from..) {
+            out[e.bus as usize].1.push(e.rx);
+        }
+        out
+    }
+
     /// Writes everything held, oldest first, in candump log format.
     pub fn dump(&self, w: &mut impl Write) -> io::Result<usize> {
         for e in &self.frames {
@@ -100,6 +120,35 @@ mod tests {
             r.push(b, rx(t0, i));
         }
         assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn window_is_the_recent_suffix_per_bus() {
+        let t0 = Instant::now();
+        let mut r = Recorder::new(Duration::from_secs(600), 1000);
+        let a = r.bus("ican");
+        let b = r.bus("obd");
+        for s in 0..10u64 {
+            r.push(
+                if s % 2 == 0 { a } else { b },
+                rx(t0 + Duration::from_secs(s), s as u32),
+            );
+        }
+        let now = t0 + Duration::from_secs(9);
+        let w = r.window(Duration::from_secs(3), now);
+        assert_eq!(w.len(), 2);
+        assert_eq!(w[0].0, "ican");
+        let ids = |v: &Vec<RxFrame>| v.iter().map(|f| f.frame.id).collect::<Vec<_>>();
+        assert_eq!(ids(&w[0].1), [6, 8]);
+        assert_eq!(ids(&w[1].1), [7, 9]);
+        let later = t0 + Duration::from_secs(60);
+        assert!(
+            r.window(Duration::from_secs(3), later)
+                .iter()
+                .all(|(_, v)| v.is_empty())
+        );
+        let all = r.window(Duration::from_secs(3600), now);
+        assert_eq!(all.iter().map(|(_, v)| v.len()).sum::<usize>(), 10);
     }
 
     #[test]

@@ -132,11 +132,14 @@ The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/p
 - networkd CAN config;
 - udev rules;
 - lingering;
+- the journal on disk, capped at 200 MB, and the car user in `adm` (captures read every unit's journal);
+- a polkit rule so carpid can set the clock from the car's (timedated `set-time` and `set-ntp`);
+- the timezone, with `--tz` (or `CARPI_TZ`). It must match the car clock, which is local time;
 - later, the NVMe boot-time trimming.
 
 The bundle manifest names the minimum profile version it needs. The script is what I did by hand to the trial card, written down.
 
-Run it as `sudo os/profile.sh [--hat carpihat|cowcarhat] [--dry-run]`; CarPiHat is the default and Drew's hat has no lines yet. It records `PROFILE_VERSION` and the hat in `/etc/carpi-profile`, and also creates `/opt/carpi/releases` owned by the car user. The CAN network file sets `RequiredForOnline=no` so a car without the hat doesn't stall boot in wait-online.
+Run it as `sudo os/profile.sh [--hat carpihat|cowcarhat] [--tz Area/City] [--dry-run]`; CarPiHat is the default and Drew's hat has no lines yet. It records `PROFILE_VERSION` and the hat in `/etc/carpi-profile`, and also creates `/opt/carpi/releases` owned by the car user. The CAN network file sets `RequiredForOnline=no` so a car without the hat doesn't stall boot in wait-online.
 
 ## Decisions (Drew, 2026-11-07)
 

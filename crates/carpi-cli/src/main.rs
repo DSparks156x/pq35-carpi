@@ -42,8 +42,13 @@ enum Cmd {
     },
     /// Bus and NM ring state from carpid.
     Bus,
-    /// Save carpid's rolling capture (candump log format).
-    Capture { path: Option<String> },
+    /// Save a capture into carpid's logs folder: the last few minutes of
+    /// CAN, journal, values and config, as the next `<date> #NN`.
+    Capture {
+        /// What made it: `cli` by hand; `crash:<unit>` from carpi-capture@.service.
+        #[arg(long, default_value = "cli")]
+        trigger: String,
+    },
     /// Stream changing values from carpid until Ctrl-C.
     Watch {
         #[arg(default_value = "")]
@@ -121,7 +126,7 @@ fn main() -> anyhow::Result<()> {
         } => replay(file, &prefix, gap_ms),
         Cmd::Values { prefix } => print(call(args.socket, Request::Values { prefix })?),
         Cmd::Bus => print(call(args.socket, Request::Bus)?),
-        Cmd::Capture { path } => print(call(args.socket, Request::SaveCapture { path })?),
+        Cmd::Capture { trigger } => print(call(args.socket, Request::Capture { trigger })?),
         Cmd::Watch { prefix, period_ms } => watch(args.socket, prefix, period_ms),
         Cmd::NavTrace { out, period_ms } => nav_trace(args.socket, out, period_ms),
         Cmd::Update { action, apply } => update(args.socket, action.into(), apply),

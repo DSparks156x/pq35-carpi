@@ -1,8 +1,10 @@
 #!/bin/bash
 # Turn a fresh Raspberry Pi OS Trixie into a carpi device. DEPLOY.md section 6.
 #
-#   sudo os/profile.sh [--hat carpihat|cowcarhat] [--user NAME] [--dry-run]
+#   sudo os/profile.sh [--hat carpihat|cowcarhat] [--user NAME] [--tz ZONE] [--dry-run]
 #
+# --tz (or CARPI_TZ=...): the Pi's timezone, e.g. America/Chicago. The car clock is local time and
+# carpid sets the Pi clock from it, so the two must agree. Without it the timezone is left alone.
 # Idempotent: every step checks first and only changes what's missing. Safe to re-run.
 # Never touches user config (~/.config/carpi, ~/.config/LIVI, ...).
 # Bump PROFILE_VERSION when a step is added that bundles may rely on; bundles name the minimum
@@ -13,13 +15,15 @@ PROFILE_VERSION=1
 
 HAT=carpihat
 USERNAME=${SUDO_USER:-}
+TZONE=${CARPI_TZ:-}
 DRY=0
 while [ $# -gt 0 ]; do
   case $1 in
     --hat) HAT=$2; shift 2 ;;
     --user) USERNAME=$2; shift 2 ;;
+    --tz) TZONE=$2; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "profile: unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -64,8 +68,8 @@ PACKAGES=(
   # h26xparse/waylandsink/v4l2sl*/va* (bad), avdec_* (libav), pulsesink
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
   gstreamer1.0-gl gstreamer1.0-pulseaudio
-  # carpid and the bench
-  can-utils evtest wayvnc
+  # carpid and the bench; polkitd for carpid's clock rule
+  can-utils evtest wayvnc polkitd
 )
 
 # 1. Packages
@@ -149,7 +153,38 @@ for d in /opt/carpi /opt/carpi/releases; do
   fi
 done
 
-# 7. Record the profile.
+# 7. Journal on disk, capped, so a capture after a crash still has the minutes before it.
+#    The car user reads every unit's journal through the adm group.
+if put_file /etc/systemd/journald.conf.d/carpi.conf "[Journal]
+Storage=persistent
+SystemMaxUse=200M"; then
+  do_ systemctl restart systemd-journald
+fi
+if ! id -nG "$USERNAME" | tr ' ' '\n' | grep -qx adm; then
+  say "adding $USERNAME to adm"; do_ usermod -aG adm "$USERNAME"; REBOOT=1
+fi
+
+# 8. carpid sets the clock from the car's while network time hasn't synced (timedated; needs
+#    set-ntp too, since timedated refuses set-time while NTP is on).
+put_file /etc/polkit-1/rules.d/50-carpi-time.rules "// carpid: set the clock from the car's (crates/carpid/src/clock.rs).
+polkit.addRule(function(action, subject) {
+  if ((action.id == \"org.freedesktop.timedate1.set-time\" ||
+       action.id == \"org.freedesktop.timedate1.set-ntp\") && subject.user == \"$USERNAME\") {
+    return polkit.Result.YES;
+  }
+});" || true
+
+# 9. Timezone, when asked for.
+if [ -n "$TZONE" ]; then
+  [ -f "/usr/share/zoneinfo/$TZONE" ] || die "unknown timezone: $TZONE"
+  if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "$TZONE" ]; then
+    say "timezone $TZONE"; do_ timedatectl set-timezone "$TZONE"
+  else
+    say "timezone ok"
+  fi
+fi
+
+# 10. Record the profile.
 put_file /etc/carpi-profile "PROFILE_VERSION=$PROFILE_VERSION
 HAT=$HAT" || true
 

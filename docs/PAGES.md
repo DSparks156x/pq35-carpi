@@ -68,6 +68,7 @@ One capture is one press of the capture trigger. It saves the **last 5 minutes**
   - Prev extended (exists).
   - A Capture button on the Logs page.
   - A button in the portal.
+  - Automatic, only for crashes and bad faults (Drew): a LIVI crash (`carpi-capture@.service`), a carpid crash (found at the next start; journal only), CAN bus-off, interface gone or an error-passive storm, an update rollback. At most one per reason per 10 min and 6 an hour.
 - **Contents**:
   - The CAN ring of every bus, as candump.
   - The journal for the same window, across all units: carpid, LIVI, sdlink/avsd, wayvnc, the kernel, NetworkManager/hostapd and bluetooth.
@@ -112,5 +113,4 @@ A rewrite of the page. Built for a phone first, served by the existing axum serv
 
 ## 7. Open
 
-- Should faults (CAN bus-off, a crash in carpid or LIVI) also trigger a capture automatically?
 - Data page: keep the fixed groups (Engine/Drivetrain/Body/Electrical) as the starting pages, or start empty?
