@@ -9,11 +9,9 @@
 
 use carpi_can::Frame;
 use carpi_dis::screens::nav::NavInput;
-use carpi_dis::helpers::Ctx;
 use carpi_dis::icons::Art;
 use carpi_dis::image::dither;
-use carpi_dis::screens::build_frame;
-use carpi_dis::screens::media::{ART, MediaInput, MediaLayout, MediaScreen};
+use carpi_dis::screens::media::{ART, MediaInput, MediaLayout};
 use carpi_dis::screens::readings::{ReadingCell, ReadingsInput, ReadingsPage};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::{Dis, DisConfig, ScreenId, SessionEvent};
@@ -143,11 +141,6 @@ pub fn media_at(t: Duration) -> MediaInput {
     }
 }
 
-/// A screen the bench drives itself (not in the arbiter yet).
-struct Direct {
-    screen: MediaScreen,
-    shown: Option<u32>,
-}
 
 pub fn stop_file() -> std::path::PathBuf {
     std::env::var_os("CARPI_BENCH_STOP").map_or_else(|| "dis-bench.stop".into(), Into::into)
@@ -363,13 +356,17 @@ pub struct Bench {
     readings_cycle: u64,
     focus: bool,
     probe: Option<Probe>,
-    direct: Option<Direct>,
 }
 
 impl Bench {
     pub fn new(now: Instant, screens: Screens, secs: f64) -> Self {
         let dis = Dis::new(DisConfig {
             readings_pages: reading_pages(),
+            media_layout: if screens == Screens::MediaArt {
+                MediaLayout::Art
+            } else {
+                MediaLayout::Stack
+            },
             ..DisConfig::default()
         });
         let mut b = Bench {
@@ -393,22 +390,13 @@ impl Bench {
             now,
             readings_cycle: 0,
             focus: false,
-            direct: match screens {
-                Screens::MediaStack => Some(MediaLayout::Stack),
-                Screens::MediaArt => Some(MediaLayout::Art),
-                _ => None,
-            }
-            .map(|l| Direct {
-                screen: MediaScreen::new(l),
-                shown: None,
-            }),
             probe: (screens == Screens::Probe).then_some(Probe {
                 stage: ProbeStage::Blank,
                 at: now,
                 round: 1,
             }),
         };
-        if matches!(screens, Screens::Probe | Screens::MediaStack | Screens::MediaArt) {
+        if screens == Screens::Probe {
             b.dis.set_probe(now, true);
         }
         b.dis.start(now);
@@ -516,36 +504,14 @@ impl Bench {
         }
     }
 
-    /// Bench-driven screen: feed it, then build and send a frame when idle.
-    fn direct_step(&mut self, now: Instant) {
-        let t = now - self.t0;
-        let Some(d) = &mut self.direct else { return };
-        d.screen.set(now, media_at(t));
-        let s = self.dis.session();
-        let (Some(profile), true, true) = (s.profile(), s.owned(), s.frame_idle()) else {
-            return;
-        };
-        let generation = s.generation();
-        let regs = s.registers();
-        let cx = Ctx::new(profile);
-        let enter = d.shown != Some(generation);
-        match build_frame(&mut d.screen, now, &cx, regs, enter) {
-            Ok(f) => {
-                if self.dis.submit_packed(now, f) {
-                    d.shown = Some(generation);
-                }
-            }
-            Err(e) => self.say(now, format!("pack error {e:?}")),
-        }
-    }
-
     fn inputs(&mut self, now: Instant) {
         if self.probe.is_some() {
             self.probe_step(now);
             return;
         }
-        if self.direct.is_some() {
-            self.direct_step(now);
+        if matches!(self.screens, Screens::MediaStack | Screens::MediaArt) {
+            // No user page: media wins the centre through the arbiter.
+            self.dis.set_media(now, media_at(now - self.t0));
             return;
         }
         let t = now - self.t0;

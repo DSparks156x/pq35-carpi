@@ -6,6 +6,7 @@ use crate::arbiter::{Arbiter, ArbiterConfig, Class, Surface};
 use crate::fb::Fb;
 use crate::helpers::Ctx;
 use crate::pack::{PackError, Packed, Registers};
+use crate::screens::media::{MediaInput, MediaLayout, MediaScreen};
 use crate::screens::nav::{NavConfig, NavInput, NavScreen};
 use crate::screens::readings::{ReadingSpec, ReadingsInput, ReadingsPage, ReadingsScreen};
 use crate::screens::{Screen, build_frame};
@@ -17,6 +18,7 @@ use std::time::Instant;
 pub enum ScreenId {
     Nav,
     Readings,
+    Media,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -28,6 +30,7 @@ pub struct DisConfig {
     pub readings: Vec<ReadingSpec>,
     /// Subpages the wheel steps through.
     pub readings_pages: Vec<ReadingsPage>,
+    pub media_layout: MediaLayout,
 }
 
 pub struct Dis {
@@ -35,6 +38,7 @@ pub struct Dis {
     pub arbiter: Arbiter,
     nav: NavScreen,
     readings: ReadingsScreen,
+    media: MediaScreen,
     user_page: Option<ScreenId>,
     /// Screen entered, and the generation it was entered in.
     shown: Option<(ScreenId, u32)>,
@@ -58,6 +62,7 @@ impl Dis {
             } else {
                 ReadingsScreen::with_pages(cfg.readings_pages)
             },
+            media: MediaScreen::new(cfg.media_layout),
             user_page: None,
             shown: None,
             reenter: false,
@@ -140,6 +145,15 @@ impl Dis {
         self.step(now);
     }
 
+    /// Media state. Something with a title or a duration makes media a
+    /// candidate for the centre (below nav, calls and user pages).
+    pub fn set_media(&mut self, now: Instant, m: MediaInput) {
+        let on = m.title.is_some() || m.duration_ms.is_some_and(|d| d > 0);
+        self.arbiter.set(Class::Media, on);
+        self.media.set(now, m);
+        self.step(now);
+    }
+
     pub fn set_readings(&mut self, now: Instant, r: ReadingsInput) {
         self.readings.set(r);
         self.step(now);
@@ -180,6 +194,7 @@ impl Dis {
                 match id {
                     ScreenId::Nav => self.nav.next_deadline(&cx),
                     ScreenId::Readings => self.readings.next_deadline(&cx),
+                    ScreenId::Media => self.media.next_deadline(&cx),
                 }
             }
             _ => None,
@@ -198,7 +213,8 @@ impl Dis {
         match c {
             Class::NavManeuver => Some(ScreenId::Nav),
             Class::UserPage => self.user_page,
-            // No screens yet for alerts, calls, media or the stock radio.
+            Class::Media => Some(ScreenId::Media),
+            // No screens yet for alerts, calls or the stock radio.
             _ => None,
         }
     }
@@ -224,6 +240,7 @@ impl Dis {
         let screen: &mut dyn Screen = match id {
             ScreenId::Nav => &mut self.nav,
             ScreenId::Readings => &mut self.readings,
+            ScreenId::Media => &mut self.media,
         };
         match build_frame(screen, now, &cx, self.session.registers(), enter) {
             Ok(packed) => {

@@ -393,6 +393,7 @@ impl Display {
                 (false, _) => "none".into(),
                 (true, ScreenId::Readings) => "readings".into(),
                 (true, ScreenId::Nav) => "nav".into(),
+                (true, ScreenId::Media) => "media".into(),
             })),
         );
         set(
@@ -401,6 +402,7 @@ impl Display {
                 Value::Text(match id {
                     ScreenId::Readings => "readings".into(),
                     ScreenId::Nav => "nav".into(),
+                    ScreenId::Media => "media".into(),
                 })
             }),
         );

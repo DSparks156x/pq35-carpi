@@ -292,3 +292,27 @@ fn nav_with_refine_paces_strokes() {
     w.settle();
     w.check_screen();
 }
+
+#[test]
+fn media_takes_the_centre_without_a_user_page() {
+    use carpi_dis::screens::media::MediaInput;
+    let mut w = World::new(ClusterSpec::default());
+    w.hu.dis.set_user_page(w.now(), None);
+    w.run(Duration::from_secs(2));
+    assert_eq!(w.hu.dis.shown(), None);
+    let now = w.now();
+    w.hu.dis.set_media(
+        now,
+        MediaInput {
+            title: Some("Song".into()),
+            duration_ms: Some(180_000),
+            position_ms: Some(10_000),
+            playing: true,
+            ..Default::default()
+        },
+    );
+    w.run(Duration::from_secs(2));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
+    w.settle();
+    w.check_screen();
+}
