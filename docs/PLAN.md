@@ -39,7 +39,7 @@ Protocol crates are **sans-IO**: state machines that take `(now, input)` and ret
 crates/
   carpi-can        Frame types, CanPort trait (SocketCAN, replay, sim), rx timestamps,
                    the TX gate and rate caps
-  carpi-signals    Signal table generated from the DBC + overlay; decode with validity
+  carpi-signals    Hand-written decoders for the curated ICAN messages
   carpi-state      Value store: named values, samples with age/validity, watches, derived values
   carpi-nm         NM ring observer and bus-state machine
   carpi-power      Power backends (CarPiHat GPIO, hat MCU) and shutdown sequencing
@@ -55,8 +55,6 @@ crates/
   carpi-sim        Simulators: NM ring, RNS-E, cluster DDP peer, gateway + KWP modules
   carpid           The daemon binary: config, wiring, supervision
   carpi-cli        The `carpi` tool
-tools/
-  dbcgen           DBC + overlay -> checked-in Rust signal table
 hat/               Hat MCU firmware, later phase
 livi/              submodule (fork)
 sdlink/            submodule
@@ -96,16 +94,7 @@ iface = "obd"         # or "ican" on cars whose gateway routes diag from infotai
 
 ### 2.2 Signals and state
 
-**Signal table.** Generated at build time by `tools/dbcgen` from `PQ35_46_ICAN.dbc`, filtered to an allowlist of IDs the car actually sends (41 on the TT), plus a hand-written TOML overlay for what the DBC lacks or gets wrong:
-
-- real DLCs (0x2C1 is 5 on the car, DBC says 6; 0x436 is 6, DBC says 8)
-- timeouts (the DBC has none; default 3x cycle time)
-- invalid raw values (pattern: all-ones = error, all-ones-1 = init; speed 32708/32725/32742; wheel pulses 1021–1023)
-- qualifier bits (`valid_when`/`invalid_when`, e.g. steering `LW1_Int_Status == 0`), and the 30 "Alt" bits that flag stale gateway repeats
-- counters and checksums (XOR on 0x151, 0x531, 0x5B5; CRC8 on 0x3C3, poly unknown)
-- which signals need Kl15
-
-The generated table is checked in, so builds don't need the tool. Car-family differences are an overlay file per car, not code.
+**Signal decoders.** Hand-written in Rust, one decoder per message, for the curated set we actually use. No DBC conversion: the DBC (German, inconsistent across these cars) and `ICAN_rundown.md` are references for writing them, alongside what the old code proved on the car. Each decoder knows its message's real DLC, its timeout (default 3x cycle), its error/init raw values (pattern: all-ones = error, all-ones-1 = init) and which "Alt"/qualifier bit voids which signal. New signals are added by hand when something needs them.
 
 **Values.** Kept simple (Drew: validity, age and source aren't that critical). A value is `Option<T>` plus the time it was last updated:
 - A raw error or init value decodes to `None`.
@@ -190,6 +179,12 @@ Output `{ambient, lights_on, night (with hysteresis), panel_level}`. Three consu
 The full design is in [DIS.md](DIS.md). Its claims are tagged as measured on the bench, confirmed by Drew by eye, car estimates, or guesses. This section is the summary.
 
 The cluster isn't a framebuffer. There's no engine that turns arbitrary content into commands. Each screen is designed by hand: what gets drawn in what order, and what gets resent when a value changes. A small toolkit of helpers sits underneath.
+
+**Two cluster variants** (the handshake reports which):
+- **White**: physical 128×96. The graphics protocol is still 64×48 logical, but crafty high-res drawing reaches native resolution.
+- **Red**: real resolution 64×48; there is no high-res trick.
+
+Screens are designed for 64×48 logical first. Native high-res is a refinement that white clusters get and red ones skip.
 
 **Cost model (from the A3 bench; the TT cluster is the same):**
 - Cheap:
@@ -354,7 +349,7 @@ Contingency, only if latency or CPU says so: the fork's compositor renders offsc
 
 Each step ends with something running on the car or bench, read-only first.
 
-0. **Captures and skeleton.** Workspace, CI, `dbcgen`, recorder. Captures on the car:
+0. **Captures and skeleton.** Workspace, CI, recorder. Captures on the car:
    - ignition off to bus silence (to tune the sleep timers)
    - knob detents and direction (MODE/PTT holds: find the existing notes)
    - a short drive log
@@ -415,6 +410,10 @@ Still open:
 
 1. Knob frames per detent and direction. MODE/PTT hold behaviour is captured or documented somewhere already; find it before step 4.
 2. Command buffer size and what triggers an auto-commit. Nobody knows; the old code avoids obvious auto-commits somehow. Work out how from `dis_client` in step 6.
-3. Does Drew's phone negotiate HEVC with LIVI? The trial answers it.
-4. LIVI's AP and Bluetooth replacing the NetworkManager hotspot: probably fine, confirmed in the trial.
-5. Odometer decode of 0x65D: "plausibly close", checked against the cluster once the read-only daemon runs.
+
+Settled since:
+- HEVC: Drew's phone almost certainly uses it where supported.
+- Odometer decode: close enough.
+- LIVI hotspot/Bluetooth (from LIVI source): its AP is hostapd + dnsmasq, default 10.10.0.1/24 (`LIVI_AP_IP` can set 10.42.0.1). There's no client isolation, so laptops and phones can still join and reach SSH and the portal. It makes wlan0 unmanaged in NetworkManager while the AP runs. It owns BlueZ: its own agent, discoverability, HFP. Fine once Hudiy is gone.
+- Signals: no DBC generator; decoders are written by hand with the DBC as reference.
+- Cluster variants: white (128×96 physical, high-res crafty drawing) and red (64×48, none).
