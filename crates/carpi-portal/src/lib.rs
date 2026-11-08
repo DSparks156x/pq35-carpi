@@ -1,6 +1,28 @@
-//! Phone portal: a small HTTP server on the car's hotspot. Download captures,
-//! the carpid journal, sdlink logs and a bug-report bundle; upload a new
-//! `carpid.toml` or a Teensy `.hex`. Nothing is flashed or restarted from here.
+//! Phone portal: a small HTTP server on the car's hotspot. Browse the logs
+//! folder (`carpi_logs`: one entry per capture or data-log run, by day),
+//! download files or zips of an entry or a whole day, star, delete, start a
+//! capture; download the carpid journal, sdlink logs and a bug report; upload
+//! a new `carpid.toml` or a Teensy `.hex`. Nothing is flashed or restarted
+//! from here.
+//!
+//! # Routes
+//!
+//! ```text
+//! GET  /                       home: status, Capture now, days
+//! GET  /setup                  config, firmware, PIN, bug report, sdlink logs, older captures
+//! GET  /day/<date>             entries of a day
+//! GET  /e/<date>/<NN>          one entry: files, star, delete
+//! GET  /f/<date>/<NN>/<path>   one file of an entry (download)
+//! GET  /v/<date>/<NN>/<path>   the same as text/plain, first 1 MiB
+//! GET  /zip/day/<date>         carpi-<date>.zip, a folder per entry
+//! GET  /zip/e/<date>/<NN>      carpi-<date>-<NN>.zip
+//! POST /star/<date>/<NN>       toggle the star            (PIN)
+//! POST /delete/<date>/<NN>     confirm=yes                 (PIN)
+//! POST /capture                runs the capture hook       (PIN)
+//! POST /pin, /lock             set / drop the PIN cookie
+//! GET  /api/status, /dl/config, /dl/journal, /dl/bugreport, /dl/<kind>/<name>
+//! POST /up/config, /up/firmware                            (PIN)
+//! ```
 //!
 //! # Threat model
 //!
@@ -16,6 +38,12 @@
 //! - Files are served by bare name from fixed directories only. Names are
 //!   `[A-Za-z0-9._-]`, no leading dot; symlinks and anything resolving outside
 //!   the directory are refused.
+//! - Logs entries and their files only resolve through `carpi_logs`
+//!   (`EntryId::parse`, `Logs::dir`, `Logs::file`): fixed date/number shapes,
+//!   and only paths the entry listing itself produced. Symlinks are skipped.
+//! - Star, delete and capture are writes: PIN when one is set. Delete also
+//!   needs `confirm=yes`.
+//! - At most two zips build at once, one capture at a time.
 //! - Uploads have size caps, and firmware only lands as a new, valid Intel HEX
 //!   file (never overwrites). Config is validated by the caller before it
 //!   replaces anything, and the old file is backed up first.
@@ -24,9 +52,10 @@
 //!   `allowed_hosts` (DNS rebinding).
 //! - Five wrong PINs lock PIN checks for 30 s.
 
-mod bundle;
+mod archive;
 mod files;
 mod page;
+mod views;
 
 use axum::extract::{DefaultBodyLimit, Multipart, Path as UrlPath, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
@@ -34,6 +63,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
+use carpi_logs::Logs;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -56,7 +86,9 @@ pub type PinCell = Arc<RwLock<Option<String>>>;
 pub struct PortalConfig {
     /// Listen address. Default `0.0.0.0:5003`, the old portal's port.
     pub bind: SocketAddr,
-    /// CAN captures (`Car::save_capture` output).
+    /// The logs folder (`carpi_logs`): `<logs>/<YYYY-MM-DD>/<NN>/`.
+    pub logs: PathBuf,
+    /// Old flat CAN captures; listed on Setup as "Older captures" when not empty.
     pub captures: PathBuf,
     /// sdlink logs.
     pub sdlink_logs: PathBuf,
@@ -78,7 +110,7 @@ pub struct PortalConfig {
     pub config_max: u64,
     /// Journal output cap, bytes; the rest is cut.
     pub journal_max: u64,
-    /// Bug-report cap on uncompressed file bytes; files past it are listed, not included.
+    /// Bug-report cap on the newest entry's file bytes; files past it are listed, not included.
     pub bundle_max: u64,
     /// Host names accepted besides IP literals and `localhost`.
     pub allowed_hosts: Vec<String>,
@@ -91,6 +123,7 @@ impl Default for PortalConfig {
             .unwrap_or_else(std::env::temp_dir);
         PortalConfig {
             bind: SocketAddr::from(([0, 0, 0, 0], 5003)),
+            logs: home.join("logs"),
             captures: home.join("captures"),
             sdlink_logs: home.join("avsd/logs"),
             config_file: home.join(".config/carpi/carpid.toml"),
@@ -131,13 +164,17 @@ pub struct Status {
 
 type StatusFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Status> + Send>> + Send + Sync>;
 type ValidateFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+type CaptureFn = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync,
+>;
 
-/// Builder. `Portal::new(cfg).status(..).validate_config(..).serve(..)`.
+/// Builder. `Portal::new(cfg).status(..).validate_config(..).capture(..).serve(..)`.
 pub struct Portal {
     cfg: PortalConfig,
     pin: PinCell,
     status: Option<StatusFn>,
     validate: Option<ValidateFn>,
+    capture: Option<CaptureFn>,
 }
 
 impl Portal {
@@ -147,6 +184,7 @@ impl Portal {
             cfg,
             status: None,
             validate: None,
+            capture: None,
         }
     }
 
@@ -176,20 +214,47 @@ impl Portal {
         self
     }
 
+    /// Starts a capture. Called by POST `/capture` with the trigger
+    /// (`"portal"`); returns the new entry's label, `"2026-11-08 #03"`, and
+    /// the phone is sent to that entry. `Err` text is shown to the phone.
+    /// Without a hook the Capture now button is hidden and the route is 404.
+    pub fn capture<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<String, String>> + Send + 'static,
+    {
+        self.capture = Some(Arc::new(move |t| Box::pin(f(t))));
+        self
+    }
+
     pub fn router(self) -> Router {
         let fw_limit = self.cfg.firmware_max as usize + (64 << 10);
         let cfg_limit = self.cfg.config_max as usize + (64 << 10);
         let shared = Arc::new(Shared {
+            logs: Logs::new(&self.cfg.logs),
             cfg: self.cfg,
             pin: self.pin,
             status: self.status,
             validate: self.validate,
+            capture: self.capture,
             fails: Mutex::new(Fails::default()),
-            bundle: Semaphore::new(1),
+            zips: Arc::new(Semaphore::new(ZIPS)),
+            capturing: Semaphore::new(1),
         });
         Router::new()
-            .route("/", get(|| async { Redirect::to("/files") }))
-            .route("/files", get(page_handler))
+            .route("/", get(views::home))
+            .route("/files", get(|| async { Redirect::to("/") }))
+            .route("/setup", get(views::setup))
+            .route("/day/{date}", get(views::day))
+            .route("/e/{date}/{nn}", get(views::entry))
+            .route("/f/{date}/{nn}/{*path}", get(views::file))
+            .route("/v/{date}/{nn}/{*path}", get(views::view))
+            .route("/zip/day/{date}", get(views::zip_day))
+            .route("/zip/e/{date}/{nn}", get(views::zip_entry))
+            .route("/star/{date}/{nn}", post(views::star))
+            .route("/delete/{date}/{nn}", post(views::delete))
+            .route("/capture", post(views::capture))
+            .route("/lock", post(lock_handler))
             .route("/api/status", get(status_handler))
             .route("/dl/config", get(dl_config))
             .route("/dl/journal", get(dl_journal))
@@ -214,7 +279,7 @@ impl Portal {
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> std::io::Result<()> {
         let listener = tokio::net::TcpListener::bind(self.cfg.bind).await?;
-        tracing::info!("portal on http://{}/files", listener.local_addr()?);
+        tracing::info!("portal on http://{}/", listener.local_addr()?);
         axum::serve(listener, self.router())
             .with_graceful_shutdown(shutdown)
             .await
@@ -223,12 +288,18 @@ impl Portal {
 
 struct Shared {
     cfg: PortalConfig,
+    logs: Logs,
     pin: PinCell,
     status: Option<StatusFn>,
     validate: Option<ValidateFn>,
+    capture: Option<CaptureFn>,
     fails: Mutex<Fails>,
-    bundle: Semaphore,
+    /// Zips being built (downloads and bug reports).
+    zips: Arc<Semaphore>,
+    capturing: Semaphore,
 }
+
+const ZIPS: usize = 2;
 
 #[derive(Default)]
 struct Fails {
@@ -299,6 +370,51 @@ impl Shared {
             f.locked_until = Some(now + LOCKOUT);
         }
         Err(Reject::new(StatusCode::FORBIDDEN, "Wrong PIN."))
+    }
+
+    /// Header or cookie PIN if there is one, else the PIN typed into the form.
+    fn check_pin_or_form(&self, headers: &HeaderMap, form: Option<&str>) -> Result<(), Reject> {
+        match (self.pin(), supplied_pin(headers), form) {
+            (Some(pin), None, Some(given)) => self.try_pin(&pin, given),
+            _ => self.check_pin(headers),
+        }
+    }
+
+    /// For rendering: is the PIN set, is this phone's cookie right. A cookie
+    /// counts as a try like any other; the bool says it's wrong and should go.
+    fn access(&self, headers: &HeaderMap) -> (page::Access, bool) {
+        let Some(pin) = self.pin() else {
+            return (
+                page::Access {
+                    pin_set: false,
+                    unlocked: false,
+                },
+                false,
+            );
+        };
+        let (unlocked, wrong) = match supplied_pin(headers) {
+            None => (false, false),
+            Some(given) => match self.try_pin(&pin, &given) {
+                Ok(()) => (true, false),
+                Err(r) => (false, r.0 == StatusCode::FORBIDDEN),
+            },
+        };
+        (
+            page::Access {
+                pin_set: true,
+                unlocked,
+            },
+            wrong,
+        )
+    }
+
+    fn zip_permit(&self) -> Result<tokio::sync::OwnedSemaphorePermit, Reject> {
+        self.zips.clone().try_acquire_owned().map_err(|_| {
+            Reject::new(
+                StatusCode::CONFLICT,
+                "Another zip is being built. Try again when it's done.",
+            )
+        })
     }
 
     fn check_read(&self, headers: &HeaderMap) -> Result<(), Reject> {
@@ -403,24 +519,6 @@ fn host_ok(host: &str, allowed: &[String]) -> bool {
         || allowed.iter().any(|a| a.eq_ignore_ascii_case(name))
 }
 
-async fn page_handler(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
-    let status = s.status().await;
-    let can_read = s.check_read(&headers).is_ok();
-    let html = page::render(
-        &s.cfg,
-        s.pin().is_some(),
-        status.as_ref(),
-        can_read,
-        s.validate.is_some(),
-    );
-    (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        [(header::CACHE_CONTROL, "no-store")],
-        html,
-    )
-        .into_response()
-}
-
 async fn status_handler(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Reply {
     s.check_read(&headers)?;
     Ok(Json(s.status().await.unwrap_or_default()).into_response())
@@ -429,24 +527,61 @@ async fn status_handler(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Rep
 #[derive(Deserialize)]
 struct PinForm {
     pin: String,
+    back: Option<String>,
+}
+
+/// A path on this site to go back to: `/day/2026-11-08#e03`, never `//host`.
+fn local_path(back: Option<&str>) -> &str {
+    match back {
+        Some(b)
+            if b.starts_with('/')
+                && !b.starts_with("//")
+                && b.len() < 200
+                && b.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"/-_.#".contains(&c)) =>
+        {
+            b
+        }
+        _ => "/setup",
+    }
 }
 
 /// Checks the PIN and stores it in a cookie so links and forms carry it.
-async fn pin_handler(State(s): State<Arc<Shared>>, Form(f): Form<PinForm>) -> Reply {
+async fn pin_handler(State(s): State<Arc<Shared>>, Form(f): Form<PinForm>) -> Response {
+    let back = local_path(f.back.as_deref()).to_owned();
     let Some(pin) = s.pin() else {
-        return Ok(Redirect::to("/files").into_response());
+        return Redirect::to(&back).into_response();
     };
-    s.try_pin(&pin, &f.pin)?;
+    if let Err(r) = s.try_pin(&pin, &f.pin) {
+        let v = views::Viewer::quiet(&s);
+        let title = if r.0 == StatusCode::FORBIDDEN {
+            "Wrong PIN"
+        } else {
+            "Locked for now"
+        };
+        let body = page::message(v.access, title, &r.1, &back, true);
+        return views::html(r.0, body);
+    }
     let cookie = format!(
         "{PIN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000",
         files::hex(f.pin.as_bytes())
     );
-    let mut r = Redirect::to("/files").into_response();
+    let mut r = Redirect::to(&back).into_response();
     r.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&cookie).expect("ascii"),
     );
-    Ok(r)
+    r
+}
+
+/// Forgets the PIN on this phone.
+async fn lock_handler() -> Response {
+    let mut r = Redirect::to("/setup").into_response();
+    r.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_static("carpi_pin=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),
+    );
+    r
 }
 
 fn attachment(name: &str, content_type: &str) -> [(header::HeaderName, String); 3] {
@@ -475,6 +610,10 @@ fn content_type(name: &str) -> &'static str {
         Some(e) if matches!(e.as_str(), "log" | "txt" | "toml" | "hex" | "csv") => {
             "text/plain; charset=utf-8"
         }
+        Some(e) if e == "json" => "application/json",
+        Some(e) if e == "zip" => "application/zip",
+        Some(e) if e == "zst" => "application/zstd",
+        Some(e) if e == "gz" => "application/gzip",
         _ => "application/octet-stream",
     }
 }
@@ -526,43 +665,79 @@ async fn dl_journal(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Reply {
     Ok((attachment(&name, "text/plain; charset=utf-8"), out).into_response())
 }
 
+/// Zip of the newest entry, `status.txt` and the current config.
 async fn dl_bundle(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Reply {
     s.check_read(&headers)?;
-    let _permit = s.bundle.try_acquire().map_err(|_| {
-        Reject::new(
-            StatusCode::CONFLICT,
-            "A bug report is already being built. Try again shortly.",
-        )
-    })?;
+    let permit = s.zip_permit()?;
     let stamp = files::stamp();
     let status = page::status_text(s.status().await.as_ref());
-    let journal = match s.journal().await {
-        None => None,
-        Some(Ok(b)) => Some(b),
-        Some(Err(e)) => Some(format!("journal unavailable: {e}\n").into_bytes()),
-    };
-    let input = bundle::Input {
-        root: format!("carpi-bugreport-{stamp}"),
-        status,
-        journal,
-        config_file: s.cfg.config_file.clone(),
-        dirs: vec![
-            ("captures".into(), s.cfg.captures.clone()),
-            ("sdlink-logs".into(), s.cfg.sdlink_logs.clone()),
-        ],
-        max: s.cfg.bundle_max,
-    };
-    let file = tokio::task::spawn_blocking(move || bundle::build(input))
+    let logs = s.logs.clone();
+    let config = s.cfg.config_file.clone();
+    let max = s.cfg.bundle_max;
+    let items = tokio::task::spawn_blocking(move || bug_items(&logs, status, config, max))
         .await
-        .map_err(|e| Reject::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| {
-            Reject::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("bug report failed: {e}"),
-            )
-        })?;
-    let name = format!("carpi-bugreport-{stamp}.tar.gz");
-    Ok(send_file(tokio::fs::File::from_std(file), &name, "application/gzip").await)
+        .map_err(|e| Reject::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let name = format!("carpi-bugreport-{stamp}.zip");
+    Ok((
+        attachment(&name, "application/zip"),
+        archive::stream(items, permit),
+    )
+        .into_response())
+}
+
+fn bug_items(logs: &Logs, status: String, config: PathBuf, max: u64) -> Vec<archive::Item> {
+    use archive::{Item, Src};
+    let mut items = vec![Item {
+        name: "status.txt".into(),
+        src: Src::Bytes(status.into_bytes()),
+        time: None,
+    }];
+    if config.is_file() {
+        items.push(Item {
+            name: "carpid.toml".into(),
+            src: Src::File(config),
+            time: None,
+        });
+    }
+    let newest = logs
+        .days()
+        .first()
+        .and_then(|d| logs.entries(&d.date).into_iter().next());
+    let Some(e) = newest else {
+        items.push(Item {
+            name: "no-entries.txt".into(),
+            src: Src::Bytes(b"The logs folder has no entries.\n".to_vec()),
+            time: None,
+        });
+        return items;
+    };
+    let sizes: std::collections::HashMap<String, u64> = logs
+        .files(&e.id)
+        .into_iter()
+        .map(|f| (f.path, f.bytes))
+        .collect();
+    let mut used = 0u64;
+    let mut skipped = String::new();
+    for it in archive::entry_items(logs, &e.id, &format!("{}/", e.id.slug())) {
+        let rel = it.name.split_once('/').map_or("", |(_, r)| r);
+        let n = sizes.get(rel).copied().unwrap_or(0);
+        if used + n > max {
+            skipped.push_str(&format!("{} ({n} bytes)\n", it.name));
+            continue;
+        }
+        used += n;
+        items.push(it);
+    }
+    if !skipped.is_empty() {
+        items.push(Item {
+            name: "skipped.txt".into(),
+            src: Src::Bytes(
+                format!("Over the {max} byte cap, not included:\n{skipped}").into_bytes(),
+            ),
+            time: None,
+        });
+    }
+    items
 }
 
 /// Reads the `file` field, at most `max` bytes.

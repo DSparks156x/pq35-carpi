@@ -10,16 +10,19 @@ publish.workspace = true
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "form", "multipart"] }
+carpi-logs.workspace = true
+# The pure-Rust deflate backend for zip.
 flate2 = "1"
+futures-util = { version = "0.3", default-features = false }
 serde.workspace = true
-tar = "0.4"
-tempfile = "3"
 tokio = { workspace = true, features = ["process"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
 serde_json.workspace = true
+tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

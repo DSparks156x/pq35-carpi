@@ -3,16 +3,21 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
+use carpi_logs::{Kind, Logs};
 use carpi_portal::{Portal, PortalConfig, Status};
 use http_body_util::BodyExt;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
 const HOST: &str = "10.10.0.1:8080";
 const HEX: &[u8] = b":0400000001020304F2\n:00000001FF\n";
 const GOOD_TOML: &str = "[bus.ican]\niface = \"can0\"\n";
+const JOURNAL: &[u8] = b"Nov 08 10:04:00 carpid[1]: hello\n";
+const ZST: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3];
 
 fn setup() -> (TempDir, PortalConfig) {
     let t = tempfile::tempdir().unwrap();
@@ -24,12 +29,33 @@ fn setup() -> (TempDir, PortalConfig) {
     fs::write(p.join("sdlink/sd.log"), "sdlink ok\n").unwrap();
     fs::write(p.join("cfg/carpid.toml"), GOOD_TOML).unwrap();
     fs::write(p.join("secret.txt"), "secret").unwrap();
+
+    // logs/2026-11-08/01 capture, /02 datalog; logs/2026-11-07/01 capture.
+    let logs = Logs::new(p.join("logs"));
+    let (mut m, dir) = logs
+        .create(Kind::Capture, "2026-11-08", "key", "2026-11-08T10:04:33")
+        .unwrap();
+    fs::write(dir.join("journal.txt"), JOURNAL).unwrap();
+    fs::write(dir.join("can.log.zst"), ZST).unwrap();
+    fs::create_dir(dir.join("config")).unwrap();
+    fs::write(dir.join("config/carpid.toml"), GOOD_TOML).unwrap();
+    m.summary = "4 buses, 1 frame".into();
+    m.ended = Some("2026-11-08T10:04:35".into());
+    logs.save_meta(&m).unwrap();
+    let (_, dir) = logs
+        .create(Kind::Datalog, "2026-11-08", "boost", "2026-11-08T11:00:00")
+        .unwrap();
+    fs::write(dir.join("data.csv"), "t,boost\n0,1.2\n").unwrap();
+    logs.create(Kind::Capture, "2026-11-07", "page", "2026-11-07T09:00:00")
+        .unwrap();
+
     let journal = if cfg!(windows) {
         vec!["cmd".into(), "/C".into(), "echo journal-line".into()]
     } else {
         vec!["echo".into(), "journal-line".into()]
     };
     let cfg = PortalConfig {
+        logs: p.join("logs"),
         captures: p.join("captures"),
         sdlink_logs: p.join("sdlink"),
         firmware: p.join("fw"),
@@ -64,6 +90,12 @@ fn get(uri: &str) -> axum::http::request::Builder {
     Request::get(uri).header(header::HOST, HOST)
 }
 
+fn form(uri: &str) -> axum::http::request::Builder {
+    Request::post(uri)
+        .header(header::HOST, HOST)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+}
+
 fn upload(uri: &str) -> axum::http::request::Builder {
     Request::post(uri)
         .header(header::HOST, HOST)
@@ -91,6 +123,14 @@ async fn send(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Vec<u
     (parts.status, parts.headers, bytes)
 }
 
+/// GET a page that must be 200 and HTML.
+async fn page(app: &Router, uri: &str) -> String {
+    let (code, h, body) = send(app, get(uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(code, StatusCode::OK, "{uri}");
+    assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8");
+    String::from_utf8(body).unwrap()
+}
+
 async fn up(app: &Router, uri: &str, name: &str, data: &[u8], pin: Option<&str>) -> StatusCode {
     let mut req = upload(uri);
     if let Some(pin) = pin {
@@ -107,22 +147,527 @@ fn backups(cfg: &PortalConfig) -> Vec<String> {
         .collect()
 }
 
+fn starred(cfg: &PortalConfig, n: u32) -> bool {
+    let id = carpi_logs::EntryId {
+        date: "2026-11-08".into(),
+        number: n,
+    };
+    Logs::new(&cfg.logs).meta(&id).unwrap().starred
+}
+
+fn unzip(body: &[u8]) -> BTreeMap<String, (Vec<u8>, zip::CompressionMethod)> {
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(body.to_vec())).unwrap();
+    let mut out = BTreeMap::new();
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).unwrap();
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).unwrap();
+        let name = f.name().unwrap().into_owned();
+        out.insert(name, (data, f.compression()));
+    }
+    out
+}
+
 #[tokio::test]
-async fn page_lists_files_and_status() {
+async fn home_and_setup_pages() {
     let (_t, cfg) = setup();
     let app = app(cfg);
-    let (code, _, body) = send(&app, get("/files").body(Body::empty()).unwrap()).await;
+    let (code, h, body) = send(&app, get("/").body(Body::empty()).unwrap()).await;
     assert_eq!(code, StatusCode::OK);
+    assert!(
+        h[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .contains("default-src 'none'")
+    );
     let html = String::from_utf8(body).unwrap();
-    assert!(html.contains("/dl/captures/capture-1.log"));
-    assert!(html.contains("/dl/sdlink/sd.log"));
     assert!(html.contains("awake"));
     assert!(html.contains("1h 2m"));
+    // Days newest first, with count.
+    let a = html.find("/day/2026-11-08").unwrap();
+    let b = html.find("/day/2026-11-07").unwrap();
+    assert!(a < b);
+    assert!(html.contains("2 entries") && html.contains("1 entry"));
+
+    let html = page(&app, "/setup").await;
+    assert!(html.contains("/dl/captures/capture-1.log"));
+    assert!(html.contains("Older captures"));
+    assert!(html.contains("/dl/sdlink/sd.log"));
+    assert!(html.contains("/dl/bugreport"));
+    assert!(html.contains("/up/config") && html.contains("/up/firmware"));
 
     let (code, _, body) = send(&app, get("/api/status").body(Body::empty()).unwrap()).await;
     assert_eq!(code, StatusCode::OK);
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["bus"], "awake");
+
+    let (code, h, _) = send(&app, get("/files").body(Body::empty()).unwrap()).await;
+    assert!(code.is_redirection());
+    assert_eq!(h[header::LOCATION], "/");
+}
+
+#[tokio::test]
+async fn no_older_captures_when_empty() {
+    let (t, cfg) = setup();
+    fs::remove_file(t.path().join("captures/capture-1.log")).unwrap();
+    let app = app(cfg);
+    assert!(!page(&app, "/setup").await.contains("Older captures"));
+}
+
+#[tokio::test]
+async fn day_lists_entries_newest_first() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    let html = page(&app, "/day/2026-11-08").await;
+    let a = html.find("#02").unwrap();
+    let b = html.find("#01").unwrap();
+    assert!(a < b, "newest first");
+    for want in [
+        "Sunday 8 Nov 2026",
+        "/zip/day/2026-11-08",
+        "/zip/e/2026-11-08/01",
+        "/zip/e/2026-11-08/02",
+        "Download #01 (.zip)",
+        "/e/2026-11-08/01",
+        "capture",
+        "datalog",
+        "boost",
+        "4 buses, 1 frame",
+        "10:04",
+        "/star/2026-11-08/01",
+    ] {
+        assert!(html.contains(want), "{want}");
+    }
+    for uri in [
+        "/day/2026-11-09",
+        "/day/2026-11-0",
+        "/day/..",
+        "/day/2026-11-08x",
+    ] {
+        let (code, _, _) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(code, StatusCode::NOT_FOUND, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn entry_lists_files() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    let html = page(&app, "/e/2026-11-08/01").await;
+    for want in [
+        "/f/2026-11-08/01/journal.txt",
+        "/v/2026-11-08/01/journal.txt",
+        "/f/2026-11-08/01/config/carpid.toml",
+        "/f/2026-11-08/01/can.log.zst",
+        "/delete/2026-11-08/01",
+        "/zip/e/2026-11-08/01",
+        "10:04:35",
+    ] {
+        assert!(html.contains(want), "{want}");
+    }
+    // Compressed files get no inline view.
+    assert!(!html.contains("/v/2026-11-08/01/can.log.zst"));
+    // No PIN set: the delete form has no PIN field.
+    assert!(!html.contains("name=pin"));
+    let (code, _, _) = send(&app, get("/e/2026-11-08/09").body(Body::empty()).unwrap()).await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn entry_file_download_and_view() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    let (code, h, body) = send(
+        &app,
+        get("/f/2026-11-08/01/journal.txt")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(body, JOURNAL);
+    let cd = h[header::CONTENT_DISPOSITION].to_str().unwrap();
+    assert!(
+        cd.starts_with("attachment") && cd.contains("2026-11-08-01-journal.txt"),
+        "{cd}"
+    );
+
+    let (code, _, body) = send(
+        &app,
+        get("/f/2026-11-08/01/config/carpid.toml")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(body, GOOD_TOML.as_bytes());
+
+    let (code, h, body) = send(
+        &app,
+        get("/v/2026-11-08/01/journal.txt")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(h[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_eq!(h[header::CONTENT_DISPOSITION], "inline");
+    assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    assert_eq!(body, JOURNAL);
+}
+
+#[tokio::test]
+async fn text_view_is_capped() {
+    let (t, cfg) = setup();
+    let big = t.path().join("logs/2026-11-08/01/big.log");
+    fs::write(&big, vec![b'x'; (1 << 20) + 500]).unwrap();
+    let app = app(cfg);
+    let (code, _, body) = send(
+        &app,
+        get("/v/2026-11-08/01/big.log").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert!(body.len() < (1 << 20) + 200);
+    assert!(String::from_utf8_lossy(&body).contains("cut at 1.0 MB"));
+}
+
+#[tokio::test]
+async fn logs_path_traversal_rejected() {
+    let (t, cfg) = setup();
+    fs::write(t.path().join("logs/2026-11-08/01/.hidden"), "secret").unwrap();
+    fs::write(t.path().join("logs/2026-11-08/secret.txt"), "secret").unwrap();
+    let app = app(cfg);
+    for uri in [
+        "/e/2026-11-08/../..",
+        "/e/2026-11-08/..",
+        "/e/../01",
+        "/e/2026-11-08/1",
+        "/e/2026-11-08/-01",
+        "/e/2026-11-08/%2301",
+        "/e/2026-11-08/001",
+        "/e/2026-11-0%C3%A9/01",
+        "/e/2026-11-08/0%C3%A9",
+        "/zip/e/x/01",
+        "/zip/e/2026-11-08/..",
+        "/zip/e/2026-11-08/%2E%2E",
+        "/zip/e/2026-11-08/09",
+        "/zip/day/..",
+        "/zip/day/2026-11-08%2F..",
+        "/zip/day/2026-11-09",
+        "/f/2026-11-08/01/../secret.txt",
+        "/f/2026-11-08/01/..%2Fsecret.txt",
+        "/f/2026-11-08/01/..%2F..%2F..%2Fsecret.txt",
+        "/f/2026-11-08/01/%2E%2E/secret.txt",
+        "/f/2026-11-08/01/..%5Csecret.txt",
+        "/f/2026-11-08/01/.hidden",
+        "/f/2026-11-08/01/config/../journal.txt",
+        "/f/2026-11-08/01//etc/passwd",
+        "/f/2026-11-08/01/C:%5Csecret.txt",
+        "/f/2026-11-08/01/missing.txt",
+        "/f/2026-11-08/01",
+        "/f/2026-11-08/../secret.txt",
+        "/v/2026-11-08/01/..%2Fsecret.txt",
+        "/v/2026-11-08/01/.hidden",
+    ] {
+        let (code, _, body) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+        assert!(code.is_client_error(), "{uri}: {code}");
+        assert!(!String::from_utf8_lossy(&body).contains("secret"), "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn entry_zip_contents() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    let (code, h, body) = send(
+        &app,
+        get("/zip/e/2026-11-08/01").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(h[header::CONTENT_TYPE], "application/zip");
+    assert!(
+        h[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("carpi-2026-11-08-01.zip")
+    );
+    let z = unzip(&body);
+    let names: Vec<_> = z.keys().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        [
+            "can.log.zst",
+            "config/carpid.toml",
+            "entry.json",
+            "journal.txt"
+        ]
+    );
+    assert_eq!(z["journal.txt"].0, JOURNAL);
+    assert_eq!(z["journal.txt"].1, zip::CompressionMethod::Deflated);
+    assert_eq!(z["can.log.zst"].0, ZST);
+    assert_eq!(z["can.log.zst"].1, zip::CompressionMethod::Stored);
+    assert_eq!(z["config/carpid.toml"].0, GOOD_TOML.as_bytes());
+    let meta: serde_json::Value = serde_json::from_slice(&z["entry.json"].0).unwrap();
+    assert_eq!(meta["trigger"], "key");
+}
+
+#[tokio::test]
+async fn day_zip_contents() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    let (code, h, body) = send(
+        &app,
+        get("/zip/day/2026-11-08").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert!(
+        h[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("carpi-2026-11-08.zip")
+    );
+    let z = unzip(&body);
+    let names: Vec<_> = z.keys().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        [
+            "01/can.log.zst",
+            "01/config/carpid.toml",
+            "01/entry.json",
+            "01/journal.txt",
+            "02/data.csv",
+            "02/entry.json",
+        ]
+    );
+    assert_eq!(z["02/data.csv"].0, b"t,boost\n0,1.2\n");
+    assert_eq!(z["01/journal.txt"].0, JOURNAL);
+}
+
+#[tokio::test]
+async fn big_zip_streams_whole() {
+    let (t, cfg) = setup();
+    // Several times what the channel holds, so the body really streams.
+    let data: Vec<u8> = (0..3_000_000u32).map(|i| (i * 7 % 251) as u8).collect();
+    fs::write(t.path().join("logs/2026-11-08/02/big.bin"), &data).unwrap();
+    let app = app(cfg);
+    let (code, _, body) = send(
+        &app,
+        get("/zip/e/2026-11-08/02").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(unzip(&body)["big.bin"].0, data);
+}
+
+#[tokio::test]
+async fn star_toggles() {
+    let (_t, cfg) = setup();
+    let app = app(cfg.clone());
+    let req = form("/star/2026-11-08/01")
+        .body(Body::from("back=entry"))
+        .unwrap();
+    let (code, h, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/e/2026-11-08/01");
+    assert!(starred(&cfg, 1));
+    assert!(
+        page(&app, "/day/2026-11-08")
+            .await
+            .contains("aria-pressed=true")
+    );
+    let req = form("/star/2026-11-08/01")
+        .body(Body::from("back=day"))
+        .unwrap();
+    let (_, h, _) = send(&app, req).await;
+    assert_eq!(h[header::LOCATION], "/day/2026-11-08#e01");
+    assert!(!starred(&cfg, 1));
+    let req = form("/star/2026-11-08/07").body(Body::empty()).unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn star_and_delete_need_pin() {
+    let (_t, mut cfg) = setup();
+    cfg.pin = Some("4711".into());
+    let app = app(cfg.clone());
+    let dir = cfg.logs.join("2026-11-08/01");
+
+    let req = form("/star/2026-11-08/01").body(Body::empty()).unwrap();
+    let (code, _, body) = send(&app, req).await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+    assert!(String::from_utf8(body).unwrap().contains("name=pin"));
+    assert!(!starred(&cfg, 1));
+    let req = form("/star/2026-11-08/01")
+        .header("x-carpi-pin", "4711")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::SEE_OTHER);
+    assert!(starred(&cfg, 1));
+
+    // Delete: no PIN, wrong PIN, no confirm, then for real.
+    let req = form("/delete/2026-11-08/01")
+        .body(Body::from("confirm=yes"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::UNAUTHORIZED);
+    let req = form("/delete/2026-11-08/01")
+        .body(Body::from("confirm=yes&pin=0000"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN);
+    let req = form("/delete/2026-11-08/01")
+        .body(Body::from("pin=4711"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::BAD_REQUEST);
+    assert!(dir.is_dir());
+    let req = form("/delete/2026-11-08/01")
+        .body(Body::from("confirm=yes&pin=4711"))
+        .unwrap();
+    let (code, h, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/day/2026-11-08");
+    assert!(!dir.exists());
+    assert!(cfg.logs.join("2026-11-08/02").is_dir());
+
+    // Locked phone: the delete form asks for the PIN.
+    assert!(page(&app, "/e/2026-11-08/02").await.contains("name=pin"));
+}
+
+#[tokio::test]
+async fn delete_last_entry_goes_home() {
+    let (_t, cfg) = setup();
+    let app = app(cfg.clone());
+    let req = form("/delete/2026-11-07/01")
+        .body(Body::from("confirm=yes"))
+        .unwrap();
+    let (code, h, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/");
+    assert!(!cfg.logs.join("2026-11-07").exists());
+}
+
+#[tokio::test]
+async fn foreign_origin_star_and_delete_refused() {
+    let (_t, cfg) = setup();
+    let app = app(cfg.clone());
+    let req = form("/star/2026-11-08/01")
+        .header(header::ORIGIN, "http://evil.example")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN);
+    let req = form("/delete/2026-11-08/01")
+        .header(header::ORIGIN, "http://evil.example")
+        .body(Body::from("confirm=yes"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN);
+    assert!(!starred(&cfg, 1));
+    assert!(cfg.logs.join("2026-11-08/01").is_dir());
+}
+
+#[tokio::test]
+async fn capture_hook() {
+    let (_t, cfg) = setup();
+    let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let c = calls.clone();
+    let logs = Logs::new(&cfg.logs);
+    let app = Portal::new(cfg.clone())
+        .capture(move |trigger| {
+            c.lock().unwrap().push(trigger.clone());
+            let logs = logs.clone();
+            async move {
+                let (m, _) = logs
+                    .create(Kind::Capture, "2026-11-08", &trigger, "2026-11-08T12:00:00")
+                    .map_err(|e| e.to_string())?;
+                Ok(m.id.to_string())
+            }
+        })
+        .router();
+    let html = page(&app, "/").await;
+    assert!(html.contains("action=\"/capture\"") && html.contains("Capture now"));
+    let req = form("/capture").body(Body::empty()).unwrap();
+    let (code, h, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/e/2026-11-08/03");
+    assert_eq!(*calls.lock().unwrap(), ["portal"]);
+    assert!(page(&app, "/e/2026-11-08/03").await.contains("portal"));
+}
+
+#[tokio::test]
+async fn capture_hidden_without_hook() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    let html = page(&app, "/").await;
+    assert!(!html.contains("/capture") && !html.contains("Capture now"));
+    let req = form("/capture").body(Body::empty()).unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn capture_needs_pin_and_reports_errors() {
+    let (_t, mut cfg) = setup();
+    cfg.pin = Some("4711".into());
+    let app = Portal::new(cfg)
+        .capture(|_| async { Err("no CAN ring yet".to_string()) })
+        .router();
+    let req = form("/capture").body(Body::empty()).unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::UNAUTHORIZED);
+    let req = form("/capture")
+        .header("x-carpi-pin", "4711")
+        .body(Body::empty())
+        .unwrap();
+    let (code, _, body) = send(&app, req).await;
+    assert_eq!(code, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(String::from_utf8(body).unwrap().contains("no CAN ring yet"));
+}
+
+#[tokio::test]
+async fn wrong_pin_cookie_is_dropped() {
+    let (_t, mut cfg) = setup();
+    cfg.pin = Some("4711".into());
+    let app = app(cfg);
+    let req = get("/")
+        .header(header::COOKIE, "carpi_pin=30303030")
+        .body(Body::empty())
+        .unwrap();
+    let (code, h, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::OK);
+    assert!(
+        h[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+    let req = get("/")
+        .header(header::COOKIE, "carpi_pin=34373131")
+        .body(Body::empty())
+        .unwrap();
+    let (_, h, body) = send(&app, req).await;
+    assert!(h.get(header::SET_COOKIE).is_none());
+    assert!(String::from_utf8(body).unwrap().contains("Unlocked"));
+}
+
+#[tokio::test]
+async fn pin_form_redirects_back_locally() {
+    let (_t, mut cfg) = setup();
+    cfg.pin = Some("4711".into());
+    let app = app(cfg);
+    for (back, want) in [
+        ("%2Fday%2F2026-11-08%23e01", "/day/2026-11-08#e01"),
+        ("%2F%2Fevil.example", "/setup"),
+        ("http%3A%2F%2Fevil.example", "/setup"),
+    ] {
+        let req = form("/pin")
+            .body(Body::from(format!("pin=4711&back={back}")))
+            .unwrap();
+        let (code, h, _) = send(&app, req).await;
+        assert_eq!(code, StatusCode::SEE_OTHER);
+        assert_eq!(h[header::LOCATION], want);
+    }
+    let req = form("/pin").body(Body::from("pin=1")).unwrap();
+    let (code, _, body) = send(&app, req).await;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    assert!(String::from_utf8(body).unwrap().contains("Wrong PIN"));
 }
 
 #[tokio::test]
@@ -181,13 +726,26 @@ async fn symlink_out_of_dir_rejected() {
         t.path().join("captures/link.log"),
     )
     .unwrap();
+    std::os::unix::fs::symlink(
+        t.path().join("secret.txt"),
+        t.path().join("logs/2026-11-08/01/link.txt"),
+    )
+    .unwrap();
     let app = app(cfg);
-    let (code, _, _) = send(
+    for uri in [
+        "/dl/captures/link.log",
+        "/f/2026-11-08/01/link.txt",
+        "/v/2026-11-08/01/link.txt",
+    ] {
+        let (code, _, _) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(code, StatusCode::NOT_FOUND, "{uri}");
+    }
+    let (_, _, body) = send(
         &app,
-        get("/dl/captures/link.log").body(Body::empty()).unwrap(),
+        get("/zip/e/2026-11-08/01").body(Body::empty()).unwrap(),
     )
     .await;
-    assert_eq!(code, StatusCode::NOT_FOUND);
+    assert!(!unzip(&body).contains_key("link.txt"));
 }
 
 #[tokio::test]
@@ -196,14 +754,14 @@ async fn pin_enforced_on_uploads_only() {
     cfg.pin = Some("4711".into());
     let app = app(cfg.clone());
     // Downloads stay open.
-    let (code, _, _) = send(
-        &app,
-        get("/dl/captures/capture-1.log")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(code, StatusCode::OK);
+    for uri in [
+        "/dl/captures/capture-1.log",
+        "/f/2026-11-08/01/journal.txt",
+        "/zip/e/2026-11-08/01",
+    ] {
+        let (code, _, _) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(code, StatusCode::OK, "{uri}");
+    }
 
     assert_eq!(
         up(&app, "/up/firmware", "a.hex", HEX, None).await,
@@ -237,11 +795,7 @@ async fn pin_cookie_from_form() {
     let (_t, mut cfg) = setup();
     cfg.pin = Some("4711".into());
     let app = app(cfg.clone());
-    let req = Request::post("/pin")
-        .header(header::HOST, HOST)
-        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from("pin=4711"))
-        .unwrap();
+    let req = form("/pin").body(Body::from("pin=4711")).unwrap();
     let (code, h, _) = send(&app, req).await;
     assert_eq!(code, StatusCode::SEE_OTHER);
     let cookie = h[header::SET_COOKIE].to_str().unwrap();
@@ -249,10 +803,25 @@ async fn pin_cookie_from_form() {
     let pair = cookie.split(';').next().unwrap().to_owned();
 
     let req = upload("/up/firmware")
-        .header(header::COOKIE, pair)
+        .header(header::COOKIE, pair.clone())
         .body(form_body("b.hex", HEX))
         .unwrap();
     assert_eq!(send(&app, req).await.0, StatusCode::CREATED);
+    let req = form("/star/2026-11-08/01")
+        .header(header::COOKIE, pair)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::SEE_OTHER);
+    assert!(starred(&cfg, 1));
+
+    let req = form("/lock").body(Body::empty()).unwrap();
+    let (_, h, _) = send(&app, req).await;
+    assert!(
+        h[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
 }
 
 #[tokio::test]
@@ -266,11 +835,15 @@ async fn pin_locks_out_after_five_wrong() {
             StatusCode::FORBIDDEN
         );
     }
-    // Even the right PIN waits out the lockout.
+    // Even the right PIN waits out the lockout, for every write.
     assert_eq!(
         up(&app, "/up/firmware", "a.hex", HEX, Some("4711")).await,
         StatusCode::TOO_MANY_REQUESTS
     );
+    let req = form("/delete/2026-11-08/01")
+        .body(Body::from("confirm=yes&pin=4711"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
@@ -284,17 +857,31 @@ async fn protected_downloads_need_pin() {
         "/dl/config",
         "/dl/bugreport",
         "/api/status",
+        "/",
+        "/day/2026-11-08",
+        "/e/2026-11-08/01",
+        "/f/2026-11-08/01/journal.txt",
+        "/v/2026-11-08/01/journal.txt",
+        "/zip/e/2026-11-08/01",
+        "/zip/day/2026-11-08",
     ] {
-        let (code, _, _) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
+        let (code, _, body) = send(&app, get(uri).body(Body::empty()).unwrap()).await;
         assert_eq!(code, StatusCode::UNAUTHORIZED, "{uri}");
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            !text.contains("journal.txt") && !text.contains("awake"),
+            "{uri}"
+        );
     }
-    let (_, _, page) = send(&app, get("/files").body(Body::empty()).unwrap()).await;
-    assert!(!String::from_utf8(page).unwrap().contains("capture-1.log"));
-    let req = get("/dl/captures/capture-1.log")
-        .header("x-carpi-pin", "4711")
-        .body(Body::empty())
-        .unwrap();
-    assert_eq!(send(&app, req).await.0, StatusCode::OK);
+    let html = page(&app, "/setup").await;
+    assert!(!html.contains("capture-1.log") && html.contains("name=pin"));
+    for uri in ["/dl/captures/capture-1.log", "/e/2026-11-08/01"] {
+        let req = get(uri)
+            .header("x-carpi-pin", "4711")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(send(&app, req).await.0, StatusCode::OK, "{uri}");
+    }
 }
 
 #[tokio::test]
@@ -435,6 +1022,11 @@ async fn firmware_checks() {
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(names, ["Teensy_4.1.HEX"]);
+    assert!(
+        page(&app, "/setup")
+            .await
+            .contains("/dl/firmware/Teensy_4.1.HEX")
+    );
 }
 
 #[tokio::test]
@@ -452,11 +1044,13 @@ async fn foreign_origin_and_host_refused() {
         .unwrap();
     assert_eq!(send(&app, req).await.0, StatusCode::CREATED);
 
-    let req = Request::get("/dl/captures/capture-1.log")
-        .header(header::HOST, "rebind.evil.example:8080")
-        .body(Body::empty())
-        .unwrap();
-    assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN);
+    for uri in ["/dl/captures/capture-1.log", "/", "/zip/day/2026-11-08"] {
+        let req = Request::get(uri)
+            .header(header::HOST, "rebind.evil.example:8080")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN, "{uri}");
+    }
 }
 
 #[tokio::test]
@@ -469,39 +1063,36 @@ async fn journal_download() {
 }
 
 #[tokio::test]
-async fn bug_report_bundle() {
+async fn bug_report_zip() {
     let (_t, mut cfg) = setup();
-    fs::write(cfg.captures.join("capture-big.log"), vec![b'x'; 4096]).unwrap();
     cfg.bundle_max = 1024;
+    // The newest entry is 2026-11-08 #02; give it one file over the cap.
+    fs::write(cfg.logs.join("2026-11-08/02/big.csv"), vec![b'x'; 4096]).unwrap();
     let app = app(cfg);
     let (code, h, body) = send(&app, get("/dl/bugreport").body(Body::empty()).unwrap()).await;
     assert_eq!(code, StatusCode::OK);
-    assert_eq!(h[header::CONTENT_TYPE], "application/gzip");
-    let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(&body[..]));
-    let mut found = std::collections::BTreeMap::new();
-    for e in ar.entries().unwrap() {
-        let mut e = e.unwrap();
-        let path = e.path().unwrap().to_string_lossy().into_owned();
-        let name = path.split_once('/').unwrap().1.to_owned();
-        let mut s = String::new();
-        e.read_to_string(&mut s).unwrap();
-        found.insert(name, s);
-    }
-    let keys: Vec<_> = found.keys().map(String::as_str).collect();
+    assert_eq!(h[header::CONTENT_TYPE], "application/zip");
+    let cd = h[header::CONTENT_DISPOSITION].to_str().unwrap();
+    assert!(
+        cd.contains("carpi-bugreport-") && cd.contains(".zip"),
+        "{cd}"
+    );
+    let z = unzip(&body);
+    let keys: Vec<_> = z.keys().map(String::as_str).collect();
     assert_eq!(
         keys,
         [
-            "captures/capture-1.log",
-            "carpid-journal.txt",
+            "2026-11-08-02/data.csv",
+            "2026-11-08-02/entry.json",
             "carpid.toml",
-            "sdlink-logs/sd.log",
             "skipped.txt",
             "status.txt",
         ]
     );
-    assert!(found["status.txt"].contains("Bus: awake"));
-    assert!(found["skipped.txt"].contains("capture-big.log"));
-    assert_eq!(found["carpid.toml"], GOOD_TOML);
+    let text = |k: &str| String::from_utf8(z[k].0.clone()).unwrap();
+    assert!(text("status.txt").contains("Bus: awake"));
+    assert!(text("skipped.txt").contains("big.csv"));
+    assert_eq!(text("carpid.toml"), GOOD_TOML);
 }
 
 #[tokio::test]
@@ -528,4 +1119,20 @@ async fn pin_changes_live() {
         up(&app, "/up/firmware", "c.hex", HEX, None).await,
         StatusCode::CREATED
     );
+}
+
+#[test]
+fn config_keeps_old_keys() {
+    let cfg: PortalConfig = serde_json::from_value(serde_json::json!({
+        "bind": "127.0.0.1:5003",
+        "captures": "/tmp/c",
+        "logs": "/tmp/logs",
+        "pin": "1234",
+        "protect_downloads": true,
+        "bundle_max": 10
+    }))
+    .unwrap();
+    assert_eq!(cfg.logs, std::path::PathBuf::from("/tmp/logs"));
+    assert!(serde_json::from_value::<PortalConfig>(serde_json::json!({"nope": 1})).is_err());
+    assert!(PortalConfig::default().logs.ends_with("logs"));
 }
