@@ -220,6 +220,11 @@ impl Captures {
     /// `page`, `portal`, `cli`, `crash:<unit>`, `error:<what>`. Answers
     /// `Response::Captured`, or `Response::Error` (also when an automatic
     /// one is over its rate limit).
+    /// The logs folder.
+    pub fn root(&self) -> &Path {
+        &self.inner.setup.root
+    }
+
     pub async fn capture(&self, trigger: &str) -> Response {
         self.run(trigger, None).await
     }

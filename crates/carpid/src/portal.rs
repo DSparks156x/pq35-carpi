@@ -10,9 +10,11 @@ use tokio::sync::watch;
 
 /// The portal's settings, with `config_file` set to the file carpid loaded.
 /// `None` when `[portal]` is absent.
-pub fn config(cfg: &Config, loaded_from: &Path) -> Option<PortalConfig> {
+/// `logs` is the folder captures go to, the same one the portal lists.
+pub fn config(cfg: &Config, loaded_from: &Path, logs: &Path) -> Option<PortalConfig> {
     let mut p = cfg.portal.clone()?;
     p.config_file = loaded_from.to_path_buf();
+    p.logs = logs.to_path_buf();
     Some(p)
 }
 
@@ -26,6 +28,20 @@ pub fn build(pcfg: PortalConfig, status: watch::Receiver<Status>, started: Insta
             }
         })
         .validate_config(|text| Config::parse(text).map(|_| ()))
+}
+
+/// The portal's Capture now button: the same capture as the key and the API.
+pub fn with_captures(portal: Portal, captures: crate::capture::Captures) -> Portal {
+    portal.capture(move |trigger| {
+        let c = captures.clone();
+        async move {
+            match c.capture(&trigger).await {
+                carpi_proto::Response::Captured { label, .. } => Ok(label),
+                carpi_proto::Response::Error { message } => Err(message),
+                other => Err(format!("unexpected reply: {other:?}")),
+            }
+        }
+    })
 }
 
 /// Serves until the process ends. Returns the live PIN cell.
@@ -69,8 +85,15 @@ mod tests {
         );
         std::fs::write(&path, &text).unwrap();
         let cfg = Config::load(&path).unwrap();
-        assert!(config(&Config::parse("[bus.ican]\niface='x'\n").unwrap(), &path).is_none());
-        let pcfg = config(&cfg, &path).unwrap();
+        assert!(
+            config(
+                &Config::parse("[bus.ican]\niface='x'\n").unwrap(),
+                &path,
+                dir.path()
+            )
+            .is_none()
+        );
+        let pcfg = config(&cfg, &path, dir.path()).unwrap();
         assert_eq!(pcfg.config_file, path);
 
         let (tx, rx) = watch::channel(Status {

@@ -233,8 +233,12 @@ async fn main() -> anyhow::Result<()> {
         version: env!("CARGO_PKG_VERSION").into(),
         ..Default::default()
     });
-    let portal_pin = portal::config(&cfg, &args.config)
-        .map(|p| portal::spawn(portal::build(p, status_rx, started)));
+    let portal_pin = portal::config(&cfg, &args.config, captures.root()).map(|p| {
+        portal::spawn(portal::with_captures(
+            portal::build(p, status_rx, started),
+            captures.clone(),
+        ))
+    });
     if portal_pin.is_none() {
         info!("no [portal] in the config; phone portal off");
     }
