@@ -15,6 +15,10 @@ use std::time::{Duration, Instant};
 pub struct Config {
     /// How long the bus must stay silent before shutdown is requested.
     pub silent_for: Duration,
+    /// Only shut down once the bus has been seen awake since boot. In the car
+    /// the radio wakes the Pi, so the bus is always seen; on a desk with no
+    /// CAN this keeps the Pi up.
+    pub require_bus_seen: bool,
 }
 
 impl Default for Config {
@@ -22,6 +26,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             silent_for: Duration::from_secs(60),
+            require_bus_seen: true,
         }
     }
 }
@@ -38,6 +43,7 @@ pub struct ShutdownPolicy {
     cfg: Config,
     silent_since: Option<Instant>,
     requested: bool,
+    bus_seen: bool,
 }
 
 impl ShutdownPolicy {
@@ -46,6 +52,7 @@ impl ShutdownPolicy {
             cfg,
             silent_since: None,
             requested: false,
+            bus_seen: false,
         }
     }
 
@@ -57,6 +64,12 @@ impl ShutdownPolicy {
         bus: BusState,
         kl15: Option<bool>,
     ) -> Option<PowerEvent> {
+        if bus != BusState::Silent {
+            self.bus_seen = true;
+        }
+        if self.cfg.require_bus_seen && !self.bus_seen {
+            return None;
+        }
         if bus != BusState::Silent || kl15 == Some(true) {
             self.silent_since = None;
             if self.requested {
@@ -315,5 +328,25 @@ mod tests {
         let mut bad = CarPiHat::with_command(["false"]);
         assert!(bad.request_poweroff().is_err());
         assert!(!bad.requested);
+    }
+
+    #[test]
+    fn desk_without_can_never_shuts_down() {
+        let t0 = Instant::now();
+        let mut p = ShutdownPolicy::new(Config::default());
+        for s in [0u64, 61, 120, 600] {
+            assert_eq!(
+                p.update(t0 + Duration::from_secs(s), BusState::Silent, None),
+                None
+            );
+        }
+        assert_eq!(p.next_deadline(), None);
+        // The bus wakes once, then sleeps: now it counts.
+        p.update(t0 + Duration::from_secs(700), BusState::Awake, Some(true));
+        p.update(t0 + Duration::from_secs(710), BusState::Silent, None);
+        assert_eq!(
+            p.update(t0 + Duration::from_secs(771), BusState::Silent, None),
+            Some(PowerEvent::ShutdownRequested)
+        );
     }
 }
