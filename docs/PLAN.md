@@ -149,11 +149,22 @@ raw frames ─▶ decoders ─▶ KeyEvent{key, Down|Repeat|Up, t} ─▶ gestur
   - Otherwise keys go to LIVI.
   - A small set of system gestures (shutdown, reboot, save capture) maps to daemon actions.
 - **Sinks**:
-  - LIVI through a uinput keyboard with a fixed keymap. LIVI maps keys to AA rotary/keycodes and drives its own menus, so our Slint pages get focus navigation for free.
+  - **Projection (AA or CarPlay) has focus**: semantic actions over the bridge, mapped by the fork per session. Both have to work; users run either.
+
+    | Action | Android Auto | CarPlay |
+    |---|---|---|
+    | up/down/left/right, rotate, select, back, home | rotary/D-pad | `Knob`, `KnobSelect` |
+    | play/pause, next, prev | media keycodes | `Media(..)` |
+    | call accept / end | `Call` / `EndCall` | `Telephony(..)` |
+    | voice down/up (PTT hold) | `VoiceAssistant` + release | `Siri` |
+    | open nav / phone / media | `Navigation` / `Tel` / `Media` | `RequestUi("maps:" / "mobilephone:" / "nowplaying:")` |
+
+    LIVI's own key layer exposes none of the "open app" keys. The AA input channel must advertise any keycode we send.
+  - **LIVI's menus or our pages have focus**: a uinput keyboard with LIVI's keymap. LIVI's focus handling does the rest, with no fork code.
   - The DIS controller.
   - Daemon actions.
   - RNS-E commands.
-- Long press is resolved in the daemon and sent as a distinct key, because LIVI has no long press.
+- Long press is resolved in the daemon. Over the bridge it's a real down/up, e.g. a voice hold. Over uinput it becomes a distinct key, because LIVI has no long press.
 
 ### 2.5 RNS-E commands
 
