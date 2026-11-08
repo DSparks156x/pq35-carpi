@@ -14,6 +14,7 @@ carpi-core.workspace = true
 carpi-input.workspace = true
 carpi-power.workspace = true
 carpi-proto.workspace = true
+carpi-state.workspace = true
 carpi-light.workspace = true
 carpi-portal.workspace = true
 toml_edit = "0.25"

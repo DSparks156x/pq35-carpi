@@ -394,6 +394,7 @@ dependencies = [
  "carpi-portal",
  "carpi-power",
  "carpi-proto",
+ "carpi-state",
  "clap",
  "serde",
  "serde_json",

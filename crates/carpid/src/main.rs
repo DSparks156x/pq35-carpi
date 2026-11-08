@@ -116,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
     let recorder = Recorder::new(Duration::from_secs(cfg.recorder.minutes * 60), 2_000_000);
     let mut car = Car::new(ifaces.clone(), recorder, cfg.recorder.dir.clone());
     car.configure(cfg.core(), Instant::now());
-    let act = act::Actuators::new(
+    let mut act = act::Actuators::new(
         &cfg,
         ifaces.iter().map(|i| i.name.clone()).collect(),
         args.replay.is_some(),
@@ -149,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
         cfg.update.updater.clone(),
         args.config.clone(),
     ));
+    act.set_hub(jobs.hub.clone());
     api::spawn(&cfg.api.socket, tx.clone(), jobs)?;
 
     let (portal_status, status_rx) = watch::channel(carpi_portal::Status {

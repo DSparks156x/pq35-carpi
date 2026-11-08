@@ -7,6 +7,9 @@ use carpi_can::{Frame, TxPort};
 use carpi_core::{Car, Output};
 use carpi_input::SystemAction;
 use carpi_power::{CarPiHat, PowerBackend, PowerEvent};
+use carpi_proto::{Command, InputAction};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -19,6 +22,8 @@ pub struct Actuators {
     power: CarPiHat,
     #[cfg(target_os = "linux")]
     keyboard: Option<carpi_input::LiviKeyboard>,
+    /// Bridge commands to LIVI, for key actions while AA/CarPlay has focus.
+    hub: Option<Arc<crate::commands::CommandHub>>,
 }
 
 impl Actuators {
@@ -57,7 +62,32 @@ impl Actuators {
             power: CarPiHat::new(),
             #[cfg(target_os = "linux")]
             keyboard,
+            hub: None,
         }
+    }
+
+    pub fn set_hub(&mut self, hub: Arc<crate::commands::CommandHub>) {
+        self.hub = Some(hub);
+    }
+
+    /// Sends input actions to LIVI in order. False if no LIVI is attached.
+    fn send_input(&self, actions: Vec<InputAction>) -> bool {
+        let Some(hub) = self.hub.clone() else {
+            return false;
+        };
+        tokio::spawn(async move {
+            for action in actions {
+                let label = format!("{action:?}");
+                if let Err(e) = hub
+                    .send(Command::Input { action }, Duration::from_secs(2))
+                    .await
+                {
+                    debug!("input {label}: {e}");
+                    break;
+                }
+            }
+        });
+        true
     }
 
     /// `[tx] enabled`, live. Never sends in replay.
@@ -90,8 +120,26 @@ impl Actuators {
                 }
                 None => info!("{}: would send {frame:?}", self.iface_names[iface]),
             },
-            Output::Key(k) => self.key(k),
-            Output::Car(a) => info!("car action {a:?} (bridge input to LIVI not built yet)"),
+            Output::Key(k) => {
+                // AA/CarPlay in front: semantic actions over the bridge.
+                // LIVI's own menus and our pages: uinput (PLAN 2.4).
+                let projection = matches!(
+                    car.store().get("ui.focus", std::time::Instant::now()),
+                    Some(carpi_state::Value::Text(f)) if f == "projection"
+                );
+                let sent = projection
+                    .then(|| key_action(k))
+                    .flatten()
+                    .is_some_and(|actions| self.send_input(actions));
+                if !sent {
+                    self.key(k);
+                }
+            }
+            Output::Car(a) => {
+                if !self.send_input(car_action(a)) {
+                    info!("car action {a:?}: LIVI isn't connected");
+                }
+            }
             Output::Dis(k) => debug!("DIS key {k:?}"),
             Output::Action(SystemAction::SaveCapture) => {
                 let resp = car.save_default_capture();
@@ -146,6 +194,49 @@ impl Actuators {
     }
 }
 
+/// A LIVI key as actions for the projection. `None`: no projection
+/// equivalent, uinput handles it.
+fn key_action(k: carpi_input::LiviKey) -> Option<Vec<InputAction>> {
+    use InputAction as A;
+    use carpi_input::LiviKey as L;
+    Some(match k {
+        L::Up => vec![A::Up],
+        L::Down => vec![A::Down],
+        // The knob arrives as Left/Right; in AA/CarPlay it's the rotary.
+        L::Left => vec![A::Rotate { steps: -1 }],
+        L::Right => vec![A::Rotate { steps: 1 }],
+        L::Select => vec![A::Select { down: true }, A::Select { down: false }],
+        L::Back => vec![A::Back],
+        L::Home => vec![A::Home],
+        L::PlayPause => vec![A::PlayPause],
+        L::Next => vec![A::Next],
+        L::Prev => vec![A::Prev],
+        L::AcceptPhone => vec![A::CallAccept],
+        L::RejectPhone => vec![A::CallEnd],
+        L::Voice => vec![A::Voice { down: true }, A::Voice { down: false }],
+        _ => return None,
+    })
+}
+
+fn car_action(a: carpi_input::CarAction) -> Vec<InputAction> {
+    use InputAction as A;
+    use carpi_input::{CarAction as C, Page};
+    vec![match a {
+        C::OpenNav => A::OpenNav,
+        C::OpenPhone => A::OpenPhone,
+        C::OpenMedia => A::OpenMedia,
+        C::OpenPage(p) => A::OpenPage {
+            page: match p {
+                Page::Data => "data",
+                Page::Car => "car",
+            }
+            .into(),
+        },
+        C::CallAccept => A::CallAccept,
+        C::CallEnd => A::CallEnd,
+    }]
+}
+
 /// A sending socket and its writer task. Dropping the sender ends the task.
 fn open_tx(name: &str) -> Option<mpsc::Sender<Frame>> {
     match TxPort::open(name) {
@@ -165,5 +256,36 @@ fn open_tx(name: &str) -> Option<mpsc::Sender<Frame>> {
             warn!("{name}: can't open for sending: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn knob_is_rotary_and_select_is_a_press() {
+        use carpi_input::LiviKey as L;
+        assert_eq!(
+            key_action(L::Right),
+            Some(vec![InputAction::Rotate { steps: 1 }])
+        );
+        assert_eq!(
+            key_action(L::Select).unwrap(),
+            vec![
+                InputAction::Select { down: true },
+                InputAction::Select { down: false }
+            ]
+        );
+        assert_eq!(key_action(L::CycleSession), None);
+    }
+
+    #[test]
+    fn pages_map_to_names() {
+        use carpi_input::{CarAction, Page};
+        assert_eq!(
+            car_action(CarAction::OpenPage(Page::Car)),
+            vec![InputAction::OpenPage { page: "car".into() }]
+        );
     }
 }
