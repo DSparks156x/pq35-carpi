@@ -81,7 +81,7 @@ pub fn parse_install_list(resp: &[u8]) -> Option<Vec<Installed>> {
         return None;
     }
     let mut out = Vec::new();
-    for c in resp[3..].chunks_exact(4) {
+    for c in resp[3..].as_chunks::<4>().0 {
         if c[0] == 0xFF {
             break;
         }

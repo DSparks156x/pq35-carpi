@@ -51,7 +51,9 @@ pub fn parse_group(resp: &[u8], group: u8) -> Result<Group, GroupError> {
     Ok(Group {
         group,
         records: body
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| Record {
                 formula: c[0],
                 a: c[1],
