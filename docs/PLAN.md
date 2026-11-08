@@ -177,13 +177,41 @@ It keeps a **desired state** and re-asserts it whenever the RNS-E comes back (0x
 
 ### 2.6 Light model
 
-One derived value, `light`, from:
-- 0x635 `DI1_Display`/`DI1_Sensor`
-- `KO1_Lichtsensor`
-- terminal 58t
-- headlight state
+Drew's design (2026-11-07). The stock pattern is bad: with the scroll at minimum, which Drew wants for the cluster, the RNS-E screen is too dim by day, yet at night he wants it very dark.
 
-Output `{ambient, lights_on, night (with hysteresis), panel_level}`. Three consumers read it: `carpi-rnse` (BB level), the bridge (LIVI dark mode, AA night sensor), and the DIS (its own contrast if the cluster allows). Nothing else decides day or night.
+**Inputs**
+- **Sun sensor**, climatronic dash top: 0x3E3 `CL2_Sonne_links`/`_rechts`, W/m² ×4, `FF` = error. Real units, good from overcast to full sun. Coarse at the bottom (4 W/m² steps), so it can't tell dusk from night.
+- **Cluster light sensor**: 0x621 `KO1_Lichtsensor` (also 0x635 `DI1_Sensor`). Fine resolution at the dark end.
+- **The car's dimming output**: 58t (0x470), 58d/display (0x635 `DI1_Display`, 0x621 `KO1_Bel_Displ`). The scroll isn't on the bus; what's on the bus is what the car computes from scroll, sensor and lights. The car applies the scroll by day too, under some conditions, so we take its output as is rather than guessing its rules.
+- **Not used**: the auto-headlight sensor (on Drew's car it faces a cargo box). Headlights-on is a fallback only, since auto lights inherit that sensor.
+- Baseline from the parked log (indoors, daytime): sun 100/68 W/m², cluster sensor 35, display 37 %, 58t 58 %.
+
+**Model**
+- **Ambient**: one estimate on a log scale. It comes from the sun sensor in daylight and the cluster sensor in the dark, blended across dusk. It's smoothed over about 2–3 s with a deadband, so tree shadows don't flicker the screen but tunnels still react.
+- **Curve**: ambient → RNS-E panel %. Two modes:
+  - **manual**: editable points;
+  - **learned**: manual nudges are stored at the current ambient and blended into the curve, like phone auto-brightness.
+- **Scroll trim** (toggle): when on, the car's dimming output shifts the curve up or down. When off, it's ignored.
+- **Night** (dark theme for LIVI, AA and CarPlay): a separate threshold on ambient, with hysteresis and a minimum dwell. Headlights only as a fallback when both sensors are invalid.
+- **Output**: an absolute `BB` level, sent only on a change of 2 % or more, at most about 2 Hz.
+
+**Auto brightness off**: send `BB 00` once to hand control back to the RNS-E, then send nothing; the RNS-E does its own thing.
+
+**Light settings page** (in the fork):
+- auto brightness toggle;
+- scroll trim toggle;
+- curve mode (manual or learned);
+- a plot of the curve with the current ambient and current brightness drawn on it, plus the learned points;
+- night threshold;
+- "reset learned".
+
+Settings live in carpid's settings API; learned points are persisted by carpid.
+
+**Consumers**: `carpi-rnse` (the BB level), the bridge (LIVI dark mode, AA/CarPlay night sensor), and the DIS. Nothing else decides day or night.
+
+Open:
+- Is the firmware's `BB` floor (1–5 act as the stock minimum 6) a hardware limit, or could the firmware go darker?
+- One capture driving from daylight into dark, to seed the default curve.
 
 ### 2.7 DIS
 
