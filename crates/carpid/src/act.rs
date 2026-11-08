@@ -212,9 +212,12 @@ fn key_action(k: carpi_input::LiviKey) -> Option<Vec<InputAction>> {
     Some(match k {
         L::Up => vec![A::Up],
         L::Down => vec![A::Down],
-        // The knob arrives as Left/Right; in AA/CarPlay it's the rotary.
-        L::Left => vec![A::Rotate { steps: -1 }],
-        L::Right => vec![A::Rotate { steps: 1 }],
+        // Knob: AA/CarPlay rotary. Left/Right: the D-pad (Prev/Next long),
+        // a real D-pad press as Hudiy sent it.
+        L::KnobLeft => vec![A::Rotate { steps: -1 }],
+        L::KnobRight => vec![A::Rotate { steps: 1 }],
+        L::Left => vec![A::Left],
+        L::Right => vec![A::Right],
         L::Select => vec![A::Select { down: true }, A::Select { down: false }],
         L::Back => vec![A::Back],
         L::Home => vec![A::Home],
@@ -224,10 +227,6 @@ fn key_action(k: carpi_input::LiviKey) -> Option<Vec<InputAction>> {
         L::AcceptPhone => vec![A::CallAccept],
         L::RejectPhone => vec![A::CallEnd],
         L::Voice => vec![A::Voice { down: true }, A::Voice { down: false }],
-        // Prev/Next long: a real D-pad, as Hudiy sent it. Left/Right above
-        // are the knob.
-        L::DpadLeft => vec![A::Left],
-        L::DpadRight => vec![A::Right],
         _ => return None,
     })
 }
@@ -281,9 +280,11 @@ mod tests {
     fn knob_is_rotary_and_select_is_a_press() {
         use carpi_input::LiviKey as L;
         assert_eq!(
-            key_action(L::Right),
+            key_action(L::KnobRight),
             Some(vec![InputAction::Rotate { steps: 1 }])
         );
+        // The D-pad stays a D-pad in AA/CarPlay.
+        assert_eq!(key_action(L::Left), Some(vec![InputAction::Left]));
         assert_eq!(
             key_action(L::Select).unwrap(),
             vec![

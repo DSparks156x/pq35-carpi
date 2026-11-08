@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                Route::Livi(LiviKey::DpadRight),
+                Route::Livi(LiviKey::Right),
                 Route::Action(SystemAction::Shutdown)
             ]
         );
@@ -104,7 +104,7 @@ mod tests {
             frames.push((35 * 110 + i * 110, p, off));
         }
         let got = pipeline(TV, &frames, 6000);
-        assert_eq!(got, vec![Route::Livi(LiviKey::DpadRight)]);
+        assert_eq!(got, vec![Route::Livi(LiviKey::Right)]);
     }
 
     #[test]

@@ -156,8 +156,8 @@ impl Default for RouteConfig {
             // Faceplate.
             ((K::Prev, Short), L::Prev),
             ((K::Next, Short), L::Next),
-            ((K::Prev, Long), L::DpadLeft),
-            ((K::Next, Long), L::DpadRight),
+            ((K::Prev, Long), L::Left),
+            ((K::Next, Long), L::Right),
             ((K::Up, Short), L::Up),
             ((K::Down, Short), L::Down),
             ((K::Enter, Short), L::Select),
@@ -165,8 +165,8 @@ impl Default for RouteConfig {
             ((K::Return, Long), L::Home),
             ((K::Setup, Short), L::Home),
             ((K::Name, Short), L::Home),
-            ((K::Knob(1), Detent), L::Right),
-            ((K::Knob(-1), Detent), L::Left),
+            ((K::Knob(1), Detent), L::KnobRight),
+            ((K::Knob(-1), Detent), L::KnobLeft),
         ]);
         RouteConfig {
             dis_toggle: (K::Mode, Long),
@@ -285,11 +285,11 @@ mod tests {
             (DIS, Key::WheelClick, Long, Dis(DisKey::Back)),
             // Not in the DIS table: falls through.
             (DIS, Key::Ptt, Short, Livi(LiviKey::Voice)),
-            (DIS, Key::Knob(1), Detent, Livi(LiviKey::Right)),
-            (TV, Key::Knob(-1), Detent, Livi(LiviKey::Left)),
+            (DIS, Key::Knob(1), Detent, Livi(LiviKey::KnobRight)),
+            (TV, Key::Knob(-1), Detent, Livi(LiviKey::KnobLeft)),
             (TV, Key::Next, Short, Livi(LiviKey::Next)),
-            (TV, Key::Prev, Long, Livi(LiviKey::DpadLeft)),
-            (TV, Key::Next, Long, Livi(LiviKey::DpadRight)),
+            (TV, Key::Prev, Long, Livi(LiviKey::Left)),
+            (TV, Key::Next, Long, Livi(LiviKey::Right)),
             (TV, Key::Next, Extended, Action(SystemAction::Shutdown)),
             (DIS, Key::Enter, Extended, Action(SystemAction::Reboot)),
             (TV, Key::Prev, Extended, Action(SystemAction::SaveCapture)),

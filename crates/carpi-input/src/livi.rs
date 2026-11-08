@@ -13,9 +13,9 @@ pub enum LiviKey {
     Up,
     /// `down` = ArrowDown.
     Down,
-    /// `left` = ArrowLeft: AA rotary -1, menu left.
+    /// `left` = ArrowLeft: the D-pad (Prev long).
     Left,
-    /// `right` = ArrowRight: AA rotary +1, menu right.
+    /// `right` = ArrowRight: the D-pad (Next long).
     Right,
     /// `selectDown` = Enter.
     Select,
@@ -37,17 +37,17 @@ pub enum LiviKey {
     Voice,
     /// `cycleSession` = KeyS.
     CycleSession,
-    /// D-pad left/right (Prev/Next long). On LIVI's own screens the same
-    /// arrow keys as the knob; in AA/CarPlay a real D-pad press, where the
-    /// knob's Left/Right are rotary steps.
-    DpadLeft,
-    DpadRight,
+    /// Knob detents, apart from the D-pad (Left/Right = Prev/Next long).
+    /// LIVI binds them as `knobLeft = "PageUp"`, `knobRight = "PageDown"`;
+    /// in AA/CarPlay they are rotary steps.
+    KnobLeft,
+    KnobRight,
     Code(u16),
 }
 
 impl LiviKey {
     /// Every named key, for registering with uinput.
-    pub const ALL: [LiviKey; 14] = [
+    pub const ALL: [LiviKey; 16] = [
         LiviKey::Up,
         LiviKey::Down,
         LiviKey::Left,
@@ -62,6 +62,8 @@ impl LiviKey {
         LiviKey::RejectPhone,
         LiviKey::Voice,
         LiviKey::CycleSession,
+        LiviKey::KnobLeft,
+        LiviKey::KnobRight,
     ];
 
     /// Linux `KEY_*` code (input-event-codes.h).
@@ -81,9 +83,8 @@ impl LiviKey {
             LiviKey::RejectPhone => 19,  // KEY_R
             LiviKey::Voice => 47,        // KEY_V
             LiviKey::CycleSession => 31, // KEY_S
-            // Not in ALL: the arrows are registered through Left/Right.
-            LiviKey::DpadLeft => 105,
-            LiviKey::DpadRight => 106,
+            LiviKey::KnobLeft => 104,    // KEY_PAGEUP
+            LiviKey::KnobRight => 109,   // KEY_PAGEDOWN
             LiviKey::Code(c) => c,
         }
     }

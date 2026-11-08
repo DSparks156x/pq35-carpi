@@ -101,8 +101,8 @@ const LIVI: [(LiviKey, &str); 16] = [
     (LiviKey::RejectPhone, "reject_phone"),
     (LiviKey::Voice, "voice"),
     (LiviKey::CycleSession, "cycle_session"),
-    (LiviKey::DpadLeft, "dpad_left"),
-    (LiviKey::DpadRight, "dpad_right"),
+    (LiviKey::KnobLeft, "knob_left"),
+    (LiviKey::KnobRight, "knob_right"),
 ];
 
 fn name_of<T: PartialEq + Copy>(table: &[(T, &'static str)], v: T) -> &'static str {
