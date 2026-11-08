@@ -8,6 +8,7 @@
 pub mod accel;
 pub mod call;
 pub mod cover;
+pub mod egg;
 pub mod media;
 pub mod nav;
 pub mod readings;

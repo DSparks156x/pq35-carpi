@@ -365,3 +365,43 @@ fn new_cover_flashes_full_centre_then_back_to_media() {
     w.settle();
     w.check_screen();
 }
+
+#[test]
+fn egg_plays_over_media_then_hands_back() {
+    use carpi_dis::screens::egg::Egg;
+    use carpi_dis::screens::media::MediaInput;
+    let frames = (0..6)
+        .map(|i| {
+            let rows = (0..48)
+                .map(|y| if (y + i * 3) % 7 == 0 { [0xF0u8; 8] } else { [0u8; 8] })
+                .collect();
+            (rows, Duration::from_millis(100))
+        })
+        .collect();
+    let mut w = World::new(ClusterSpec::default());
+    w.hu.dis.set_user_page(w.now(), None);
+    let now = w.now();
+    w.hu.dis.set_media(
+        now,
+        MediaInput {
+            title: Some("Never Gonna Give You Up".into()),
+            duration_ms: Some(200_000),
+            playing: true,
+            ..Default::default()
+        },
+    );
+    // The readings page World::new picked keeps its dwell for a moment.
+    w.run(Duration::from_secs(5));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
+    let now = w.now();
+    w.hu.dis.play_egg(now, Egg { frames }, 2);
+    w.run(Duration::from_millis(500));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Egg));
+    w.settle();
+    w.check_screen();
+    w.run(Duration::from_secs(2));
+    assert!(!w.hu.dis.egg_playing());
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
+    w.settle();
+    w.check_screen();
+}

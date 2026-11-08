@@ -9,7 +9,7 @@
 //! 250 ms. The header shows `Ready` / `Timing` / `Done` / `Rolling` and the
 //! timing uncertainty, ± half a sample interval at each end.
 //!
-//! Layout (logical): header centred y=1; a 1-row rule at y=10; legs at
+//! Layout (logical): header centred y=1; a 1 px rule at y=10; legs at
 //! y 13/22/31/40, label left from x=1, value right-aligned to x=63 and free
 //! to start right after its own label. Live speed has no label (Drew: the
 //! unit says it), centred, and drops its unit if it still doesn't fit. Running legs tick at 5/s. A leg
@@ -17,19 +17,20 @@
 //! it, an explicit exception to "highlight means DIS focus").
 
 use super::Screen;
-use crate::cmd::{Ink, Op, text_flags};
+use crate::cmd::{Dir, Ink, Op, Rop, text_flags};
 use crate::font::{Font, TEXT_H, audscii};
-use crate::proto::Rect;
+use crate::proto::{FULL, Rect};
 use crate::helpers::{Ctx, TextSlot};
 use crate::pack::Group;
 use std::time::{Duration, Instant};
 
 pub const ROWS: [u8; 4] = [13, 22, 31, 40];
 pub const HEADER_Y: u8 = 1;
-/// Separator under the header: one logical row, with clearance both sides
+/// Separator under the header at logical y=10, with clearance both sides
 /// (bench: at y=9 between text at y=1 and y=12 the opaque text cells painted
-/// over it).
-pub const RULE: Rect = Rect::new(0, 10, 64, 1);
+/// over it). Drawn as `63` H lines, one physical px tall like the cluster's
+/// own separators (a `52` fill is a whole 2 px logical row; Drew: too thick).
+pub const RULE_Y: u8 = 10;
 const TICK: Duration = Duration::from_millis(200);
 /// A finished leg shows inverted this long.
 const FLASH: Duration = Duration::from_secs(1);
@@ -309,7 +310,18 @@ impl AccelScreen {
         let x = self.header.centre_x(m, &h);
         let mut out: Vec<Group> = self.header.draw(m, "header", x, h).into_iter().collect();
         if labels {
-            out.push(Group::new("rule", vec![Op::Fill(RULE)]));
+            // XOR is the only proven "on" mode for `63`; the row is blank after
+            // the enter clear, so XOR lights it. Two 32-long runs (60 is the
+            // longest line confirmed on the bench).
+            let line = |x| Op::Line {
+                clip: FULL,
+                x,
+                y: RULE_Y,
+                dir: Dir::H,
+                len: 32,
+                rop: Rop::Xor,
+            };
+            out.push(Group::new("rule", vec![line(0), line(32)]));
         }
         for i in 0..self.timer.states.len() {
             let l = audscii(&self.timer.cfg.legs[i].label());

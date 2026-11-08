@@ -9,6 +9,7 @@ use crate::pack::{PackError, Packed, Registers};
 use crate::screens::accel::{AccelConfig, AccelScreen};
 use crate::screens::call::{CallInput, CallScreen};
 use crate::screens::cover::CoverScreen;
+use crate::screens::egg::{Egg, EggScreen};
 use crate::screens::media::{MediaInput, MediaLayout, MediaScreen};
 use crate::screens::nav::{NavConfig, NavInput, NavScreen};
 use crate::screens::readings::{ReadingSpec, ReadingsInput, ReadingsPage, ReadingsScreen};
@@ -27,6 +28,8 @@ pub enum ScreenId {
     Cover,
     /// Acceleration test (a user page).
     Accel,
+    /// An easter egg animation, over media.
+    Egg,
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +84,7 @@ pub struct Dis {
     call: CallScreen,
     cover: CoverScreen,
     accel: AccelScreen,
+    egg: Option<EggScreen>,
     cover_flash: Option<Duration>,
     flash: Option<Flash>,
     user_page: Option<ScreenId>,
@@ -110,6 +114,7 @@ impl Dis {
             call: CallScreen::new(),
             cover: CoverScreen::new(),
             accel: AccelScreen::new(cfg.accel),
+            egg: None,
             cover_flash: cfg.cover_flash,
             flash: None,
             user_page: None,
@@ -228,6 +233,25 @@ impl Dis {
         }
     }
 
+    /// Play an easter egg over media, `loops` times, then hand back. The
+    /// caller decides which track gets which egg. Replaces one that's playing.
+    pub fn play_egg(&mut self, now: Instant, egg: Egg, loops: u32) {
+        self.egg = Some(EggScreen::new(egg, loops));
+        if self.shown.is_some_and(|(id, _)| id == ScreenId::Egg) {
+            self.reenter = true;
+        }
+        self.step(now);
+    }
+
+    pub fn stop_egg(&mut self, now: Instant) {
+        self.egg = None;
+        self.step(now);
+    }
+
+    pub fn egg_playing(&self) -> bool {
+        self.egg.is_some()
+    }
+
     pub fn accel(&self) -> &AccelScreen {
         &self.accel
     }
@@ -283,6 +307,7 @@ impl Dis {
                     ScreenId::Call => self.call.next_deadline(&cx),
                     ScreenId::Cover => self.cover.next_deadline(&cx),
                     ScreenId::Accel => self.accel.next_deadline(&cx),
+                    ScreenId::Egg => self.egg.as_ref().and_then(|e| e.next_deadline(&cx)),
                 }
             }
             _ => None,
@@ -310,9 +335,13 @@ impl Dis {
                 self.flash = None;
             }
         }
+        if self.egg.as_ref().is_some_and(|e| e.done(now)) {
+            self.egg = None;
+        }
         match c {
             Class::NavManeuver => Some(ScreenId::Nav),
             Class::UserPage => self.user_page,
+            Class::Media if self.egg.is_some() => Some(ScreenId::Egg),
             Class::Media if self.flash.is_some() => Some(ScreenId::Cover),
             Class::Media => Some(ScreenId::Media),
             Class::Call => Some(ScreenId::Call),
@@ -346,6 +375,10 @@ impl Dis {
             ScreenId::Call => &mut self.call,
             ScreenId::Cover => &mut self.cover,
             ScreenId::Accel => &mut self.accel,
+            ScreenId::Egg => match &mut self.egg {
+                Some(e) => e,
+                None => return,
+            },
         };
         match build_frame(screen, now, &cx, self.session.registers(), enter) {
             Ok(packed) => {

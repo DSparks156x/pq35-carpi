@@ -12,6 +12,7 @@ use carpi_dis::screens::nav::NavInput;
 use carpi_dis::icons::Art;
 use carpi_dis::image::dither;
 use carpi_dis::screens::call::CallInput;
+use carpi_dis::screens::egg::Egg;
 use carpi_dis::screens::media::{ART, MediaInput, MediaLayout};
 use carpi_dis::screens::readings::{ReadingCell, ReadingsInput, ReadingsPage};
 use carpi_dis::session::{Phase, Window};
@@ -44,6 +45,27 @@ pub enum Screens {
     Call,
     /// Acceleration test against a scripted speed trace.
     Accel,
+    /// Media with an easter egg per track, from `$CARPI_BENCH_EGGS` (`.egg`
+    /// files from `cargo run -p carpi-dis --example eggs`).
+    Eggs,
+}
+
+fn bench_eggs() -> &'static [Egg] {
+    static C: std::sync::OnceLock<Vec<Egg>> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        let Some(dir) = std::env::var_os("CARPI_BENCH_EGGS") else {
+            return Vec::new();
+        };
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "egg"))
+            .collect();
+        files.sort();
+        files.iter().filter_map(|f| Egg::parse(&std::fs::read(f).ok()?)).collect()
+    })
 }
 
 /// Speed trace, 40 s cycle, km/h: stopped 0-3 s; a pull to ~170 easing off
@@ -429,6 +451,7 @@ pub struct Bench {
     focus: bool,
     next_speed: Instant,
     speed_n: u32,
+    egg_track: Option<u64>,
     probe: Option<Probe>,
 }
 
@@ -466,6 +489,7 @@ impl Bench {
             focus: false,
             next_speed: now,
             speed_n: 1,
+            egg_track: None,
             probe: (screens == Screens::Probe).then_some(Probe {
                 stage: ProbeStage::Blank,
                 at: now,
@@ -603,6 +627,23 @@ impl Bench {
             self.dis.set_call(now, call_at(now - self.t0));
             return;
         }
+        if self.screens == Screens::Eggs {
+            let t = now - self.t0;
+            self.dis.set_media(now, media_at(t));
+            let track = t.as_secs() / TRACK_SECS;
+            let eggs = bench_eggs();
+            if !eggs.is_empty() && self.egg_track != Some(track) {
+                self.egg_track = Some(track);
+                let egg = eggs[track as usize % eggs.len()].clone();
+                // Loop for about 15 s of the 25 s track.
+                let len: Duration = egg.frames.iter().map(|(_, d)| *d).sum();
+                let loops = (15.0 / len.as_secs_f64().max(0.1)).ceil() as u32;
+                let msg = format!("egg {} ({} frames, {loops} loops)", track as usize % eggs.len() + 1, egg.frames.len());
+                self.say(now, msg);
+                self.dis.play_egg(now, egg, loops);
+            }
+            return;
+        }
         if matches!(self.screens, Screens::MediaStack | Screens::MediaArt) {
             // No user page: media wins the centre through the arbiter.
             self.dis.set_media(now, media_at(now - self.t0));
@@ -620,7 +661,8 @@ impl Bench {
             | Screens::MediaStack
             | Screens::MediaArt
             | Screens::Call
-            | Screens::Accel => {
+            | Screens::Accel
+            | Screens::Eggs => {
                 ScreenId::Readings
             }
         };

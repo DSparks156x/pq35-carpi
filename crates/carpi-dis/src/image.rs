@@ -35,6 +35,10 @@ pub struct CoverParams {
     pub dither: Dither,
     /// Share of the max-channel excess added to luma (0 = plain Rec.709).
     pub saturation_boost: f32,
+    /// Letterbox fill, grey 0..=255 (old `bg_fill`: black or white).
+    pub background: u8,
+    /// Invert the colours after letterboxing (old `invert`).
+    pub invert: bool,
 }
 
 impl Default for CoverParams {
@@ -48,6 +52,8 @@ impl Default for CoverParams {
             black_floor: 45,
             dither: Dither::FloydSteinberg,
             saturation_boost: 0.25,
+            background: 0,
+            invert: false,
         }
     }
 }
@@ -61,8 +67,8 @@ pub struct Grey {
 }
 
 /// Area-average `rgb` (`w` x `h`, 3 B/px) into `ow` x `oh`, keeping aspect and
-/// letterboxing on black. Returns RGB as f32.
-fn fit_rgb(rgb: &[u8], w: usize, h: usize, ow: usize, oh: usize) -> Vec<[f32; 3]> {
+/// letterboxing on `bg`. Returns RGB as f32.
+fn fit_rgb(rgb: &[u8], w: usize, h: usize, ow: usize, oh: usize, bg: u8) -> Vec<[f32; 3]> {
     assert_eq!(rgb.len(), w * h * 3, "image size");
     let scale = (ow as f64 / w as f64).min(oh as f64 / h as f64);
     let (fw, fh) = (
@@ -70,7 +76,7 @@ fn fit_rgb(rgb: &[u8], w: usize, h: usize, ow: usize, oh: usize) -> Vec<[f32; 3]
         ((h as f64 * scale).round() as usize).clamp(1, oh),
     );
     let (ox, oy) = ((ow - fw) / 2, (oh - fh) / 2);
-    let mut out = vec![[0f32; 3]; ow * oh];
+    let mut out = vec![[f32::from(bg); 3]; ow * oh];
     for ty in 0..fh {
         let (y0, y1) = (ty * h / fh, ((ty + 1) * h / fh).max(ty * h / fh + 1).min(h));
         for tx in 0..fw {
@@ -148,7 +154,10 @@ fn unsharp(g: &mut Grey, amount: f32) {
 
 /// The tone stages, before the dither: what the old tester previewed as grey.
 pub fn cover_grey(rgb: &[u8], w: usize, h: usize, ow: usize, oh: usize, p: &CoverParams) -> Grey {
-    let px = fit_rgb(rgb, w, h, ow, oh);
+    let mut px = fit_rgb(rgb, w, h, ow, oh, p.background);
+    if p.invert {
+        px.iter_mut().for_each(|c| *c = c.map(|v| 255.0 - v));
+    }
     let mut v = smart_grey(&px, p.saturation_boost);
     autocontrast(&mut v);
     for x in v.iter_mut() {
@@ -216,7 +225,7 @@ pub fn cover(rgb: &[u8], w: usize, h: usize, ow: usize, oh: usize, p: &CoverPara
 /// synthetic test patterns.
 pub fn dither(gray: &[u8], w: usize, h: usize, ow: usize, oh: usize) -> Art {
     let rgb: Vec<u8> = gray.iter().flat_map(|g| [*g; 3]).collect();
-    let px = fit_rgb(&rgb, w, h, ow, oh);
+    let px = fit_rgb(&rgb, w, h, ow, oh, 0);
     let g = Grey {
         w: ow,
         h: oh,

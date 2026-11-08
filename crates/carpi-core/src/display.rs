@@ -397,6 +397,7 @@ impl Display {
                 (true, ScreenId::Call) => "call".into(),
                 (true, ScreenId::Cover) => "cover".into(),
                 (true, ScreenId::Accel) => "accel".into(),
+                (true, ScreenId::Egg) => "egg".into(),
             })),
         );
         set(
@@ -409,6 +410,7 @@ impl Display {
                     ScreenId::Call => "call".into(),
                     ScreenId::Cover => "cover".into(),
                     ScreenId::Accel => "accel".into(),
+                    ScreenId::Egg => "egg".into(),
                 })
             }),
         );
