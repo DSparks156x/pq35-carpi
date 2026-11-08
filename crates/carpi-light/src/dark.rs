@@ -209,7 +209,10 @@ impl DarkMode {
         }
 
         match s.source {
-            DarkSource::Headlights if i.kl15 != Some(false) && i.lights_on.is_some() => {
+            // Only while the ignition is known on. With it off or unknown (the
+            // bus naps and wakes with the car off) the clock decides, so the
+            // two rules don't take turns.
+            DarkSource::Headlights if self.kl15 == Some(true) && i.lights_on.is_some() => {
                 self.headlights(now)
             }
             DarkSource::Ambient if i.ambient.is_some() => {
@@ -300,6 +303,26 @@ mod tests {
         assert_eq!((c.year, c.month, c.day, c.second), (2026, 11, 7, 68730));
         assert_eq!(clock("2026-13-07T19:05:30"), None);
         assert_eq!(clock("garbage"), None);
+    }
+
+    #[test]
+    fn car_off_bus_napping_stays_on_the_clock() {
+        // Car off at night: the bus wakes and naps, so Kl15 comes and goes
+        // while the light frames still say "off". The clock must decide.
+        let t0 = Instant::now();
+        let s = DarkSetup::default();
+        let mut d = DarkMode::default();
+        let night = clock("2026-11-07T22:00:00");
+        for n in 0..10u64 {
+            let i = DarkInputs {
+                kl15: if n % 2 == 0 { Some(false) } else { None },
+                lights_on: Some(false),
+                clock: night,
+                ..Default::default()
+            };
+            assert!(d.update(t0 + ms(n * 500), &s, &i), "step {n}");
+            assert_eq!(d.source(), Some(NightSource::Fallback));
+        }
     }
 
     #[test]
