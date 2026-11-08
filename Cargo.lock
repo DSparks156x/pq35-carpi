@@ -244,6 +244,7 @@ dependencies = [
  "carpi-proto",
  "carpi-rnse",
  "carpi-signals",
+ "carpi-sim",
  "carpi-state",
  "serde_json",
  "tracing",
