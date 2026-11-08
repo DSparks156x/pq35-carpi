@@ -13,7 +13,7 @@ pub use carpi_dis::ScreenId as DisScreen;
 pub use carpi_dis::screens::media::MediaLayout as DisMediaLayout;
 pub use carpi_dis::screens::nav::{Clock as DisClock, Units as DisUnits};
 pub use control::{AmbientSource, CurveMode, DarkSetup, DarkSource, LightSetup, Location, Output};
-pub use display::{DisSetup, Reading};
+pub use display::{DisCell, DisPage, DisSetup, Reading};
 
 use carpi_can::RxFrame;
 use carpi_can::recorder::Recorder;
@@ -82,6 +82,9 @@ pub struct Car {
     display: display::Display,
     /// On the interface with the `diag` role, if any.
     diag: Option<diagnostics::Diagnostics>,
+    /// Diag subscriptions for the DIS readings page on screen: its keys, the
+    /// ids, and when the lease was last renewed.
+    dis_subs: (Vec<String>, Vec<DiagSubId>, Option<Instant>),
 }
 
 impl Car {
@@ -112,6 +115,7 @@ impl Car {
             outputs: Vec::new(),
             display: display::Display::new(DisSetup::default()),
             diag,
+            dis_subs: (Vec::new(), Vec::new(), None),
         }
     }
 
@@ -166,9 +170,38 @@ impl Car {
         let gate = ican.map(|i| (i, &mut self.controls.gates[i]));
         self.display
             .service(now, &mut self.store, view, gate, &mut self.outputs);
+        self.sync_dis_subs(now);
         if let Some(d) = &mut self.diag {
             let gate = &mut self.controls.gates[d.iface];
             d.service(now, &mut self.store, view, gate, &mut self.outputs);
+        }
+    }
+
+    /// Keep diag polling the values the DIS readings page shows (the old
+    /// readings app's value requests), and only while it's on screen.
+    fn sync_dis_subs(&mut self, now: Instant) {
+        const PERIOD: Duration = Duration::from_millis(500);
+        let want = self.display.wanted_values();
+        if want != self.dis_subs.0 {
+            let old = std::mem::take(&mut self.dis_subs.1);
+            if !old.is_empty() {
+                self.diag_unsubscribe(&old, now);
+            }
+            let ids = if want.is_empty() {
+                Vec::new()
+            } else {
+                self.diag_subscribe(&want, PERIOD, now)
+            };
+            if !want.is_empty() {
+                tracing::info!("dis: polling {} diag values for the readings page", ids.len());
+            }
+            self.dis_subs = (want, ids, Some(now));
+        } else if !self.dis_subs.1.is_empty()
+            && self.dis_subs.2.is_none_or(|t| now >= t + PERIOD)
+        {
+            let ids = self.dis_subs.1.clone();
+            self.diag_renew(&ids, PERIOD, now);
+            self.dis_subs.2 = Some(now);
         }
     }
 

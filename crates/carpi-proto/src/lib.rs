@@ -389,7 +389,11 @@ pub struct LightPatch {
 pub struct DisSettings {
     pub enabled: bool,
     /// The readings page, up to 8 cells: left column top to bottom, then right.
+    /// Used when `pages` is empty.
     pub readings: Vec<ReadingSetting>,
+    /// Named readings pages (the wheel steps through them).
+    #[serde(default)]
+    pub pages: Vec<DisPageSetting>,
     /// When we hold the centre with nothing else to show.
     #[serde(default)]
     pub claim: DisClaim,
@@ -419,6 +423,30 @@ pub struct DisSettings {
     pub units: DisUnits,
     #[serde(default)]
     pub clock: DisClock,
+}
+
+/// A named DIS readings page.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DisPageSetting {
+    pub name: String,
+    /// Up to 8: left column top to bottom, then right.
+    pub cells: Vec<DisCellSetting>,
+}
+
+/// A readings cell: any store or diag catalog value.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DisCellSetting {
+    pub key: String,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default = "one")]
+    pub scale: f64,
+    /// Show in this unit (`°F`, `mph`, `psi`, ...); `None`: the key's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Icon name; `None`: picked from the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// DIS distance units. `Auto`: as the phone shows them.
@@ -503,6 +531,9 @@ pub struct DisPatch {
     pub media_layout: Option<DisMediaLayout>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover_flash_s: Option<f64>,
+    /// Replaces all pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages: Option<Vec<DisPageSetting>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub units: Option<DisUnits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

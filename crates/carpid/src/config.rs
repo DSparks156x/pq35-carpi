@@ -62,6 +62,9 @@ use std::path::{Path, PathBuf};
 /// units = "auto"       # or "metric", "imperial" (auto: as the phone shows)
 /// clock = "auto"       # or "12h", "24h" (auto: 12 h if the phone's ETA has AM/PM)
 /// # readings = [ { key = "engine.rpm", label = "RPM", decimals = 0, scale = 1.0 }, ... ]
+/// # Named pages (the wheel steps through them); any store or diag value:
+/// # pages = [ { name = "Daily", cells = [ { key = "engine.oil_temp_c", unit = "°F" },
+/// #     { key = "engine.boost.actual", unit = "psi", decimals = 1, icon = "boost" } ] } ]
 ///
 /// [portal]             # phone portal; absent = off. Keys: carpi_portal::PortalConfig
 /// bind = "0.0.0.0:5003"
@@ -199,6 +202,8 @@ pub struct Dis {
     pub enabled: bool,
     /// Absent: the default 2x4 set of ICAN values.
     pub readings: Option<Vec<ReadingCfg>>,
+    /// Named readings pages; empty: one page from `readings`.
+    pub pages: Vec<PageCfg>,
     pub claim: Claim,
     pub default_page: DisPage,
     /// `auto_*` is the first name these had (still accepted).
@@ -240,6 +245,7 @@ impl Default for Dis {
         Dis {
             enabled: false,
             readings: None,
+            pages: Vec::new(),
             claim: Claim::Always,
             default_page: DisPage::Readings,
             claim_nav: true,
@@ -279,6 +285,30 @@ pub enum DisPage {
 pub enum DisMediaLayout {
     Stack,
     Art,
+}
+
+/// A named readings page.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageCfg {
+    pub name: String,
+    #[serde(default)]
+    pub cells: Vec<CellCfg>,
+}
+
+/// A readings cell: any store or diag catalog value.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CellCfg {
+    pub key: String,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default = "one")]
+    pub scale: f64,
+    /// Show in this unit (converted); absent: the key's own.
+    pub unit: Option<String>,
+    /// Icon name; absent: picked from the key.
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -549,6 +579,26 @@ impl Config {
         if !(1..=90).contains(&self.logs.max_pct) {
             return Err("[logs] max_pct must be 1-90".into());
         }
+        for (i, p) in self.dis.pages.iter().enumerate() {
+            let at = format!("[dis] pages {} ('{}')", i + 1, p.name);
+            if p.name.trim().is_empty() {
+                return Err(format!("{at}: name is empty"));
+            }
+            if p.cells.len() > 8 {
+                return Err(format!("{at}: at most 8 cells, got {}", p.cells.len()));
+            }
+            for (j, c) in p.cells.iter().enumerate() {
+                if c.key.is_empty() {
+                    return Err(format!("{at} cell {}: key is empty", j + 1));
+                }
+                if c.decimals > 3 {
+                    return Err(format!("{at} cell {}: decimals must be 0-3", j + 1));
+                }
+                if !c.scale.is_finite() || c.scale == 0.0 {
+                    return Err(format!("{at} cell {}: bad scale", j + 1));
+                }
+            }
+        }
         let f = self.dis.cover_flash_s;
         if !f.is_finite() || !(0.0..=60.0).contains(&f) {
             return Err(format!("[dis] cover_flash_s: 0-60, got {f}"));
@@ -614,6 +664,25 @@ impl Config {
             dis: DisSetup {
                 enabled: self.dis.enabled,
                 readings: self.readings(),
+                pages: self
+                    .dis
+                    .pages
+                    .iter()
+                    .map(|p| carpi_core::DisPage {
+                        name: p.name.clone(),
+                        cells: p
+                            .cells
+                            .iter()
+                            .map(|c| carpi_core::DisCell {
+                                key: c.key.clone(),
+                                decimals: c.decimals,
+                                scale: c.scale,
+                                unit: c.unit.clone(),
+                                icon: c.icon.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
                 claim_always: self.dis.claim == Claim::Always,
                 default_page: match self.dis.default_page {
                     DisPage::Readings => carpi_core::DisScreen::Readings,

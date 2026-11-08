@@ -16,7 +16,7 @@ use carpi_can::Frame;
 use carpi_dis::screens::call::CallInput;
 use carpi_dis::screens::media::{MediaInput, MediaLayout};
 use carpi_dis::screens::nav::{Clock, NavConfig, NavInput, Units, format_distance_in};
-use carpi_dis::screens::readings::{ReadingSpec, ReadingsInput};
+use carpi_dis::screens::readings::{ReadingCell, ReadingSpec, ReadingsInput, ReadingsPage, unit_for};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::top::TopLines;
 use carpi_dis::{Dis, DisConfig, ScreenId, SessionEvent};
@@ -54,8 +54,12 @@ impl Reading {
 pub struct DisSetup {
     /// Off by default: the first runs on the car send nothing to the cluster.
     pub enabled: bool,
-    /// Up to 8; left column top to bottom, then right.
+    /// Up to 8; left column top to bottom, then right. Used as one unnamed
+    /// page when `pages` is empty.
     pub readings: Vec<Reading>,
+    /// Named readings pages (the old readings app's DIS pages); the wheel
+    /// steps through them.
+    pub pages: Vec<DisPage>,
     /// Our default page holds the centre whenever nothing else wants it;
     /// off: we idle as a tab in the cluster menu until it's picked.
     pub claim_always: bool,
@@ -83,6 +87,7 @@ impl Default for DisSetup {
         DisSetup {
             enabled: false,
             readings: default_readings(),
+            pages: Vec::new(),
             claim_always: true,
             default_page: ScreenId::Readings,
             claim_nav: true,
@@ -97,6 +102,67 @@ impl Default for DisSetup {
             clock: Clock::Auto,
         }
     }
+}
+
+/// A named readings page.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DisPage {
+    pub name: String,
+    /// Up to 8; left column top to bottom, then right.
+    pub cells: Vec<DisCell>,
+}
+
+/// One readings cell: any store value (ICAN, or a diag catalog value, which
+/// is polled while its page is on screen).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DisCell {
+    pub key: String,
+    pub decimals: u8,
+    /// Shown value = value x scale, after any unit conversion.
+    pub scale: f64,
+    /// Show in this unit (`°F`, `mph`, `psi`, ...), converted from the key's
+    /// own; `None`: as the key has it.
+    pub unit: Option<String>,
+    /// Icon name (`oil`, `boost`, ...); `None`: picked from the key.
+    pub icon: Option<String>,
+}
+
+/// A key's own unit: the diag catalog's when it names one (`engine.boost.actual`
+/// is mbar), else the key's suffix (`_c`, `_kmh`, ...).
+pub fn key_unit(key: &str) -> &'static str {
+    static CATALOG: std::sync::OnceLock<carpi_diag::Catalog> = std::sync::OnceLock::new();
+    let cat = CATALOG.get_or_init(carpi_diag::Catalog::seed);
+    match cat.get(key).map(|d| d.unit) {
+        Some(carpi_diag::catalog::Unit::Expect(u)) => u,
+        _ => unit_for(key),
+    }
+}
+
+/// `v` in unit `from` (as the key's suffix gives it) expressed in `to`.
+/// `None` if there's no conversion between them.
+pub fn convert(v: f64, from: &str, to: &str) -> Option<f64> {
+    if from == to || to.is_empty() {
+        return Some(v);
+    }
+    Some(match (from, to) {
+        ("°C", "°F") => v * 9.0 / 5.0 + 32.0,
+        ("°F", "°C") => (v - 32.0) * 5.0 / 9.0,
+        ("km/h", "mph") => v / 1.609_344,
+        ("mph", "km/h") => v * 1.609_344,
+        ("km", "mi") => v / 1.609_344,
+        ("mi", "km") => v * 1.609_344,
+        ("bar", "psi") => v * 14.503_77,
+        ("bar", "kPa") => v * 100.0,
+        ("bar", "mbar") => v * 1000.0,
+        ("mbar", "bar") => v / 1000.0,
+        ("mbar", "psi") => v * 0.014_503_77,
+        ("mbar", "kPa") => v / 10.0,
+        ("kPa", "psi") => v * 0.145_037_7,
+        ("kPa", "bar") => v / 100.0,
+        ("L", "gal") => v / 3.785_41,
+        ("Nm", "lb-ft") => v * 0.737_562,
+        _ => return None,
+    })
 }
 
 /// ICAN values only, so the page needs no diag polling. The odometer is
@@ -160,8 +226,30 @@ fn nav_config(setup: &DisSetup) -> NavConfig {
     }
 }
 
+fn readings_pages(setup: &DisSetup) -> Vec<ReadingsPage> {
+    setup
+        .pages
+        .iter()
+        .map(|p| ReadingsPage {
+            name: p.name.clone(),
+            cells: p
+                .cells
+                .iter()
+                .take(8)
+                .map(|c| ReadingCell {
+                    key: c.key.clone(),
+                    decimals: c.decimals,
+                    icon: c.icon.clone(),
+                    unit: c.unit.clone(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 fn new_dis(setup: &DisSetup) -> Dis {
     Dis::new(DisConfig {
+        readings_pages: readings_pages(setup),
         readings: setup
             .readings
             .iter()
@@ -681,12 +769,38 @@ impl Display {
 
     fn readings_input(&self, store: &Store, now: Instant) -> ReadingsInput {
         let mut values = [None; 8];
-        for (v, r) in values.iter_mut().zip(&self.setup.readings) {
-            *v = store.get_num(&r.key, now).map(|x| x * r.scale);
+        match self.setup.pages.get(self.dis.readings().page_index()) {
+            Some(page) if !self.setup.pages.is_empty() => {
+                for (v, c) in values.iter_mut().zip(&page.cells) {
+                    let from = key_unit(&c.key);
+                    let to = c.unit.as_deref().unwrap_or(from);
+                    *v = store
+                        .get_num(&c.key, now)
+                        .and_then(|x| convert(x, from, to))
+                        .map(|x| x * c.scale);
+                }
+            }
+            _ => {
+                for (v, r) in values.iter_mut().zip(&self.setup.readings) {
+                    *v = store.get_num(&r.key, now).map(|x| x * r.scale);
+                }
+            }
         }
         ReadingsInput {
             title: "Readings".into(),
             values,
+        }
+    }
+
+    /// Store keys the readings page on screen shows (for diag polling).
+    /// Empty when the DIS isn't running or readings aren't up.
+    pub fn wanted_values(&self) -> Vec<String> {
+        if !self.running || self.dis.wanted() != Some(ScreenId::Readings) {
+            return Vec::new();
+        }
+        match self.setup.pages.get(self.dis.readings().page_index()) {
+            Some(p) => p.cells.iter().map(|c| c.key.clone()).collect(),
+            None => self.setup.readings.iter().map(|r| r.key.clone()).collect(),
         }
     }
 

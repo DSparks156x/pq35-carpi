@@ -46,6 +46,25 @@ pub fn get(cfg: &Config) -> Settings {
                 crate::config::DisPage::Accel => carpi_proto::DisPage::Accel,
                 crate::config::DisPage::Media => carpi_proto::DisPage::Media,
             },
+            pages: cfg
+                .dis
+                .pages
+                .iter()
+                .map(|p| carpi_proto::DisPageSetting {
+                    name: p.name.clone(),
+                    cells: p
+                        .cells
+                        .iter()
+                        .map(|c| carpi_proto::DisCellSetting {
+                            key: c.key.clone(),
+                            decimals: c.decimals,
+                            scale: c.scale,
+                            unit: c.unit.clone(),
+                            icon: c.icon.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
             claim_nav: cfg.dis.claim_nav,
             release_nav: cfg.dis.release_nav,
             claim_phone: cfg.dis.claim_phone,
@@ -315,6 +334,28 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         if let Some(v) = d.cover_flash_s {
             doc["dis"]["cover_flash_s"] = value(v);
         }
+        if let Some(pages) = &d.pages {
+            doc["dis"]["pages"] = array(pages.iter().map(|p| {
+                let mut t = InlineTable::new();
+                t.insert("name", p.name.as_str().into());
+                let mut cells = Array::new();
+                for c in &p.cells {
+                    let mut ct = InlineTable::new();
+                    ct.insert("key", c.key.as_str().into());
+                    ct.insert("decimals", i64::from(c.decimals).into());
+                    ct.insert("scale", c.scale.into());
+                    if let Some(u) = &c.unit {
+                        ct.insert("unit", u.as_str().into());
+                    }
+                    if let Some(i) = &c.icon {
+                        ct.insert("icon", i.as_str().into());
+                    }
+                    cells.push(Value::InlineTable(ct));
+                }
+                t.insert("cells", Value::Array(cells));
+                t
+            }));
+        }
         if let Some(v) = d.units {
             doc["dis"]["units"] = value(snake(&v));
         }
@@ -495,6 +536,16 @@ mod tests {
                     media_layout: Some(DisMediaLayout::Art),
                     cover_flash_s: Some(0.0),
                     units: Some(carpi_proto::DisUnits::Imperial),
+                    pages: Some(vec![carpi_proto::DisPageSetting {
+                        name: "Daily".into(),
+                        cells: vec![carpi_proto::DisCellSetting {
+                            key: "engine.boost.actual".into(),
+                            decimals: 1,
+                            scale: 1.0,
+                            unit: Some("psi".into()),
+                            icon: Some("boost".into()),
+                        }],
+                    }]),
                     clock: Some(carpi_proto::DisClock::H12),
                     ..Default::default()
                 }),
@@ -509,6 +560,9 @@ mod tests {
         assert!(!after.dis.release_media && after.dis.release_nav);
         assert_eq!(after.dis.media_layout, DisMediaLayout::Art);
         assert_eq!(after.dis.units, carpi_proto::DisUnits::Imperial);
+        assert_eq!(after.dis.pages.len(), 1);
+        assert_eq!(after.dis.pages[0].cells[0].unit.as_deref(), Some("psi"));
+        assert_eq!(cfg.core().dis.pages[0].cells[0].icon.as_deref(), Some("boost"));
         assert_eq!(after.dis.clock, carpi_proto::DisClock::H12);
         // And what the car model gets.
         let core = cfg.core().dis;

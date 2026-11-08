@@ -226,3 +226,41 @@ fn top_lines_skip_media_when_the_centre_shows_it() {
     assert_eq!(r.text("dis.shown").as_deref(), Some("media"));
     assert_eq!(r.text("dis.top_text"), None, "media is in the centre already");
 }
+
+#[test]
+fn named_pages_convert_units_and_poll_diag_values() {
+    use carpi_core::{DisCell, DisPage};
+    let cell = |key: &str, unit: Option<&str>| DisCell {
+        key: key.into(),
+        decimals: 0,
+        scale: 1.0,
+        unit: unit.map(Into::into),
+        icon: None,
+    };
+    let mut r = Rig::new(DisSetup {
+        pages: vec![DisPage {
+            name: "Daily".into(),
+            cells: vec![
+                cell("ambient.outside_temp_c", Some("°F")),
+                cell("engine.boost.actual", Some("psi")),
+            ],
+        }],
+        ..enabled()
+    });
+    r.run(Duration::from_secs(5));
+    assert_eq!(r.text("dis.shown").as_deref(), Some("readings"));
+    // The diag-only value on the page is being polled while it's up.
+    let st = r.car.diag_status(r.now).expect("diag bus");
+    let subs: Vec<&str> = st.subscriptions.iter().map(|s| s.value.as_str()).collect();
+    assert!(subs.contains(&"engine.boost.actual"), "{subs:?}");
+}
+
+#[test]
+fn unit_conversion() {
+    use carpi_core::display::convert;
+    assert_eq!(convert(100.0, "°C", "°F"), Some(212.0));
+    assert!((convert(1000.0, "mbar", "psi").unwrap() - 14.5038).abs() < 1e-3);
+    assert_eq!(convert(5.0, "rpm", "psi"), None);
+    assert_eq!(carpi_core::display::key_unit("engine.boost.actual"), "mbar");
+    assert_eq!(carpi_core::display::key_unit("engine.oil_temp_c"), "°C");
+}
