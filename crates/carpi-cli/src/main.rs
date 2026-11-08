@@ -2,6 +2,7 @@
 //! offline.
 
 mod bench;
+mod nav_trace;
 
 use anyhow::{Context, bail};
 use carpi_can::ReplayPort;
@@ -48,6 +49,15 @@ enum Cmd {
         #[arg(default_value = "")]
         prefix: Vec<String>,
         #[arg(long, default_value_t = 200)]
+        period_ms: u32,
+    },
+    /// Record nav as carpid holds it until Ctrl-C: one JSON line per change
+    /// with the whole `nav.*` / `projection.*` picture.
+    NavTrace {
+        /// Also append the lines to this file.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, default_value_t = 100)]
         period_ms: u32,
     },
     /// Drive the bench cluster's DIS with no daemon: wake + Kl15 frames,
@@ -113,6 +123,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Bus => print(call(args.socket, Request::Bus)?),
         Cmd::Capture { path } => print(call(args.socket, Request::SaveCapture { path })?),
         Cmd::Watch { prefix, period_ms } => watch(args.socket, prefix, period_ms),
+        Cmd::NavTrace { out, period_ms } => nav_trace(args.socket, out, period_ms),
         Cmd::Update { action, apply } => update(args.socket, action.into(), apply),
         Cmd::DisBench {
             screen,
@@ -280,6 +291,45 @@ fn watch(socket: Option<PathBuf>, prefixes: Vec<String>, period_ms: u32) -> anyh
     }
 }
 
+#[cfg(unix)]
+fn nav_trace(socket: Option<PathBuf>, out: Option<PathBuf>, period_ms: u32) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut file = match &out {
+        Some(p) => Some(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .with_context(|| format!("opening {}", p.display()))?,
+        ),
+        None => None,
+    };
+    let mut c = Client::connect(socket)?;
+    print(c.request(&Request::Subscribe {
+        sub: 1,
+        prefixes: nav_trace::PREFIXES.map(String::from).to_vec(),
+        period_ms,
+    })?)?;
+    let start = Instant::now();
+    let mut trace = nav_trace::Trace::default();
+    loop {
+        let Response::Update { items, .. } = c.recv()? else {
+            continue;
+        };
+        let unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let Some(line) = trace.line(&items, unix_ms, start.elapsed().as_millis()) else {
+            continue;
+        };
+        println!("{line}");
+        if let Some(f) = &mut file {
+            writeln!(f, "{line}")?;
+            f.flush()?;
+        }
+    }
+}
+
 /// Starts an update job and prints its events until it finishes.
 #[cfg(unix)]
 fn update(
@@ -317,6 +367,15 @@ fn update(
 #[cfg(not(unix))]
 fn call(_socket: Option<PathBuf>, _req: Request) -> anyhow::Result<Response> {
     bail!("talking to carpid needs a Unix socket; use `carpi replay` here")
+}
+
+#[cfg(not(unix))]
+fn nav_trace(
+    _socket: Option<PathBuf>,
+    _out: Option<PathBuf>,
+    _period_ms: u32,
+) -> anyhow::Result<()> {
+    bail!("talking to carpid needs a Unix socket")
 }
 
 #[cfg(not(unix))]

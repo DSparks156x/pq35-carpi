@@ -48,16 +48,33 @@ pub fn apply(store: &mut Store, update: &BridgeUpdate, now: Instant) {
             set("nav.roundabout_angle", num(n.roundabout_angle));
             set("nav.distance_m", num(n.distance_m));
             set("nav.distance_text", text(&n.distance_text));
+            set("nav.distance_unit", text(&n.distance_unit));
             set("nav.time_to_maneuver_s", num(n.time_to_maneuver_s));
             set("nav.road", text(&n.road));
             set("nav.cue", text(&n.cue));
             set("nav.destination", text(&n.destination));
+            set("nav.destination_distance_m", num(n.destination_distance_m));
+            set(
+                "nav.destination_distance_text",
+                text(&n.destination_distance_text),
+            );
+            set(
+                "nav.destination_distance_unit",
+                text(&n.destination_distance_unit),
+            );
+            set("nav.time_to_destination_s", num(n.time_to_destination_s));
             set("nav.eta", text(&n.eta));
+            set("nav.eta_unix_s", n.eta_unix_s.map(|v| Value::Num(v as f64)));
+            // `[{"arrows":[{"shape":"straight","highlighted":true}],"status":null}, ...]`
             let lanes = (!n.lanes.is_empty())
                 .then(|| serde_json::to_string(&n.lanes).ok())
                 .flatten()
                 .map(Value::Text);
             set("nav.lanes", lanes);
+            set(
+                "nav.lane_count",
+                (!n.lanes.is_empty()).then_some(Value::Num(n.lanes.len() as f64)),
+            );
         }
         BridgeUpdate::NavIcon { png_base64 } => set("nav.icon_png_base64", text(png_base64)),
         BridgeUpdate::Media { media } => {
@@ -117,7 +134,7 @@ pub fn clear(store: &mut Store, now: Instant) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use carpi_proto::{Lane, NavState};
+    use carpi_proto::{Lane, LaneArrow, NavState};
 
     #[test]
     fn nav_lands_and_clears() {
@@ -128,16 +145,50 @@ mod tests {
             side: Some("left".into()),
             distance_m: Some(350.0),
             road: Some("Hauptstrasse".into()),
+            distance_unit: Some("m".into()),
+            time_to_maneuver_s: Some(20.0),
+            destination_distance_m: Some(12_000.0),
+            destination_distance_text: Some("12 km".into()),
+            destination_distance_unit: Some("km".into()),
+            time_to_destination_s: Some(900.0),
+            eta_unix_s: Some(1_762_600_000),
             lanes: vec![Lane {
-                shapes: vec!["straight".into()],
-                highlighted: true,
+                arrows: vec![
+                    LaneArrow {
+                        shape: "straight".into(),
+                        highlighted: true,
+                    },
+                    LaneArrow {
+                        shape: "normal_right".into(),
+                        highlighted: false,
+                    },
+                ],
+                status: Some("preferred".into()),
             }],
             ..Default::default()
         };
         apply(&mut s, &BridgeUpdate::Nav { nav: Some(nav) }, now);
         assert_eq!(s.get_num("nav.distance_m", now), Some(350.0));
         assert_eq!(s.get_bool("nav.active", now), Some(true));
-        assert!(s.get("nav.lanes", now).is_some());
+        assert_eq!(s.get_num("nav.time_to_maneuver_s", now), Some(20.0));
+        assert_eq!(s.get_num("nav.destination_distance_m", now), Some(12_000.0));
+        assert_eq!(s.get_num("nav.time_to_destination_s", now), Some(900.0));
+        assert_eq!(s.get_num("nav.eta_unix_s", now), Some(1_762_600_000.0));
+        assert_eq!(s.get_num("nav.lane_count", now), Some(1.0));
+        assert_eq!(
+            s.get("nav.lanes", now),
+            Some(&Value::Text(
+                r#"[{"arrows":[{"shape":"straight","highlighted":true},{"shape":"normal_right","highlighted":false}],"status":"preferred"}]"#
+                    .into()
+            ))
+        );
+        for key in [
+            "nav.distance_unit",
+            "nav.destination_distance_text",
+            "nav.destination_distance_unit",
+        ] {
+            assert!(s.get(key, now).is_some(), "{key}");
+        }
         // Doesn't time out.
         assert_eq!(
             s.get_num("nav.distance_m", now + Duration::from_secs(3600)),
@@ -147,6 +198,8 @@ mod tests {
         apply(&mut s, &BridgeUpdate::Nav { nav: None }, now);
         assert_eq!(s.get_bool("nav.active", now), Some(false));
         assert_eq!(s.get("nav.distance_m", now), None);
+        assert_eq!(s.get("nav.lanes", now), None);
+        assert_eq!(s.get("nav.eta_unix_s", now), None);
 
         apply(
             &mut s,

@@ -595,6 +595,8 @@ pub enum Response {
 /// Each variant replaces that whole section; `None` clears it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// A few updates a second, each moved once: boxing `Nav` would buy nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum BridgeUpdate {
     Projection {
         projection: Option<Projection>,
@@ -629,33 +631,67 @@ pub struct Projection {
     pub wireless: bool,
 }
 
+/// Route guidance as the phone sends it, the same shape for Android Auto and
+/// CarPlay. A field is `None` when the active protocol doesn't carry it.
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NavState {
     /// Maneuver type in AA's vocabulary, lower snake case
     /// (`turn`, `slight_turn`, `roundabout_enter_and_exit`, `destination`, ...).
     pub maneuver: Option<String>,
     /// `"left"`, `"right"`, or none.
     pub side: Option<String>,
-    /// Roundabout exit number or turn angle where AA gives one.
+    /// Roundabout exit number (1 = first) and exit angle where the phone gives them.
     pub roundabout_exit: Option<u32>,
     pub roundabout_angle: Option<i32>,
+    /// To the next maneuver.
     pub distance_m: Option<f64>,
-    /// Distance as the phone formats it for display ("350 m", "0.2 mi").
+    /// Distance to the maneuver as the phone shows it ("350 m", "0.2 mi");
+    /// LIVI's own rendering of `distance_m` when the phone sends none.
     pub distance_text: Option<String>,
+    /// Unit the phone shows the distance in: `m`, `km`, `mi`, `ft`, `yd`.
+    pub distance_unit: Option<String>,
+    /// Android Auto only.
     pub time_to_maneuver_s: Option<f64>,
     pub road: Option<String>,
     pub cue: Option<String>,
     pub destination: Option<String>,
+    pub destination_distance_m: Option<f64>,
+    /// As for `distance_text` / `distance_unit`.
+    pub destination_distance_text: Option<String>,
+    pub destination_distance_unit: Option<String>,
+    pub time_to_destination_s: Option<f64>,
+    /// ETA as the phone formats it (Android Auto).
     pub eta: Option<String>,
+    /// ETA as Unix seconds (CarPlay).
+    pub eta_unix_s: Option<i64>,
     /// Left to right. Empty when the phone sends no lanes.
     pub lanes: Vec<Lane>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Lane {
-    /// AA lane shapes (`straight`, `slight_left`, `uturn_right`, ...).
-    pub shapes: Vec<String>,
+    /// The lane's arrows as painted on the road.
+    pub arrows: Vec<LaneArrow>,
+    /// CarPlay's verdict on the lane: `not_good`, `good`, `preferred`.
+    pub status: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaneArrow {
+    /// AA lane shape (`straight`, `slight_left`, `normal_right`, `uturn_left`, ...).
+    pub shape: String,
+    /// The phone highlights the arrows to follow; AA may highlight several.
     pub highlighted: bool,
+}
+
+impl Lane {
+    /// Any arrow of this lane is one to follow.
+    pub fn highlighted(&self) -> bool {
+        self.arrows.iter().any(|a| a.highlighted)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
