@@ -302,3 +302,36 @@ fn diag_jobs_and_clear_needs_confirm() {
             .any(|e| matches!(e, carpi_proto::JobEvent::Finished { ok: false, .. }))
     }));
 }
+
+#[test]
+fn auto_brightness_off_hands_back_once() {
+    let mut r = Rig::new(false);
+    r.car.configure(
+        CoreConfig {
+            light: carpi_core::LightSetup {
+                auto_brightness: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        r.now,
+    );
+    r.kl15 = true;
+    r.run(30);
+    let bb: Vec<Frame> = r
+        .take(&[0x7B0])
+        .into_iter()
+        .filter(|f| f.data()[0] == 0xBB)
+        .collect();
+    assert_eq!(bb.len(), 1, "{bb:?}");
+    assert_eq!(bb[0].data()[1], 0x00);
+    // The RNS-E sleeps and comes back: still nothing.
+    r.ring = false;
+    r.run(40);
+    r.ring = true;
+    r.run(30);
+    assert!(
+        r.take(&[0x7B0]).iter().all(|f| f.data()[0] != 0xBB),
+        "no BB after the hand-back"
+    );
+}

@@ -130,16 +130,83 @@ pub struct Settings {
     pub portal_pin_set: bool,
 }
 
-/// Light model thresholds (`[light]`).
+/// Light model (`[light]`, PLAN 2.6). `ambient` is the model's log-scale
+/// estimate; the page plots the curve against the live `light.ambient` and
+/// `light.panel_pct` values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LightSettings {
-    /// Lights on this long before night.
-    pub night_after_s: f64,
-    /// Lights off this long before day.
-    pub day_after_s: f64,
-    /// RNS-E panel level by day: 0 follows the car's dimmer, 1-100 fixed.
-    pub day_panel: u8,
-    pub night_panel: u8,
+    /// Off: `BB 00` once to hand the panel back to the RNS-E, then nothing.
+    pub auto_brightness: bool,
+    /// The car's dimming output shifts the curve.
+    pub scroll_trim: bool,
+    /// Where `ambient` comes from.
+    pub ambient_source: AmbientSource,
+    pub curve_mode: CurveMode,
+    /// Ambient -> panel %, ascending ambient.
+    pub manual_curve: Vec<CurvePoint>,
+    /// Points learned from manual nudges, per ambient source (a new source
+    /// learns afresh; the old points stay). carpid owns these; only
+    /// [`LightPatch::reset_learned`] changes them over the API.
+    pub learned: Vec<LearnedPoint>,
+    /// Night (dark theme) below this ambient...
+    pub night_threshold: f64,
+    /// ...and day again above threshold + hysteresis.
+    pub night_hysteresis: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbientSource {
+    /// 0x621 `KO1_Lichtsensor`: in a dial, sees light most like the RNS-E.
+    Cluster,
+    /// 0x3E3 sun sensor on the dash top: open sky, reads brighter.
+    Climatronic,
+    /// Cluster first; climatronic fills in the bright end if the cluster
+    /// sensor saturates.
+    Blend,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LearnedPoint {
+    pub source: AmbientSource,
+    pub ambient: f64,
+    pub pct: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CurveMode {
+    Manual,
+    Learned,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CurvePoint {
+    pub ambient: f64,
+    /// RNS-E panel level, 0-100.
+    pub pct: u8,
+}
+
+/// Fields left out stay as they are.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LightPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_brightness: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_trim: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambient_source: Option<AmbientSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curve_mode: Option<CurveMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_curve: Option<Vec<CurvePoint>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub night_threshold: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub night_hysteresis: Option<f64>,
+    /// Forget the learned points of the (new) ambient source.
+    #[serde(default)]
+    pub reset_learned: bool,
 }
 
 /// Cluster display (`[dis]`).
@@ -189,7 +256,7 @@ pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub power_shutdown: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub light: Option<LightSettings>,
+    pub light: Option<LightPatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dis_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

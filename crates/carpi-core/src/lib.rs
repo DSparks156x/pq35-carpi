@@ -9,7 +9,7 @@ pub mod diagnostics;
 pub mod display;
 
 pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
-pub use control::Output;
+pub use control::{AmbientSource, CurveMode, LightSetup, Output};
 pub use display::{DisSetup, Reading};
 
 use carpi_can::RxFrame;
@@ -54,7 +54,7 @@ struct Iface {
 #[derive(Clone, Debug, Default)]
 pub struct CoreConfig {
     pub dis: DisSetup,
-    pub light: carpi_light::Config,
+    pub light: LightSetup,
     pub routes: RouteConfig,
 }
 
@@ -113,7 +113,7 @@ impl Car {
     /// Apply new settings. Nothing needs a restart.
     pub fn configure(&mut self, cfg: CoreConfig, now: Instant) {
         self.display.configure(cfg.dis, now);
-        self.controls.light.set_config(cfg.light);
+        self.controls.set_light(cfg.light);
         self.controls.routes = cfg.routes;
     }
 

@@ -37,13 +37,100 @@ pub enum Output {
     Power(PowerEvent),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CurveMode {
+    Manual,
+    #[default]
+    Learned,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AmbientSource {
+    /// 0x621 `KO1_Lichtsensor` (else 0x635 `DI1_Sensor`). Drew's default.
+    #[default]
+    Cluster,
+    /// 0x3E3 sun load.
+    Climatronic,
+    /// Cluster, sun load filling in the bright end.
+    Blend,
+}
+
+/// Light settings (PLAN 2.6). Only `auto_brightness` acts yet.
+///
+/// TODO(light model): ambient fusion (sun sensor by day, cluster sensor in
+/// the dark), the curve, scroll trim, learning and the ambient night
+/// threshold replace carpi-light's lights-on rule and fixed panel levels.
+/// Until then the rest is stored and shown, and night still follows the
+/// car's lights.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LightSetup {
+    /// Off: `BB 00` once, then the RNS-E is left alone.
+    pub auto_brightness: bool,
+    pub scroll_trim: bool,
+    pub ambient_source: AmbientSource,
+    pub curve_mode: CurveMode,
+    /// (ambient, panel %), ascending ambient.
+    pub manual_curve: Vec<(f64, u8)>,
+    /// Learned points, keyed by the source they were learned on.
+    pub learned: Vec<(AmbientSource, f64, u8)>,
+    pub night_threshold: f64,
+    pub night_hysteresis: f64,
+}
+
+impl Default for LightSetup {
+    /// Drew's defaults (PLAN 2.6). Curve and threshold are guesses until a
+    /// daylight-to-dark capture seeds them (PLAN 2.6 open item).
+    fn default() -> Self {
+        LightSetup {
+            auto_brightness: true,
+            scroll_trim: true,
+            ambient_source: AmbientSource::Cluster,
+            curve_mode: CurveMode::Learned,
+            manual_curve: vec![(0.0, 5), (1.0, 30), (2.0, 70), (3.0, 100)],
+            learned: Vec::new(),
+            night_threshold: 1.0,
+            night_hysteresis: 0.2,
+        }
+    }
+}
+
+/// Interim `light.ambient`, log10 of the raw source (floor 1): cluster
+/// sensor counts or mean sun load in W/m2. Blend takes the cluster and
+/// falls back to the sun load.
+/// TODO(light model): scaled, smoothed, deadbanded; Blend filling in only
+/// where the cluster sensor saturates (scale and saturation not known yet).
+pub fn interim_ambient(src: AmbientSource, store: &Store, now: Instant) -> Option<f64> {
+    let cluster = || {
+        store
+            .get_num("light.cluster_sensor", now)
+            .or_else(|| store.get_num("light.dim_sensor", now))
+    };
+    let sun = || {
+        let l = store.get_num("light.sun_left_wm2", now);
+        let r = store.get_num("light.sun_right_wm2", now);
+        match (l, r) {
+            (Some(a), Some(b)) => Some((a + b) / 2.0),
+            (a, b) => a.or(b),
+        }
+    };
+    let raw = match src {
+        AmbientSource::Cluster => cluster(),
+        AmbientSource::Climatronic => sun(),
+        AmbientSource::Blend => cluster().or_else(sun),
+    }?;
+    Some(raw.max(1.0).log10())
+}
+
 /// Light values are recomputed every tick; let them lapse if ticks stop.
 const DERIVED: Duration = Duration::from_secs(1);
 
 pub(crate) struct Controls {
     pub gates: Vec<Gate>,
     rnse: carpi_rnse::Client,
-    pub light: LightModel,
+    light: LightModel,
+    light_setup: LightSetup,
+    /// Auto off: `BB 00` went out; send nothing more until auto comes on.
+    handed_back: bool,
     power: ShutdownPolicy,
     decoder: Decoder,
     gestures: Recogniser,
@@ -60,12 +147,21 @@ impl Controls {
                 .collect(),
             rnse: carpi_rnse::Client::new(Default::default()),
             light: LightModel::new(Default::default()),
+            light_setup: LightSetup::default(),
+            handed_back: false,
             power: ShutdownPolicy::new(Default::default()),
             decoder: Decoder::new(DecoderConfig::default()),
             gestures: Recogniser::new(GestureConfig::default()),
             routes: RouteConfig::default(),
             focus: Focus::Livi,
         }
+    }
+
+    pub fn set_light(&mut self, s: LightSetup) {
+        if s.auto_brightness != self.light_setup.auto_brightness {
+            self.handed_back = false;
+        }
+        self.light_setup = s;
     }
 
     /// A frame from the ICAN interface: keys go through the input pipeline.
@@ -130,6 +226,20 @@ impl Controls {
             now,
             DERIVED,
         );
+        // For the light page's plot.
+        let auto = self.light_setup.auto_brightness;
+        store.set(
+            "light.ambient",
+            interim_ambient(self.light_setup.ambient_source, store, now).map(Value::Num),
+            now,
+            DERIVED,
+        );
+        let pct = match panel {
+            Brightness::Level(n) if auto => Some(n as f64),
+            // The RNS-E follows the car's display dimming.
+            _ => store.get_num("light.dim_display_pct", now),
+        };
+        store.set("light.panel_pct", pct.map(Value::Num), now, DERIVED);
 
         let Some((ican_idx, monitor)) = ican else {
             return;
@@ -143,13 +253,23 @@ impl Controls {
             _ => SourceLabel::Livi,
         };
         self.rnse.set_label(Some(label));
-        self.rnse.set_brightness(Some(panel));
+        // TODO(light model): with auto on, the curve's level instead.
+        self.rnse.set_brightness(match (auto, self.handed_back) {
+            (true, _) => Some(panel),
+            (false, false) => Some(Brightness::FollowCar),
+            (false, true) => None,
+        });
         for cmd in self.rnse.update(now, view.rnse_awake) {
             match self.gates[ican_idx].check(cmd.class, &cmd.frame, now, &view) {
-                Ok(()) => out.push(Output::Send {
-                    iface: ican_idx,
-                    frame: cmd.frame,
-                }),
+                Ok(()) => {
+                    if !auto && cmd.frame.data()[0] == 0xBB {
+                        self.handed_back = true;
+                    }
+                    out.push(Output::Send {
+                        iface: ican_idx,
+                        frame: cmd.frame,
+                    })
+                }
                 Err(_) => self.rnse.refused(&cmd, now),
             }
         }
