@@ -206,8 +206,8 @@ The cluster isn't a framebuffer. There's no engine that turns arbitrary content 
   - a message is at most 105 B (208 froze the display)
   - no `55` records with LEN ≥0x80
   - at most 44 glyphs per `57`
-  - `39` isn't atomic
   - lines inherit SET/XOR from the last `55`.
+- **Command buffer**: the cluster applies its buffer on `39`, or on its own when the buffer fills. A clear and its redraw must land in the same buffer, or the blank shows. The packer works in declared groups (clear + redraw, one scroll step) and never lets one straddle an auto-commit: if a group won't fit in the space left, it commits first. The buffer size is in the cluster profile (Q25).
 - In the car, every byte crosses the shared 100 kbit/s ICAN and every ACK crosses the gateway twice. That's about 30 ms per ACK block, against 9 ms on the bench. Cluster-side rules carry over from the bench; throughput doesn't.
 
 **Layers:**
@@ -396,7 +396,7 @@ Answered so far (2026-11-07):
 
 Still open:
 
-1. **License for pq35-carpi.** Proposal: PolyForm Noncommercial 1.0.0 (free for personal use, commercial use needs Drew's permission). `carpi-proto` is MIT/Apache, because the GPL fork links it. Code in the fork is GPL whatever we want, so keep page logic thin there. OK?
+1. *(answered: PolyForm Noncommercial 1.0.0 for pq35-carpi; MIT/Apache for `carpi-proto`; page logic kept thin in the GPL fork)*
 2. *(answered: fork connects to the daemon)*
 3. Does 0x602 TV presence keep the RNS-E from sleeping? Needs the capture in step 0.
 4. Knob: frames per detent and which direction is clockwise? Hold behaviour of MODE and PTT? Capture.
