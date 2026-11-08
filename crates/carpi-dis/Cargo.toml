@@ -14,5 +14,6 @@ carpi-tp2.workspace = true
 
 [dev-dependencies]
 carpi-sim.workspace = true
-# Only for `examples/covers.rs` and `examples/eggs.rs` (offline image prep).
+# Only for the offline image-prep examples (covers, eggs, small_icons, mock).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+resvg = { version = "0.44", default-features = false }
