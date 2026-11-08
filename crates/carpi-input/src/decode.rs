@@ -95,6 +95,23 @@ fn panel_cmd(k1: u8, k2: u8) -> Option<PanelCmd> {
     })
 }
 
+/// Whether a key frame is one the decoder knows: `false` for a 0x461 press
+/// or 0x5C3 command it would drop. For logging codes the car sends that
+/// aren't mapped yet.
+pub fn known_key_frame(id: u32, data: &[u8]) -> bool {
+    match id {
+        ids::MFL_CMD => data.len() < 2 || !matches!(wheel_cmd(data[1]), WheelCmd::Unknown),
+        ids::RNSE_KEYS => {
+            data.len() < 5
+                || data[0] != 0x37
+                || data[1] != 0x30
+                || data[2] != 0x01
+                || panel_cmd(data[3], data[4]).is_some()
+        }
+        _ => true,
+    }
+}
+
 /// A key that is down and when its last frame arrived.
 #[derive(Clone, Copy)]
 struct Held {

@@ -224,6 +224,10 @@ fn key_action(k: carpi_input::LiviKey) -> Option<Vec<InputAction>> {
         L::AcceptPhone => vec![A::CallAccept],
         L::RejectPhone => vec![A::CallEnd],
         L::Voice => vec![A::Voice { down: true }, A::Voice { down: false }],
+        // Prev/Next long: a real D-pad, as Hudiy sent it. Left/Right above
+        // are the knob.
+        L::DpadLeft => vec![A::Left],
+        L::DpadRight => vec![A::Right],
         _ => return None,
     })
 }

@@ -37,6 +37,11 @@ pub enum LiviKey {
     Voice,
     /// `cycleSession` = KeyS.
     CycleSession,
+    /// D-pad left/right (Prev/Next long). On LIVI's own screens the same
+    /// arrow keys as the knob; in AA/CarPlay a real D-pad press, where the
+    /// knob's Left/Right are rotary steps.
+    DpadLeft,
+    DpadRight,
     Code(u16),
 }
 
@@ -76,6 +81,9 @@ impl LiviKey {
             LiviKey::RejectPhone => 19,  // KEY_R
             LiviKey::Voice => 47,        // KEY_V
             LiviKey::CycleSession => 31, // KEY_S
+            // Not in ALL: the arrows are registered through Left/Right.
+            LiviKey::DpadLeft => 105,
+            LiviKey::DpadRight => 106,
             LiviKey::Code(c) => c,
         }
     }

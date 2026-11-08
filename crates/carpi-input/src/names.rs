@@ -86,7 +86,7 @@ const DIS: [(DisKey, &str); 4] = [
     (DisKey::Back, "back"),
 ];
 
-const LIVI: [(LiviKey, &str); 14] = [
+const LIVI: [(LiviKey, &str); 16] = [
     (LiviKey::Up, "up"),
     (LiviKey::Down, "down"),
     (LiviKey::Left, "left"),
@@ -101,6 +101,8 @@ const LIVI: [(LiviKey, &str); 14] = [
     (LiviKey::RejectPhone, "reject_phone"),
     (LiviKey::Voice, "voice"),
     (LiviKey::CycleSession, "cycle_session"),
+    (LiviKey::DpadLeft, "dpad_left"),
+    (LiviKey::DpadRight, "dpad_right"),
 ];
 
 fn name_of<T: PartialEq + Copy>(table: &[(T, &'static str)], v: T) -> &'static str {

@@ -55,6 +55,8 @@ pub(crate) struct Controls {
     handed_back: bool,
     power: ShutdownPolicy,
     decoder: Decoder,
+    /// Unmapped key frames already logged.
+    unknown_keys: std::collections::HashSet<(u32, Vec<u8>)>,
     gestures: Recogniser,
     pub routes: RouteConfig,
     pub focus: Focus,
@@ -72,6 +74,7 @@ impl Controls {
             handed_back: false,
             power: ShutdownPolicy::new(Default::default()),
             decoder: Decoder::new(DecoderConfig::default()),
+            unknown_keys: Default::default(),
             gestures: Recogniser::new(GestureConfig::default()),
             routes: RouteConfig::default(),
             focus: Focus::Livi,
@@ -119,6 +122,12 @@ impl Controls {
     ) {
         if id != ids::MFL_CMD && id != ids::RNSE_KEYS {
             return;
+        }
+        if !carpi_input::known_key_frame(id, data)
+            && self.unknown_keys.len() < 256
+            && self.unknown_keys.insert((id, data.to_vec()))
+        {
+            tracing::info!("key: unmapped {id:03X} {}", hex(data));
         }
         let events = self.decoder.on_frame(at, id, data);
         for ev in events {
@@ -254,7 +263,22 @@ impl Controls {
                     _ => Call::None,
                 },
             };
-            match carpi_input::route(&self.routes, &ctx, &g) {
+            let r = carpi_input::route(&self.routes, &ctx, &g);
+            // Every key the car sends and where it went, so a drive log says
+            // what each press did. Knob detents only at debug.
+            if matches!(g.key, carpi_input::Key::Knob(_)) {
+                tracing::debug!("key: {:?} {:?} -> {r:?}", g.key, g.kind);
+            } else {
+                tracing::info!(
+                    "key: {:?} {:?} -> {r:?} (tv {}, focus {:?}, livi {})",
+                    g.key,
+                    g.kind,
+                    ctx.rnse_on_tv,
+                    ctx.focus,
+                    ctx.livi_connected
+                );
+            }
+            match r {
                 Route::Livi(k) => out.push(Output::Key(k)),
                 Route::Car(a) => out.push(Output::Car(a)),
                 Route::Dis(k) => out.push(Output::Dis(k)),
@@ -280,4 +304,11 @@ impl Controls {
             }
         }
     }
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter()
+        .map(|x| format!("{x:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }

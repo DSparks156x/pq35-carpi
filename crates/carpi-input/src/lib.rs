@@ -16,7 +16,7 @@ mod route;
 #[cfg(target_os = "linux")]
 mod sink;
 
-pub use decode::{Decoder, DecoderConfig};
+pub use decode::{Decoder, DecoderConfig, known_key_frame};
 pub use gesture::{Gesture, GestureConfig, GestureKind, Recogniser, Timing};
 pub use key::{Edge, Key, KeyEvent};
 pub use livi::LiviKey;
@@ -89,7 +89,14 @@ mod tests {
             frames.push((55 * 110 + i * 110, p, off));
         }
         let got = pipeline(TV, &frames, 8000);
-        assert_eq!(got, vec![Route::Action(SystemAction::Shutdown)]);
+        // D-pad right on the way (like Hudiy), then shutdown once.
+        assert_eq!(
+            got,
+            vec![
+                Route::Livi(LiviKey::DpadRight),
+                Route::Action(SystemAction::Shutdown)
+            ]
+        );
 
         // Released at ~3.9 s: a long press, which is D-pad right.
         let mut frames: Vec<(u64, u32, &[u8])> = (0..35).map(|i| (i * 110, p, on)).collect();
@@ -97,7 +104,7 @@ mod tests {
             frames.push((35 * 110 + i * 110, p, off));
         }
         let got = pipeline(TV, &frames, 6000);
-        assert_eq!(got, vec![Route::Livi(LiviKey::Right)]);
+        assert_eq!(got, vec![Route::Livi(LiviKey::DpadRight)]);
     }
 
     #[test]

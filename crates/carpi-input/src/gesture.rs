@@ -3,8 +3,9 @@
 //! Per key, from its `Timing`:
 //! - No long, extended or double: `Short` on the down edge (no waiting).
 //! - Long only: `Long` at the threshold while held, else `Short` on release.
-//! - Extended: `Extended` at its threshold while held. `Long` then fires on
-//!   release (if held past it), so nothing fires on the way to a system action.
+//! - Extended: `Long` still fires at its threshold while held (D-pad on
+//!   Prev/Next has to feel like Hudiy's, not wait for release), then
+//!   `Extended` at its own threshold if the key stays down.
 //! - Double: a short press waits `double` after release. A second press inside
 //!   the window is `Double` (fired on its down edge); otherwise `Short` when
 //!   the window closes.
@@ -201,16 +202,7 @@ impl Recogniser {
                 swallow: false,
             } => {
                 let t = cfg.timing(key);
-                if let Some(e) = t.extended {
-                    if !*ext_fired && now >= *down_at + e {
-                        *ext_fired = true;
-                        out.push(Gesture {
-                            key,
-                            kind: GestureKind::Extended,
-                            at: *down_at + e,
-                        });
-                    }
-                } else if let Some(l) = t.long
+                if let Some(l) = t.long
                     && !*long_fired
                     && now >= *down_at + l
                 {
@@ -219,6 +211,17 @@ impl Recogniser {
                         key,
                         kind: GestureKind::Long,
                         at: *down_at + l,
+                    });
+                }
+                if let Some(e) = t.extended
+                    && !*ext_fired
+                    && now >= *down_at + e
+                {
+                    *ext_fired = true;
+                    out.push(Gesture {
+                        key,
+                        kind: GestureKind::Extended,
+                        at: *down_at + e,
                     });
                 }
                 true
@@ -252,10 +255,11 @@ impl Recogniser {
                     swallow: false,
                 } => {
                     let t = self.cfg.timing(key);
-                    match (t.extended, t.long) {
-                        (Some(e), _) if !ext_fired => Some(down_at + e),
-                        (None, Some(l)) if !long_fired => Some(down_at + l),
-                        _ => None,
+                    let long = t.long.filter(|_| !long_fired).map(|l| down_at + l);
+                    let ext = t.extended.filter(|_| !ext_fired).map(|e| down_at + e);
+                    match (long, ext) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
                     }
                 }
                 State::Held { .. } => None,
@@ -448,18 +452,22 @@ mod tests {
         // Tap: 3 frames.
         t.ev(0, Key::Next, Edge::Down).ev(330, Key::Next, Edge::Up);
         assert_eq!(t.take(), vec![(Key::Next, Short, 330)]);
-        // Held past long, released before extended: Long on release.
+        // Held past long: Long at the threshold, nothing on release.
         t.ev(1000, Key::Next, Edge::Down)
             .tick(1440)
             .tick(2000)
             .ev(2100, Key::Next, Edge::Up);
-        assert_eq!(t.take(), vec![(Key::Next, Long, 2100)]);
+        assert_eq!(t.take(), vec![(Key::Next, Long, 1440)]);
         // Exactly at long on release counts as long.
         t.ev(3000, Key::Next, Edge::Down)
             .ev(3440, Key::Next, Edge::Up);
         assert_eq!(t.take(), vec![(Key::Next, Long, 3440)]);
-        // Held to extended: fires at threshold, only once, nothing on release.
+        // Held to extended: Long on the way, Extended at its threshold, each
+        // once, nothing on release.
         t.ev(5000, Key::Next, Edge::Down);
+        assert_eq!(t.r.next_deadline(), Some(t.t0 + ms(5440)));
+        t.tick(5440);
+        assert_eq!(t.take(), vec![(Key::Next, Long, 5440)]);
         assert_eq!(t.r.next_deadline(), Some(t.t0 + ms(8190)));
         t.tick(8189);
         assert!(t.take().is_empty());
