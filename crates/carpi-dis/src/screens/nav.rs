@@ -38,6 +38,8 @@ pub const POCKET_Y: u8 = 27;
 pub const POCKET_RIGHT: u8 = 56;
 /// Pocket page time.
 const POCKET_PAGE: Duration = Duration::from_secs(3);
+/// Everything the pocket text can cover: its row, left of the bar.
+const POCKET_AREA: Rect = Rect::new(4, POCKET_Y, POCKET_RIGHT - 4, TEXT_H);
 
 /// Inputs as carpi-core publishes them (`nav.*`).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -146,7 +148,8 @@ pub fn pocket_pages(i: &NavInput) -> Vec<Vec<String>> {
     }
     if let Some(d) = i.destination_distance_m.filter(|d| d.is_finite() && *d >= 0.0) {
         let (v, u) = format_distance(Some(d));
-        out.push(vec![format!("{v} {u}"), format!("{v}{u}"), v]);
+        // Never without its unit (Drew: a bare "9.9" reads as nothing).
+        out.push(vec![format!("{v} {u}"), format!("{v}{u}")]);
     }
     out
 }
@@ -192,6 +195,8 @@ pub struct NavScreen {
     pocket_since: Option<Instant>,
     /// Earliest time something here wants an update.
     wake: Option<Instant>,
+    /// Maneuver whose icon is up (or going up this frame).
+    icon_shown: Option<Maneuver>,
 }
 
 impl NavScreen {
@@ -214,6 +219,7 @@ impl NavScreen {
             pocket: TextSlot::new(POCKET_Y, 4, POCKET_RIGHT, Font::Prop),
             pocket_since: None,
             wake: None,
+            icon_shown: None,
         }
     }
 
@@ -276,6 +282,7 @@ impl NavScreen {
 
     fn icon_groups(&mut self, cx: &Ctx) -> Vec<Group> {
         let m = self.input.maneuver();
+        self.icon_shown = Some(m);
         let art = icon_art(m, self.cfg.left_hand_traffic);
         self.icon.set(cx, m, &art)
     }
@@ -372,6 +379,15 @@ impl Screen for NavScreen {
         let mut g = self.distance_groups(cx);
         g.extend(self.bar_groups());
         g.extend(self.bottom_groups(now, cx));
+        // A new icon may reach where the pocket text was: clear the pocket
+        // first, let the icon draw over that, then fit the pocket to the new
+        // icon. (Bench: the pocket's tail clear after the icon cut the new
+        // arrow's stem.)
+        let m = self.input.maneuver();
+        if self.icon_shown.is_some_and(|s| s != m) {
+            g.push(Group::new("pocket-clear", vec![Op::Clear(POCKET_AREA)]));
+            self.pocket.reset();
+        }
         g.extend(self.icon_groups(cx));
         g.extend(self.pocket_groups(now, cx));
         g
@@ -421,6 +437,6 @@ mod tests {
         let p = pocket_pages(&i);
         assert_eq!(p[0], vec!["ETA 14:32", "14:32"]);
         assert_eq!(p[1], vec!["1h 05", "1h05", "1h"]);
-        assert_eq!(p[2], vec!["12 km", "12km", "12"]);
+        assert_eq!(p[2], vec!["12 km", "12km"]);
     }
 }

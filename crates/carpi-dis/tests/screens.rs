@@ -398,3 +398,38 @@ fn accel_run_flashes_the_finished_leg_for_a_second() {
     let u = update_only(&mut s, back.max(now + Duration::from_secs(1)), &cx, regs);
     assert_eq!(u.messages.len(), 1);
 }
+
+#[test]
+fn maneuver_change_keeps_the_new_icon_whole_under_the_pocket() {
+    use carpi_dis::screens::nav::icon_art;
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let trip = |m: &str, side: &str| NavInput {
+        eta: Some("14:32".into()),
+        time_to_destination_s: Some(900.0),
+        destination_distance_m: Some(9_900.0),
+        ..nav_input(m, side, 600.0, "High Street")
+    };
+    let mut s = NavScreen::new(NavConfig::default());
+    s.set(t0, trip("turn", "right"));
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &f);
+    let mut regs = f.regs;
+    // Right turn: wide pocket ("ETA 14:32") reaching left into the icon rect.
+    s.set(t0, trip("turn", "left"));
+    for _ in 0..500 {
+        let f = build_frame(&mut s, t0, &cx, regs, false).unwrap();
+        let idle = f.messages.iter().all(|m| m.bytes == [0x39]);
+        apply(&mut fb, &f);
+        regs = f.regs;
+        if idle {
+            break;
+        }
+    }
+    let art = icon_art(Maneuver::Turn(Side::Left), false);
+    let got = fb.region(ICON);
+    let missing = art.px.iter().zip(&got).filter(|(a, g)| **a && !**g).count();
+    assert_eq!(missing, 0, "new arrow cut by the old pocket text");
+    golden("nav_turn_change_screen", &fb.ascii());
+}
