@@ -1,0 +1,7 @@
+[submodule "livi"]
+	path = livi
+	url = https://github.com/DSparks156x/LIVI.git
+	branch = carpi
+[submodule "sdlink"]
+	path = sdlink
+	url = https://github.com/DSparks156x/sdlink.git

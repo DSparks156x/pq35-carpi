@@ -62,7 +62,7 @@ A separate small binary, not part of carpid, because it has to replace carpid. c
   4. Swap the symlink.
   5. Restart the services.
   6. Health check: carpid answers, LIVI core is up, frames flow. If the check fails within 180 s, swap back and restart. This is the same pattern as sdlink's guard.
-- **Firmware**: Teensy and RNS-E sectors are flashed only when their version changed, through sdlink's flasher with its boot checksum guard. RNS-E flashing takes a bus lease, needs Kl15 on and the engine off, and is a separate confirmation step in the UI, not silent.
+- **Firmware**: the Teensy image is flashed only when its version changed, behind its own confirmation in the UI. RNS-E sectors are not updated from the Pi until sdlink supports partial updates (see Decisions).
 - **User config is never touched**: config files live in `~/.config/carpi`, `~/.config/LIVI` and so on. New defaults ship in `share/` for reference. No migrations unless Drew asks.
 - **Source**: `[update] repo = "DSparks156x/pq35-carpi"` and `channel = "stable" | "beta"`. Pointing at a fork is one line.
 
@@ -101,10 +101,10 @@ The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/p
 
 The bundle manifest names the minimum profile version it needs. The script is what I did by hand to the trial card, written down.
 
-## Open questions
+## Decisions (Drew, 2026-11-07)
 
-1. Make `DSparks156x/pq35-carpi` on GitHub, public? Public gets free arm64 runners. The LIVI fork and sdlink are already there.
-2. Beta: every push to `main`, or a separate `beta` branch you promote to?
-3. Is the update Wi-Fi your home Wi-Fi plus your phone's hotspot? Both get saved as NetworkManager profiles from the Car page.
-4. Firmware in the same button, behind a separate confirmation, or never from the car?
-5. Should updates only be allowed in some state, for example parked, not mid-drive?
+- `DSparks156x/pq35-carpi` on GitHub, public.
+- Beta = every push to `main`; stable = `vX.Y.Z` tags.
+- No speed gating on updates.
+- Teensy firmware updates behind their own confirmation.
+- RNS-E updates are not done from the Pi yet. The custom RNS-E firmware is a full CD update today. Updating the sdlink parts from the Pi needs the RNS-E side re-architected for partial updates first; that's sdlink work, outside this repo.
