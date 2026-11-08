@@ -14,3 +14,5 @@ carpi-tp2.workspace = true
 
 [dev-dependencies]
 carpi-sim.workspace = true
+# Only for `examples/covers.rs` (offline cover-art previews).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

@@ -9,6 +9,11 @@
 
 use carpi_can::Frame;
 use carpi_dis::screens::nav::NavInput;
+use carpi_dis::helpers::Ctx;
+use carpi_dis::icons::Art;
+use carpi_dis::image::dither;
+use carpi_dis::screens::build_frame;
+use carpi_dis::screens::media::{ART, MediaInput, MediaLayout, MediaScreen};
 use carpi_dis::screens::readings::{ReadingCell, ReadingsInput, ReadingsPage};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::{Dis, DisConfig, ScreenId, SessionEvent};
@@ -32,6 +37,116 @@ pub enum Screens {
     Both,
     /// Command-buffer probe: no screens, raw frames, Drew watches.
     Probe,
+    /// Media, text stack layout (bench-driven; not in the arbiter yet).
+    MediaStack,
+    /// Media, cover thumbnail + text.
+    MediaArt,
+}
+
+/// Scripted tracks: title, artist, album, length in s.
+const TRACKS: [(&str, &str, &str, u64); 3] = [
+    ("Short One", "Some Band", "First Album", 95),
+    (
+        "A Much Longer Track Title That Has To Scroll Along",
+        "An Artist With A Long Name",
+        "Greatest Hits Volume Two",
+        245,
+    ),
+    ("Interlude", "Ensemble", "Live", 3725),
+];
+const TRACK_SECS: u64 = 25;
+
+/// Real covers for the bench: `<name>.thumb.bin` files (48x48, 1-bit MSB rows)
+/// in `$CARPI_BENCH_COVERS`, from `cargo run -p carpi-dis --example covers`.
+fn bench_covers() -> &'static [Art] {
+    static C: std::sync::OnceLock<Vec<Art>> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        let Some(dir) = std::env::var_os("CARPI_BENCH_COVERS") else {
+            return Vec::new();
+        };
+        let (w, h) = (usize::from(ART.w) * 2, usize::from(ART.h) * 2);
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().ends_with(".thumb.bin"))
+            .collect();
+        files.sort();
+        files
+            .iter()
+            .filter_map(|f| std::fs::read(f).ok())
+            .filter(|b| b.len() == w.div_ceil(8) * h)
+            .map(|b| Art {
+                w,
+                h,
+                px: (0..w * h)
+                    .map(|i| b[(i / w) * w.div_ceil(8) + (i % w) / 8] & (0x80 >> (i % 8)) != 0)
+                    .collect(),
+            })
+            .collect()
+    })
+}
+
+/// A cover per track: the next real one if `CARPI_BENCH_COVERS` has any, else
+/// a synthetic grey pattern dithered to the thumbnail.
+pub fn cover(track: usize) -> Art {
+    let real = bench_covers();
+    if !real.is_empty() {
+        return real[track % real.len()].clone();
+    }
+    let n = 96usize;
+    let mut g = vec![0u8; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            let (fx, fy) = (x as f64 / n as f64 - 0.5, y as f64 / n as f64 - 0.5);
+            let r = (fx * fx + fy * fy).sqrt();
+            let v = match track % 3 {
+                0 => (1.0 - r * 2.0).clamp(0.0, 1.0),
+                1 => {
+                    let stripe = if ((x + y) / 8) % 2 == 0 { 0.8 } else { 0.2 };
+                    if r < 0.3 { 1.0 - stripe } else { stripe }
+                }
+                _ => (x as f64 / n as f64) * if (x / 24 + y / 24) % 2 == 0 { 1.0 } else { 0.5 },
+            };
+            g[y * n + x] = (v * 255.0) as u8;
+        }
+    }
+    let (w, h) = (usize::from(ART.w) * 2, usize::from(ART.h) * 2);
+    dither(&g, n, n, w, h)
+}
+
+/// Media `t` into the script: a track every 25 s; paused 8..11 s in; a seek
+/// back 30 s at 15 s.
+pub fn media_at(t: Duration) -> MediaInput {
+    let s = t.as_secs();
+    let k = (s / TRACK_SECS) as usize % TRACKS.len();
+    let (title, artist, album, len) = TRACKS[k];
+    let into = s % TRACK_SECS;
+    let played = if into < 8 {
+        into
+    } else if into < 11 {
+        8
+    } else {
+        into - 3
+    };
+    let base = 20 + (k as u64) * 40;
+    let pos = if into >= 15 { (base + played).saturating_sub(30) } else { base + played };
+    MediaInput {
+        title: Some(title.into()),
+        artist: Some(artist.into()),
+        album: Some(album.into()),
+        playing: !(8..11).contains(&into),
+        position_ms: Some(pos.min(len) * 1000),
+        duration_ms: Some(len * 1000),
+        art: Some((s / TRACK_SECS, cover((s / TRACK_SECS) as usize))),
+    }
+}
+
+/// A screen the bench drives itself (not in the arbiter yet).
+struct Direct {
+    screen: MediaScreen,
+    shown: Option<u32>,
 }
 
 pub fn stop_file() -> std::path::PathBuf {
@@ -248,6 +363,7 @@ pub struct Bench {
     readings_cycle: u64,
     focus: bool,
     probe: Option<Probe>,
+    direct: Option<Direct>,
 }
 
 impl Bench {
@@ -277,13 +393,22 @@ impl Bench {
             now,
             readings_cycle: 0,
             focus: false,
+            direct: match screens {
+                Screens::MediaStack => Some(MediaLayout::Stack),
+                Screens::MediaArt => Some(MediaLayout::Art),
+                _ => None,
+            }
+            .map(|l| Direct {
+                screen: MediaScreen::new(l),
+                shown: None,
+            }),
             probe: (screens == Screens::Probe).then_some(Probe {
                 stage: ProbeStage::Blank,
                 at: now,
                 round: 1,
             }),
         };
-        if screens == Screens::Probe {
+        if matches!(screens, Screens::Probe | Screens::MediaStack | Screens::MediaArt) {
             b.dis.set_probe(now, true);
         }
         b.dis.start(now);
@@ -391,9 +516,36 @@ impl Bench {
         }
     }
 
+    /// Bench-driven screen: feed it, then build and send a frame when idle.
+    fn direct_step(&mut self, now: Instant) {
+        let t = now - self.t0;
+        let Some(d) = &mut self.direct else { return };
+        d.screen.set(now, media_at(t));
+        let s = self.dis.session();
+        let (Some(profile), true, true) = (s.profile(), s.owned(), s.frame_idle()) else {
+            return;
+        };
+        let generation = s.generation();
+        let regs = s.registers();
+        let cx = Ctx::new(profile);
+        let enter = d.shown != Some(generation);
+        match build_frame(&mut d.screen, now, &cx, regs, enter) {
+            Ok(f) => {
+                if self.dis.submit_packed(now, f) {
+                    d.shown = Some(generation);
+                }
+            }
+            Err(e) => self.say(now, format!("pack error {e:?}")),
+        }
+    }
+
     fn inputs(&mut self, now: Instant) {
         if self.probe.is_some() {
             self.probe_step(now);
+            return;
+        }
+        if self.direct.is_some() {
+            self.direct_step(now);
             return;
         }
         let t = now - self.t0;
@@ -403,7 +555,9 @@ impl Bench {
             Screens::Both if (t.as_secs() / FLIP_EVERY.as_secs()).is_multiple_of(2) => {
                 ScreenId::Nav
             }
-            Screens::Both | Screens::Probe => ScreenId::Readings,
+            Screens::Both | Screens::Probe | Screens::MediaStack | Screens::MediaArt => {
+                ScreenId::Readings
+            }
         };
         if self.screens != Screens::Readings {
             self.dis.set_nav(now, nav_at(t));

@@ -281,3 +281,50 @@ fn enter_starts_with_full_clear() {
         &Op::Clear(carpi_dis::proto::FULL).encode()[..]
     );
 }
+
+fn media_input(pos_s: u64, playing: bool) -> carpi_dis::screens::media::MediaInput {
+    use carpi_dis::screens::media::{ART, MediaInput};
+    let n = 48usize;
+    let g: Vec<u8> = (0..n * n).map(|i| ((i % n) * 255 / n) as u8).collect();
+    let art = carpi_dis::image::dither(&g, n, n, usize::from(ART.w) * 2, usize::from(ART.h) * 2);
+    MediaInput {
+        title: Some("Title".into()),
+        artist: Some("Artist".into()),
+        album: Some("Album".into()),
+        playing,
+        position_ms: Some(pos_s * 1000),
+        duration_ms: Some(200_000),
+        art: Some((1, art)),
+    }
+}
+
+#[test]
+fn media_layouts_enter_tick_and_seek() {
+    use carpi_dis::screens::media::{MediaLayout, MediaScreen};
+    for (layout, name) in [(MediaLayout::Stack, "media_stack"), (MediaLayout::Art, "media_art")] {
+        let cx = Ctx::new(Profile::WHITE);
+        let t0 = Instant::now();
+        let mut s = MediaScreen::new(layout);
+        s.set(t0, media_input(100, true));
+        let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+        let mut fb = Fb::new(cx.metrics);
+        apply(&mut fb, &f);
+        let mut regs = f.regs;
+        while {
+            let f = build_frame(&mut s, t0, &cx, regs, false).unwrap();
+            let busy = f.messages.iter().any(|m| m.bytes != [0x39]);
+            apply(&mut fb, &f);
+            regs = f.regs;
+            busy
+        } {}
+        golden(&format!("{name}_screen"), &fb.ascii());
+        // One second on: a time run and maybe a bar grow, nothing else.
+        s.set(t0, media_input(101, true));
+        let u = update_only(&mut s, t0, &cx, regs);
+        assert_eq!(u.messages.len(), 1, "{name}");
+        // Seek back: a clear + the track row, one group, one message.
+        s.set(t0, media_input(20, false));
+        let u = update_only(&mut s, t0, &cx, u.regs);
+        assert_eq!(u.messages.len(), 1, "{name}");
+    }
+}

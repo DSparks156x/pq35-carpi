@@ -101,13 +101,22 @@ impl Dis {
     }
 
     /// Bench probes only: send `messages` as one frame, as given (no packer,
-    /// no commit added). `false` if not owned or a frame is in flight.
+    /// no commit added). Registers are forgotten. `false` if not owned or a
+    /// frame is in flight.
     pub fn submit_raw(&mut self, now: Instant, messages: Vec<crate::pack::Message>) -> bool {
-        let p = Packed {
-            messages,
-            regs: Registers::default(),
-            spans: Vec::new(),
-        };
+        self.submit_packed(
+            now,
+            Packed {
+                messages,
+                regs: Registers::default(),
+                spans: Vec::new(),
+            },
+        )
+    }
+
+    /// Bench only: send a frame the caller packed (a screen not wired into
+    /// the arbiter yet). Same rules as [`Dis::submit_raw`].
+    pub fn submit_packed(&mut self, now: Instant, p: Packed) -> bool {
         self.probe && self.session.frame_idle() && self.session.submit(now, p).is_ok()
     }
 
