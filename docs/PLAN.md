@@ -16,7 +16,7 @@ Three repos:
 
 | Repo | What | License |
 |---|---|---|
-| `pq35-carpi` (this) | Car daemon, tools, simulators, install. Submodules the other two. | Noncommercial (see Q1), except `carpi-proto` |
+| `pq35-carpi` (this) | Car daemon, tools, simulators, install. Submodules the other two. | PolyForm Noncommercial 1.0.0, except `carpi-proto` (MIT/Apache) |
 | LIVI fork | AA/CarPlay head unit plus our Slint pages and a bridge module. Submodule at `livi/`. | GPL-3.0 + LIVI attribution (not ours to restrict) |
 | sdlink | Encoder, avlink, Teensy firmware, RNS-E decoder sectors. Submodule at `sdlink/`. | Drew's call |
 
@@ -29,7 +29,7 @@ Processes on the Pi:
 - **sdlink chain**: wlcap, encoder, avlink, as today. LIVI runs nested in labwc on NOOP-1 so the chain works unchanged.
 - **`carpi`**: a CLI for debugging and bench work (dump values, watch frames, inject keys, drive the DIS, take a bus lease).
 
-Why one daemon: the old stack had 13 units, about 18 ZMQ endpoints, flag files for locks, and five processes opening their own CAN sockets around the transmit gate. One process gives one transmit gate, one bus budget, one state store and one clock. A crash restarts the whole daemon through systemd, which takes well under a second.
+Why one daemon: the old stack had 13 units, about 18 ZMQ endpoints, flag files for locks, and five processes opening their own CAN sockets around the transmit gate. One process gives one transmit gate, one state store and one clock. A crash restarts the whole daemon through systemd, which takes well under a second.
 
 ### 1.1 Crate layout (this repo)
 
@@ -38,13 +38,13 @@ Protocol crates are **sans-IO**: state machines that take `(now, input)` and ret
 ```
 crates/
   carpi-can        Frame types, CanPort trait (SocketCAN, replay, sim), rx timestamps,
-                   the TX gate and bus budget
+                   the TX gate and rate caps
   carpi-signals    Signal table generated from the DBC + overlay; decode with validity
   carpi-state      Value store: named values, samples with age/validity, watches, derived values
   carpi-nm         NM ring observer and bus-state machine
   carpi-power      Power backends (CarPiHat GPIO, hat MCU) and shutdown sequencing
   carpi-input      Raw key decoders, gesture recogniser, router, sinks
-  carpi-rnse       RNS-E firmware commands (0x7B0, 0x602, ...) with re-assert on RNS-E reset
+  carpi-rnse       RNS-E firmware commands (0x7B0) with re-assert on RNS-E reset
   carpi-light      Light model: one input set, outputs for panel, LIVI night, AA night
   carpi-tp2        TP2.0 data link (sequence, ACK, blocks, keepalive), shared by KWP and DDP
   carpi-kwp        KWP2000 client, request classes
@@ -81,17 +81,16 @@ iface = "obd"         # or "ican" on cars whose gateway routes diag from infotai
   - `ican` is required. It carries NM, inputs, the RNS-E and the cluster.
   - `diag` is where TP2 runs. On the TT it's the same interface as `ican`. On cars whose gateway won't route diagnostics from infotainment, it's a second interface on the OBD port (high-speed CAN, 500 kbit/s).
   - More roles can be added later.
-- Each subsystem asks for a role, never an interface. When two roles share one interface, they share one socket, one gate and one budget.
+- Each subsystem asks for a role, never an interface. When two roles share one interface, they share one socket and one gate.
 - `CanPort` trait: `recv() -> (Frame, Instant)`, `send(Frame)`. Implementations: SocketCAN, file replay (candump format), in-process sim bus.
 - **Nothing sends a frame except through the gate.** Every send carries a `TxClass`:
-  - `Keepalive` (0x602 TV presence)
   - `Override` (0x7B0 firmware commands)
   - `DisplayTop` (0x363/0x365), `DisplayDdp` (0x6C0 session)
   - `Diag` (TP2 0x200, 0x300+)
   - `Extra` (0x67A exhaust, Haldex mode, Drew's own add-ons)
   - `Lease` (an external tool holds the bus)
 - There's one gate per interface. Each gate asks the bus-state machine (2.3) whether the class may send now. A separate diag bus has no NM ring the Pi can see, so its gate uses Kl15 from ICAN. Refused frames are dropped and counted, never queued across a sleep.
-- **Bus budget**: each interface tracks its load per class over a sliding window. On the TT, DDP and TP2 share one 100 kbit/s bus, roughly 1000 frames/s, so the DIS and the diag scheduler both ask the budget before planning work. With diag on its own OBD interface, they stop competing. Budget shares are config, not code.
+- **Load**: ICAN isn't heavily loaded, and our frames lose arbitration to most car traffic anyway. So there's no elaborate budget. Each class has a sane rate cap; the gate counts frames per class and logs if a cap is hit, which catches a runaway sender. DIS pacing and diag scheduling are driven by ACKs and responses, not by a budget.
 - Kernel listen-only is a backstop only. The old code toggled it by taking `can0` down and up, which blinded RX for ~5 s each time. We don't do that.
 - A rolling raw-frame recorder (last N minutes in RAM, dump on request or on fault) is part of the CAN layer, not a later tool. Most open questions below are answered by captures.
 
@@ -131,11 +130,11 @@ Silent ──any frame──▶ Waking ──ring stable──▶ Awake ──Sl
 
 - `Awake` has sub-flags, not more states: `kl15`, `rnse_alive` (0x436 fresh, SleepInd 0), `ring_ok`.
 - Gate policy per class:
-  - `Keepalive`, `Override`, `DisplayTop`: only while `rnse_alive`.
+  - `Override`, `DisplayTop`: only while `rnse_alive`.
   - `DisplayDdp`, `Diag`: only with `kl15`.
   - `Extra`: per add-on, default `kl15`.
   - Nothing in `SleepPending` or `Silent`. One frame wakes every ICAN node.
-- **The Pi never holds the bus awake** (Drew, 2026-11-07). If 0x602 itself keeps the RNS-E from raising SleepInd, the 0x602 sender must stop at Kl15 off, not at SleepInd. That's the first capture to make.
+- **The Pi never holds the bus awake** (Drew, 2026-11-07). The Pi doesn't send 0x602: the firmware sends it itself, and it doesn't stop the RNS-E from signalling sleep.
 - `Silent` for T_silent → power backend gets `ShutdownRequested`. CAN is the shutdown trigger; the amp-wake GPIO becomes a secondary input.
 
 **Power backend trait**: `ready_for_poweroff(delay)`, `wake_reason()`, `heartbeat()`.
@@ -171,7 +170,6 @@ raw frames ─▶ decoders ─▶ KeyEvent{key, Down|Repeat|Up, t} ─▶ gestur
 
 `carpi-rnse` owns the firmware protocol (`RNSE hacking/CAN_PROTOCOL.md`, close enough for now; the car runs R56B-equivalent):
 - 0x7B0 `BA` source label, `BB` LCD brightness, `BE`/`BF` key/source/volume/status, `BC`/`BD` ADC (analog path only).
-- 0x602 TV presence, if the firmware still needs it (Q8).
 
 It keeps a **desired state** and re-asserts it whenever the RNS-E comes back (0x436 reappears or a status poll shows a reset). The old code lost every setting on an RNS-E reboot.
 
@@ -207,7 +205,7 @@ The cluster isn't a framebuffer. There's no engine that turns arbitrary content 
   - no `55` records with LEN ≥0x80
   - at most 44 glyphs per `57`
   - lines inherit SET/XOR from the last `55`.
-- **Command buffer**: the cluster applies its buffer on `39`, or on its own when the buffer fills. A clear and its redraw must land in the same buffer, or the blank shows. The packer works in declared groups (clear + redraw, one scroll step) and never lets one straddle an auto-commit: if a group won't fit in the space left, it commits first. The buffer size is in the cluster profile (Q25).
+- **Command buffer**: the cluster applies its buffer on `39`, or on its own when the buffer fills. A clear and its redraw must land in the same buffer, or the blank shows. The packer works in declared groups (clear + redraw, one scroll step) and never lets one straddle an auto-commit: if a group won't fit in the space left, it commits first. The buffer size goes in the cluster profile, once it's worked out from the old code (open question 2).
 - In the car, every byte crosses the shared 100 kbit/s ICAN and every ACK crosses the gateway twice. That's about 30 ms per ACK block, against 9 ms on the bench. Cluster-side rules carry over from the bench; throughput doesn't.
 
 **Layers:**
@@ -227,7 +225,7 @@ The cluster isn't a framebuffer. There's no engine that turns arbitrary content 
 4. **Helpers**: `NumberField`, `ScrollText`, `QuickThenRefineIcon`, `GlyphCells`, `InverseLabel`. Lane displays fit as `GlyphCells`.
 5. **Screens**, written by hand. Each has `enter`, update rules and a fallback ladder (native bitmap → logical bitmap → glyphs → text). Each screen has two lanes:
    - **update** (distance, scrolling text) always goes first;
-   - **refine** (high-res passes in slices of ≤3 messages) uses only leftover budget, and is cancelled when its slot changes.
+   - **refine** (high-res passes in slices of ≤3 messages) runs only in the gaps the update lane leaves, and is cancelled when its slot changes.
 
    The nav screen in Drew's order: fast icon, text, bar, commit, then refine. A distance tick costs 8–10 B. In the readings grid, a value change is one ~10 B text run with no clear.
 6. **Arbiter**: picks which screen is shown.
@@ -237,7 +235,6 @@ The cluster isn't a framebuffer. There's no engine that turns arbitrary content 
 
 **Stock radio source.** With FIS-Control on, the RNS-E's session moves to 0x7B2/0x7B3 and its text to 0x7B4/0x7B5. The Pi plays the cluster toward it and always grants it the screen, keeping a copy of its records. When the radio wins the arbiter, the copy is replayed through our session. If always-grant misbehaves, the fallback is to answer it "busy"; `2E` still forces it to repaint. 0x604 is RNS-E nav status, not DIS content.
 
-**DIS bus share**: proposed 20% of ICAN (Q17).
 
 ### 2.8 Diagnostics
 
@@ -245,19 +242,19 @@ Runs on the `diag` bus role (2.1): the same interface as ICAN on the TT, where t
 
 Facts: there's very little on-car evidence, and only the engine is measured. TP2 setup on 0x200 `01 C0 00 10 00 03 01` → 0x201 `D0`. Parameters BS 15, T1 100 ms, T3 5–10 ms. Opening a channel plus `10 89` costs ~70 ms of bus time. One `21 xx` is ~48 ms, mostly ECU latency. The estimated ceiling is ~18–20 group reads/s per channel. Parallel channels across modules are untested.
 
-- **Channel manager**: one state machine per module (Closed, Opening, Open, Grace, Failed with backoff), timer-driven, interleaving requests across open channels so one slow module never stalls the rest. Max concurrent channels is config, starting at 2 until measured.
+- **Channel manager**: one state machine per module (Closed, Opening, Open, Grace, Failed with backoff), timer-driven, interleaving requests across open channels so one slow module never stalls the rest. The gateway handles many channels at once (Drew), so there's a config limit for safety, not throughput.
 - **KWP client**: every request carries a class, `ReadOnly | Volatile | Persistent | Programming`. Anything above `ReadOnly` needs an exclusive lease. A module profile can deny polling outright: **ABS 0x03 is denied** (polling it causes an ESP fault and upsets the Haldex).
 - **Catalog**: each value has one name and a list of providers (`ican:ID:signal`, `diag:module:group:field`) with costs. Formula decoding uses the ECU's formula byte; meaning comes from group/position per part number.
 - **Scheduler**: one scheduler.
   - Clients subscribe `{value, period, priority, lease}`.
-  - It resolves each value to its cheapest provider (ICAN first), packs groups into a set cover, and plans with EDF plus priority within the diag share of the bus budget.
+  - It resolves each value to its cheapest provider (ICAN first), packs groups into a set cover, and plans with EDF plus priority.
   - Each subscription reports `requested`, `granted`, `achieved Hz` and a degradation reason.
   - Leases expire unless renewed (pages renew while visible).
   - Channels close after a grace period with no demand.
 - **Exclusive modes**: `VcdsPause` (stop all diag TX), `Exclusive(job)` (one client owns diag), `BusLease` (2.10).
-  - Another tester is detected passively when we see 0x200 setups we didn't send, and we go to `VcdsPause` (Q12).
+  - Another tester is detected passively when we see 0x200 setups we didn't send, and we go to `VcdsPause`. Our tester uses its own RX IDs, never 0x300, so it doesn't collide with VCDS.
 - **Jobs**: install list, DTC read/clear, coding, adaptation. These are typed jobs with progress and cancel, not ad hoc requests.
-- **ME7Logger-style dynamic identifiers**: a side path. It depends on Drew's ECU (2.0 TFSI is MED9/MED17, not ME7) and lives behind the same provider interface if it happens.
+- **Faster engine reads**: a side path. The engine is MED17.5.1, so ME7Logger's method doesn't apply as-is. Any MED17 equivalent lives behind the same provider interface.
 
 ### 2.9 Local API
 
@@ -272,7 +269,7 @@ Facts: there's very little on-car evidence, and only the engine is measured. TP2
 - `bus.lease`: take or release the bus for an external tool.
 - `events`: power state, alerts, faults.
 
-Same-user peer check on the socket. No TCP listener by default (see Q11 for the phone portal).
+Same-user peer check on the socket. The only network listener is the phone portal: a small HTTP server on the hotspot interface for log/capture download and firmware/config upload, as today.
 
 ### 2.10 Bus lease for external tools
 
@@ -317,7 +314,7 @@ Slint pages inside the fork (Drew), in `livi-carpi-ui`, using LIVI's widgets and
 - **Car**: RNS-E source label, brightness, light model, DIS pages, power, services.
 - **SD link**: status and updates.
 
-Knob navigation comes from LIVI's own focus handling. 800x480 vs visible 800x400 is Q10.
+Knob navigation comes from LIVI's own focus handling. Pages are 800x480.
 
 ### 2.13 Video
 
@@ -331,10 +328,10 @@ Contingency, only if latency or CPU says so: the fork's compositor renders offsc
 |---|---|
 | Power, bus sleep | 2.1 gate, 2.3 bus-state machine, power backend |
 | Input | 2.4 pipeline, uinput into LIVI, context from store |
-| DIS | 2.1 budget, 2.7 layers, sources from store and bridge |
+| DIS | 2.1 gate, 2.7 layers, sources from store and bridge |
 | Radio overrides | 2.5 desired-state client, 2.6 light model |
 | Vehicle state | 2.2 signals and store; curated set to AA via bridge (2.11) |
-| Diagnostics | 2.8 on 2.1 gate and budget; values into the same store |
+| Diagnostics | 2.8 on the 2.1 gate; values into the same store |
 | LIVI | 2.9 API, 2.11 fork points, 2.12 pages |
 | Video | 2.13, sdlink submodule |
 | Drew's extras (Haldex mode, exhaust valve, ...) | an `extras` module per item, using `Extra` TX class, catalog values and a page; no special paths |
@@ -358,13 +355,12 @@ Contingency, only if latency or CPU says so: the fork's compositor renders offsc
 Each step ends with something running on the car or bench, read-only first.
 
 0. **Captures and skeleton.** Workspace, CI, `dbcgen`, recorder. Captures on the car:
-   - ignition off to bus silence, with and without the Pi sending
-   - knob detents and direction
-   - MODE/PTT/click holds
+   - ignition off to bus silence (to tune the sleep timers)
+   - knob detents and direction (MODE/PTT holds: find the existing notes)
    - a short drive log
 1. **Read-only daemon.** CAN port, signals, store, NM observer, `carpi` CLI. Runs beside the old stack with zero TX.
 2. **LIVI trial.** Stock LIVI on the microSD (BOOT_ORDER=0xf461, Drew runs the EEPROM write), nested in labwc, through sdlink. Answers HEVC, memory and latency questions.
-3. **Gate, bus-state machine, power.** CAN-triggered shutdown on the CarPiHat. First TX: 0x602 and 0x7B0 through `carpi-rnse`, light model.
+3. **Gate, bus-state machine, power.** CAN-triggered shutdown on the CarPiHat. First TX: 0x7B0 through `carpi-rnse`, light model.
 4. **Input.** Pipeline into LIVI over uinput. Old stack off from here on the trial card.
 5. **Fork, part 1.** Submodule, `livi-carpi` bridge, calls, lanes, extra sensors.
 6. **DIS.** TP2 link and DDP session against the simulator, then bench, then car. Renderer, arbiter, nav/media/call/readings sources.
@@ -373,51 +369,52 @@ Each step ends with something running on the car or bench, read-only first.
 9. **Stock radio DIS source.** Cluster role on 0x7B2/0x7B3.
 10. **Extras and hat.** Haldex mode, exhaust valve, hat MCU firmware and `HatMcu` backend. Headless-encoder contingency if step 2 showed the need.
 
-## 6. Open questions
+## 6. Decisions and open questions
 
-Answered so far (2026-11-07):
+Drew's decisions (2026-11-07):
 
 - **Repo**: `pq35-carpi`, sibling of `RNS-E-Hudiy`, local only.
-- **Audience**: works as written on A3/TT/R8/Q3; CAN IDs in one place; no blanket configurability. Others fork for distant relatives.
-- **RNS-E firmware**: not r21 any more. The SD-link firmware (about R56B) has similar commands. `RNSE hacking/CAN_PROTOCOL.md` is close enough for now. Firmware can be changed to suit.
-- **Hat**: plan for it; it only changes how 5 V is switched plus a status link. Sleep and TX rules are the same.
-- **Pages**: Slint, inside the LIVI fork, kept rational for rebases. No webviews.
-- **LIVI fork**: separate repo, submodule here, kept in lockstep.
-- **Bridge direction**: the fork connects to the daemon's API (2.11).
-- **Licensing**: Drew wants "mildly commercially restrictive". See **Q1**.
-- **Flashing**: Drew's flash drivers stay separate (bus lease). Haldex mode and exhaust are his extras, design freely. sdlink is a separate repo submoduled here; this repo pushes Pi-side updates and matching Teensy/RNS-E sectors.
-- **Stock DIS**: yes, the stock radio's centre screen is an arbiter source.
-- **Wheel keys**: ignore when the RNS-E isn't on TV.
+- **Audience**: works as written on A3/TT/R8/Q3. CAN IDs in one place, no blanket configurability. Others fork for distant relatives.
+- **License**: PolyForm Noncommercial 1.0.0 for pq35-carpi, MIT/Apache for `carpi-proto`. Page logic stays thin in the GPL fork.
+- **RNS-E firmware**:
+  - Not r21 any more. The SD-link firmware (about R56B) has similar commands, and `RNSE hacking/CAN_PROTOCOL.md` is close enough. Firmware can be changed to suit.
+  - Non-PCBBC firmwares always redirect the DIS (0x7B2–0x7B5).
+  - The firmware sends 0x602 itself, so the Pi doesn't.
+- **Hat**: plan for it. It only changes how 5 V is switched, plus a status link. Sleep and TX rules stay the same.
+- **CAN hardware**: the CarPiHat already runs fault-tolerant low-speed CAN on ICAN.
+- **Pages**: Slint, inside the LIVI fork, kept rational for rebases. No webviews. Sized for 800x480. (800x400 was Hudiy minus its nav bar.)
+- **LIVI fork**: separate repo, submodule here, kept in lockstep. The fork connects to the daemon's API (2.11).
+- **Phone portal**: keep it, same as today. LIVI's AP works like Hudiy's: the Pi is the hotspot and phones connect to it.
+- **Flashing**:
+  - Drew's flash drivers stay separate and use a bus lease.
+  - Haldex mode and exhaust are his extras; design freely.
+  - sdlink is a separate repo submoduled here. This repo pushes Pi-side updates and matching Teensy/RNS-E sectors.
 - **Keep awake**: the Pi never holds the bus awake after ignition off.
-- **Buses**: diagnostics must work on a separate OBD interface; many gateways won't route diagnostics from ICAN (the TT's does). Interfaces are named, not numbered.
+- **Wheel keys**: ignored when the RNS-E isn't on TV.
+- **Buses**: diagnostics must work on a separate OBD interface, because many gateways won't route it from ICAN (the TT's does). Interfaces are named, not numbered.
 - **Values**: keep validity simple. A value is the value or nothing, plus a timestamp.
-- **Cluster**: the A3 and TT white clusters are basically identical. The cluster isn't a framebuffer: text, graphics-font text and lines are fast, bitmaps are slow, and full-res bitmaps are very slow. Its design is in DIS.md.
-- **`B7`**: Drew is checking it on the current firmware.
+- **Bus load**: ICAN isn't heavily loaded, and Drew has run diagnostics, DIS and flashing together without trouble. No elaborate budget; sane send rates and a sanity cap are enough (2.1).
+- **Diagnostics**:
+  - The gateway handles many TP2 channels at once.
+  - The engine is an old MED17.5.1, so ME7Logger-style reads don't apply as-is.
+  - Auto-detecting another tester is good. Most of the problem goes away by not using VCDS's 0x300 tester ID, plus the quiet toggle.
+- **DIS**:
+  - The A3 and TT white clusters are basically identical; design in DIS.md.
+  - Cluster CAN runs at 500 kbit/s and the gateway bridges it to ICAN at 100 kbit/s. Nothing more needs proving there.
+  - Native 128×96 icons stay, because they look clean. Maybe convert AA/CarPlay bitmap icons to native instead of using pre-downscaled ones.
+  - ROM-glyph arrows are fine as an option.
+  - Nav gets a stock-lookalike mode.
+  - On TV the top lines are ours: the firmware redirects them, so the Pi sends 0x363/0x365 itself.
+  - Long text scrolls as a marquee at the current speed. A blank on page switch is fine.
+  - Screens: everything except openpilot. Media, nav (improved, plus stock lookalike), phone, accel test, readings (could be better), eggs and cover art. All of them get rebuilt, mildly better.
+  - The stock RNS-E nav is barely used, so the 0x7B2 mirror comes late.
+  - Clearing tricks: blank characters appended to text and region clears. Mind what a blank overwrites. Real proportional-font widths are already worked out in the old code.
+- **`B7`**: Drew is checking it on the current firmware. Until then it's never sent.
 
 Still open:
 
-1. *(answered: PolyForm Noncommercial 1.0.0 for pq35-carpi; MIT/Apache for `carpi-proto`; page logic kept thin in the GPL fork)*
-2. *(answered: fork connects to the daemon)*
-3. Does 0x602 TV presence keep the RNS-E from sleeping? Needs the capture in step 0.
-4. Knob: frames per detent and which direction is clockwise? Hold behaviour of MODE and PTT? Capture.
-5. Which transceiver does the CarPiHat use on ICAN? Is it fault-tolerant low-speed?
-6. Engine ECU part number and software (`1A 9B`)? That decides whether dynamic identifiers are worth it.
-7. Has two-channel TP2 (e.g. engine + Haldex) ever run at once? OK to measure in step 7?
-8. Does the R56B-era firmware still need the Pi's 0x602 frame, or does it fill it itself (r30+ did after ~2.2 s)?
-9. Is FIS-Control on in the car's firmware, so the RNS-E's DDP session goes to 0x7B2/0x7B3?
-10. Visible RNS-E area: 800x480 or 800x400? Pages are sized to it.
-11. Phone file access (logs, captures out; firmware in) over LIVI's AP: worth a small HTTP portal in the daemon, or drop it for now?
-12. VCDS: auto-pause when another tester is detected, or manual only?
-13. Which DIS pages survive: readings, acceleration test, openpilot, the eggs?
-14. Does LIVI's own AP and Bluetooth replace the NetworkManager hotspot setup on the Pi?
-15. Does your phone negotiate HEVC with LIVI? (Pi 5 has no H.264 hardware decode.) The trial answers it.
-16. Is the visible TT odometer about 238,600 km? Sanity check for the 0x65D decode.
-17. DIS: what share of ICAN can it take? Proposed 20%.
-18. DIS: one passive capture of the TT cluster with FIS-Control off, to confirm the capability record and the centre-only claim?
-19. DIS: can the bench cluster run through a real gateway, so the 100k path is measured rather than simulated?
-20. DIS: keep native 128x96 icons in the car at all? Estimated 0.5-1 s per icon change.
-21. DIS: ROM-glyph arrows as the default nav icon, with a 32x38 bitmap for maneuvers the catalog lacks?
-22. DIS: is the RNS-E's own nav used? That decides how early the 0x7B2 mirror is built.
-23. DIS: on TV, should the top lines show the radio's text or our media/nav text?
-24. DIS: long text: marquee, page-flip or truncate, and at what speed? Is a brief blank on a page switch OK?
-25. DIS: how big is the cluster command buffer, and what else triggers an auto-commit (timeout, particular commands)? Plus your clearing tricks, for the helpers.
+1. Knob frames per detent and direction. MODE/PTT hold behaviour is captured or documented somewhere already; find it before step 4.
+2. Command buffer size and what triggers an auto-commit. Nobody knows; the old code avoids obvious auto-commits somehow. Work out how from `dis_client` in step 6.
+3. Does Drew's phone negotiate HEVC with LIVI? The trial answers it.
+4. LIVI's AP and Bluetooth replacing the NetworkManager hotspot: probably fine, confirmed in the trial.
+5. Odometer decode of 0x65D: "plausibly close", checked against the cluster once the read-only daemon runs.

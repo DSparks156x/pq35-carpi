@@ -2,6 +2,8 @@
 
 Status: draft for Drew. No code. Replaces PLAN.md 2.7 layers 3–4 ("surfaces", "scene and renderer").
 
+**Drew's answers in PLAN.md section 6 override this doc** where they differ: no fixed ICAN share for the DIS (send rates just stay sane), no gateway rig or passive TT-cluster capture needed, native 128×96 icons stay, top lines on TV are ours, the 0x7B2 mirror comes late.
+
 Path prefixes: `dc/` = `RNS-E-Hudiy/dis_client/`, `cRE/` = `clusterRE/`, `ref/` = `RNS-E-Hudiy/references/dis display references/`.
 Tags: **[M500]** measured on the A3 bench at 500 kbit/s, direct to the cluster. **[V]** visually confirmed by Drew. **[E100]** estimate for the car, not measured. **[G]** guess.
 
