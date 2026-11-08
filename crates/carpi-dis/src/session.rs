@@ -30,7 +30,9 @@ pub struct SessionConfig {
     pub step_timeout: Duration,
     /// Wait for `53` after a claim. Old code: 1 s (`dc/dis_service.py:311`).
     pub claim_timeout: Duration,
-    /// Retry after a claim timeout or `53 C0`. Old code: 5 s.
+    /// Retry after a claim timeout or `53 C0`, and re-claim while busy with no
+    /// `53 05` in sight. Old code: 5 s (`dc/dis_service.py:278`). Bench: a
+    /// cluster answered a fresh claim `53 84` and never sent free.
     pub claim_retry: Duration,
     /// After `53 05`, wait this long for `2E` before claiming anyway. Ours.
     pub free_wait: Duration,
@@ -150,6 +152,8 @@ pub struct Session {
     last_done: Option<Instant>,
     prev_gap: Duration,
     hold_until: Option<Instant>,
+    /// While `Window::Busy`: claim again at this time.
+    busy_reclaim: Option<Instant>,
     events: VecDeque<SessionEvent>,
 }
 
@@ -177,6 +181,7 @@ impl Session {
             last_done: None,
             prev_gap: Duration::ZERO,
             hold_until: None,
+            busy_reclaim: None,
             events: VecDeque::new(),
         }
     }
@@ -293,6 +298,11 @@ impl Session {
                 self.window = Window::Idle;
                 self.maybe_claim(now);
             }
+            Window::Busy if self.busy_reclaim.is_some_and(|t| now >= t) => {
+                self.busy_reclaim = None;
+                self.window = Window::Idle;
+                self.maybe_claim(now);
+            }
             _ => {}
         }
         self.pump(now);
@@ -310,6 +320,7 @@ impl Session {
         let w = match self.window {
             Window::Claiming { until } | Window::Free { until } => Some(until),
             Window::Retry { at } => Some(at),
+            Window::Busy => self.busy_reclaim,
             _ => None,
         };
         [
@@ -516,6 +527,7 @@ impl Session {
             WindowStatus::Busy => {
                 self.lose();
                 self.window = Window::Busy;
+                self.busy_reclaim = Some(now + self.cfg.claim_retry);
                 self.events.push_back(SessionEvent::Busy);
             }
             WindowStatus::Free => {
