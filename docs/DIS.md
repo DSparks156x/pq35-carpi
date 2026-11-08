@@ -263,6 +263,7 @@ Ladder: lower the per-value rate, then update only half the cells per frame (rou
 - **Readings** (Drew: looks right): icon + centred value + unit legend per cell, old 10x14 icons and 3x5 unit legends as placeholders until better art. No centre line (it clipped things). Subpages step with the wheel (up/down while DIS focus is on); the centred page name inverts while focused (`52` fill + black `57` in one group).
 - **Busy**: a fresh claim can get `53 84` with no free for minutes on an idle centre (left behind by a killed session). Re-claim every 5 s; after 30 s of unbroken busy, drop the link and redo the handshake. End bench runs with the stop file, not a kill.
 - **Command buffer**: one message, see §0.
+- **Media**: two layouts, both kept as options (`DisConfig.media_layout`). `Stack` (default; Drew: "sick"): centred title/artist/album, a progress bar that sends only what changed, times, `II` while paused (placeholder). `Art`: a 48x48 px cover at (0,3) beside left-aligned lines. Covers go through `image::cover`; params are still being tuned against Drew's sample covers (`cargo run -p carpi-dis --example covers`).
 
 ## 4. Questions only Drew can answer
 
