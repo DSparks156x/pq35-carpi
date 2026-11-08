@@ -9,6 +9,7 @@
 //! - [`font`]: measured glyph advances and AUDSCII.
 //! - [`helpers`]: `NumberField`, `ScrollText`, `QuickThenRefineIcon`, `GlyphCells`.
 //! - [`screens`]: nav and readings, written by hand.
+//! - [`reading_art`]: the old readings icons and unit legends (data).
 //! - [`arbiter`]: per-surface winner from a rule table.
 //! - [`top`]: the 0x363/0x365 text lines (frames only; the caller gates).
 //! - [`dis`]: ties them together; feed it frames and time, drain frames.
@@ -30,6 +31,7 @@ mod font_data;
 pub mod helpers;
 pub mod icons;
 mod nav_icon_data;
+pub mod reading_art;
 pub mod pack;
 pub mod proto;
 pub mod screens;

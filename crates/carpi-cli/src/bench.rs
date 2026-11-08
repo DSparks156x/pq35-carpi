@@ -9,7 +9,7 @@
 
 use carpi_can::Frame;
 use carpi_dis::screens::nav::NavInput;
-use carpi_dis::screens::readings::{ReadingSpec, ReadingsInput};
+use carpi_dis::screens::readings::{ReadingCell, ReadingsInput, ReadingsPage};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::{Dis, DisConfig, ScreenId, SessionEvent};
 use carpi_tp2::wire::{Pdu, parse};
@@ -65,42 +65,107 @@ pub fn nav_at(t: Duration) -> NavInput {
     }
 }
 
-pub fn reading_specs() -> Vec<ReadingSpec> {
-    [
-        ("Spd", 0),
-        ("RPM", 0),
-        ("H2O", 0),
-        ("Oil", 0),
-        ("Bat", 1),
-        ("Bst", 2),
-        ("IAT", 0),
-        ("AFR", 1),
-    ]
-    .iter()
-    .map(|(l, d)| ReadingSpec {
-        key: format!("bench.{l}"),
-        label: (*l).into(),
-        decimals: *d,
-    })
-    .collect()
+/// Readings subpages: (name, [(key, decimals)]). Keys carry unit suffixes so
+/// the screen picks icons and units on its own.
+const PAGES: [(&str, [(&str, u8); 8]); 3] = [
+    (
+        "Engine",
+        [
+            ("bench.speed_kmh", 0),
+            ("bench.rpm", 0),
+            ("bench.coolant_c", 0),
+            ("bench.oil_temp_c", 0),
+            ("bench.battery_v", 1),
+            ("bench.boost_bar", 2),
+            ("bench.iat_c", 0),
+            ("bench.afr", 1),
+        ],
+    ),
+    (
+        "Temps",
+        [
+            ("bench.coolant_c", 0),
+            ("bench.oil_temp_c", 0),
+            ("bench.iat_c", 0),
+            ("bench.outside_temp_c", 1),
+            ("bench.haldex_oil_temperature_c", 0),
+            ("bench.transmission.oil_temperature_c", 0),
+            ("bench.exhaust_c", 0),
+            ("bench.ambient.cabin_c", 1),
+        ],
+    ),
+    (
+        "Driver",
+        [
+            ("bench.throttle_pct", 0),
+            ("bench.pedal_pct", 0),
+            ("bench.torque_nm", 0),
+            ("bench.ignition_timing_deg", 1),
+            ("bench.fuel_level_l", 0),
+            ("bench.odometer_km", 0),
+            ("bench.steering_deg", 0),
+            ("bench.dim_display_pct", 0),
+        ],
+    ),
+];
+
+pub fn reading_pages() -> Vec<ReadingsPage> {
+    PAGES
+        .iter()
+        .map(|(name, cells)| ReadingsPage {
+            name: (*name).into(),
+            cells: cells
+                .iter()
+                .map(|(k, d)| ReadingCell {
+                    key: (*k).into(),
+                    decimals: *d,
+                    icon: None,
+                    unit: None,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
-/// Readings `t` into the script: slow ramps and waves, all different.
-pub fn readings_at(t: Duration) -> ReadingsInput {
+/// Values for `page` at `t` into the script: slow ramps and waves, all different.
+pub fn readings_at(t: Duration, page: usize) -> ReadingsInput {
     let s = t.as_secs_f64();
     let w = |p: f64| (s * std::f64::consts::TAU / p).sin();
-    ReadingsInput {
-        title: "Bench".into(),
-        values: [
-            Some((60.0 + 60.0 * w(20.0)).round()),
-            Some((2500.0 + 2000.0 * w(7.0)).round()),
-            Some((40.0 + s).min(95.0)),
-            Some((30.0 + s * 0.8).min(110.0)),
-            Some(13.8 + 0.4 * w(3.0)),
-            Some(0.8 * w(5.0)),
-            Some(25.0 + 5.0 * w(30.0)),
-            Some(14.7 + 2.0 * w(4.0)),
+    let all: [[f64; 8]; 3] = [
+        [
+            (60.0 + 60.0 * w(20.0)).round(),
+            (2500.0 + 2000.0 * w(7.0)).round(),
+            (40.0 + s).min(95.0),
+            (30.0 + s * 0.8).min(110.0),
+            13.8 + 0.4 * w(3.0),
+            0.8 * w(5.0),
+            25.0 + 5.0 * w(30.0),
+            14.7 + 2.0 * w(4.0),
         ],
+        [
+            (40.0 + s).min(95.0),
+            (30.0 + s * 0.8).min(110.0),
+            25.0 + 5.0 * w(30.0),
+            8.0 + 2.0 * w(60.0),
+            (20.0 + s * 0.3).min(70.0),
+            (25.0 + s * 0.5).min(90.0),
+            450.0 + 300.0 * w(9.0),
+            21.0 + w(40.0),
+        ],
+        [
+            (50.0 + 50.0 * w(6.0)).round(),
+            (50.0 + 50.0 * w(6.5)).round(),
+            (150.0 + 150.0 * w(8.0)).round(),
+            10.0 + 20.0 * w(5.0),
+            (40.0 - s * 0.01).max(0.0),
+            123_456.0 / 1000.0,
+            (90.0 * w(4.0)).round(),
+            (50.0 + 50.0 * w(30.0)).round(),
+        ],
+    ];
+    ReadingsInput {
+        title: String::new(),
+        values: all[page % 3].map(Some),
     }
 }
 
@@ -132,12 +197,14 @@ pub struct Bench {
     stopped: bool,
     tx_mid: bool,
     now: Instant,
+    readings_cycle: u64,
+    focus: bool,
 }
 
 impl Bench {
     pub fn new(now: Instant, screens: Screens, secs: f64) -> Self {
         let dis = Dis::new(DisConfig {
-            readings: reading_specs(),
+            readings_pages: reading_pages(),
             ..DisConfig::default()
         });
         let mut b = Bench {
@@ -159,6 +226,8 @@ impl Bench {
             stopped: false,
             tx_mid: false,
             now,
+            readings_cycle: 0,
+            focus: false,
         };
         b.dis.start(now);
         b.tick(now);
@@ -228,7 +297,23 @@ impl Bench {
             self.dis.set_nav(now, nav_at(t));
         }
         if self.screens != Screens::Nav {
-            self.dis.set_readings(now, readings_at(t));
+            // 10 s cycle: focus off, on at 4 s, step the subpage at 10 s.
+            let cycle = t.as_secs() / 10;
+            let focus = t.as_secs() % 10 >= 4;
+            if cycle != self.readings_cycle {
+                self.readings_cycle = cycle;
+                self.dis.step_readings(now, 1);
+                let r = self.dis.readings();
+                let msg = format!("readings page {}/{}", r.page_index() + 1, r.page_count());
+                self.say(now, msg);
+            }
+            if focus != self.focus {
+                self.focus = focus;
+                self.say(now, format!("focus {}", if focus { "on" } else { "off" }));
+                self.dis.set_focus(now, focus);
+            }
+            let page = self.dis.readings().page_index();
+            self.dis.set_readings(now, readings_at(t, page));
         }
         if self.page != Some(page) {
             self.page = Some(page);
@@ -369,8 +454,8 @@ mod tests {
 
     #[test]
     fn readings_change() {
-        let a = readings_at(Duration::ZERO);
-        let b = readings_at(Duration::from_millis(1500));
+        let a = readings_at(Duration::ZERO, 0);
+        let b = readings_at(Duration::from_millis(1500), 0);
         assert!(a.values.iter().all(Option::is_some));
         assert!(
             a.values

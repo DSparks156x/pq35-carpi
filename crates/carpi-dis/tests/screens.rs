@@ -198,20 +198,68 @@ fn readings_enter_and_value_change() {
 
     input.values[0] = Some(103.0);
     s.set(input.clone());
-    let upd = build_frame(&mut s, t0, &cx, enter.regs, false).unwrap();
+    let upd = update_only(&mut s, t0, &cx, enter.regs);
     golden("readings_value_bytes", &dump(&upd));
-    assert_eq!(upd.spans.len(), 1);
-    let ops = s_value_ops(&upd);
-    assert_eq!(ops, 1, "one text run, no clear");
+    // One centred run; the tail it uncovers is cleared in the same message.
+    assert_eq!(upd.messages.len(), 1);
+    assert!(s_value_ops(&upd) <= 3, "run + at most two tail clears");
     apply(&mut fb, &upd);
     golden("readings_value_screen", &fb.ascii());
 
-    // Narrower value: still one run, no clear (pad covers the old digits).
-    input.values[0] = Some(7.0);
+    // Same width: just the run.
+    input.values[0] = Some(104.0);
     s.set(input);
-    let upd = build_frame(&mut s, t0, &cx, upd.regs, false).unwrap();
+    let upd = update_only(&mut s, t0, &cx, upd.regs);
     assert_eq!(s_value_ops(&upd), 1);
-    assert!(!upd.messages[0].bytes.starts_with(&[0x52, 0x05, 0x02]));
+}
+
+#[test]
+fn readings_icons_refine_to_art() {
+    use carpi_dis::screens::readings::{icon_art, icon_rect, unit_art, unit_rect};
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = readings();
+    s.set(ReadingsInput::default());
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &f);
+    let mut regs = f.regs;
+    for _ in 0..500 {
+        let f = build_frame(&mut s, t0, &cx, regs, false).unwrap();
+        if f.messages.iter().all(|m| m.bytes == [0x39]) || f.messages.is_empty() {
+            break;
+        }
+        apply(&mut fb, &f);
+        regs = f.regs;
+    }
+    let page = s.page().clone();
+    for (i, c) in page.cells.iter().enumerate() {
+        assert_eq!(fb.region(icon_rect(i)), icon_art(i, c).px, "icon {i}");
+        assert_eq!(fb.region(unit_rect(i)), unit_art(i, c).px, "unit {i}");
+    }
+    golden("readings_refined_screen", &fb.ascii());
+}
+
+#[test]
+fn readings_focus_inverts_title_in_one_group() {
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = readings();
+    s.set(ReadingsInput {
+        title: "Engine".into(),
+        ..Default::default()
+    });
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    s.set_focus(true);
+    let on = update_only(&mut s, t0, &cx, f.regs);
+    assert_eq!(on.messages.len(), 1);
+    let recs: Vec<u8> = records(&on.messages[0].bytes).unwrap().iter().map(|r| r[0]).collect();
+    // clear, fill, black text (and the clip restore / commit around them).
+    assert!(recs.windows(3).any(|w| w == [0x52, 0x52, 0x57]), "{recs:02X?}");
+    s.set_focus(false);
+    let off = update_only(&mut s, t0, &cx, on.regs);
+    assert_eq!(off.messages.len(), 1);
+    assert!(update_only(&mut s, t0, &cx, off.regs).messages.iter().all(|m| m.bytes == [0x39]));
 }
 
 /// Records in the frame other than the trailing commit.

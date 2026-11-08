@@ -7,7 +7,7 @@ use crate::fb::Fb;
 use crate::helpers::Ctx;
 use crate::pack::PackError;
 use crate::screens::nav::{NavConfig, NavInput, NavScreen};
-use crate::screens::readings::{ReadingSpec, ReadingsInput, ReadingsScreen};
+use crate::screens::readings::{ReadingSpec, ReadingsInput, ReadingsPage, ReadingsScreen};
 use crate::screens::{Screen, build_frame};
 use crate::session::{Session, SessionConfig, SessionEvent};
 use carpi_can::Frame;
@@ -24,7 +24,10 @@ pub struct DisConfig {
     pub session: SessionConfig,
     pub arbiter: ArbiterConfig,
     pub nav: NavConfig,
+    /// One unnamed page from bare specs, used when `readings_pages` is empty.
     pub readings: Vec<ReadingSpec>,
+    /// Subpages the wheel steps through.
+    pub readings_pages: Vec<ReadingsPage>,
 }
 
 pub struct Dis {
@@ -35,6 +38,8 @@ pub struct Dis {
     user_page: Option<ScreenId>,
     /// Screen entered, and the generation it was entered in.
     shown: Option<(ScreenId, u32)>,
+    /// Re-enter the shown screen on the next frame (subpage change).
+    reenter: bool,
     belief: Option<Fb>,
     /// Last packing failure (a screen/helper bug); the frame was skipped.
     pub last_error: Option<PackError>,
@@ -46,9 +51,14 @@ impl Dis {
             session: Session::new(cfg.session),
             arbiter: Arbiter::new(cfg.arbiter),
             nav: NavScreen::new(cfg.nav),
-            readings: ReadingsScreen::new(cfg.readings),
+            readings: if cfg.readings_pages.is_empty() {
+                ReadingsScreen::new(cfg.readings)
+            } else {
+                ReadingsScreen::with_pages(cfg.readings_pages)
+            },
             user_page: None,
             shown: None,
+            reenter: false,
             belief: None,
             last_error: None,
         }
@@ -66,6 +76,24 @@ impl Dis {
     }
     pub fn nav(&self) -> &NavScreen {
         &self.nav
+    }
+    pub fn readings(&self) -> &ReadingsScreen {
+        &self.readings
+    }
+
+    /// Wheel up/down on the readings page: step subpages (wraps). The page
+    /// re-enters with a clear; a blank on page switch is fine (Drew).
+    pub fn step_readings(&mut self, now: Instant, delta: i32) {
+        if self.readings.step(delta) && self.shown.is_some_and(|(id, _)| id == ScreenId::Readings) {
+            self.reenter = true;
+        }
+        self.step(now);
+    }
+
+    /// DIS focus (the wheel drives the DIS): the readings page name inverts.
+    pub fn set_focus(&mut self, now: Instant, on: bool) {
+        self.readings.set_focus(on);
+        self.step(now);
     }
 
     pub fn start(&mut self, now: Instant) {
@@ -158,7 +186,7 @@ impl Dis {
         let cx = Ctx::new(profile);
         let generation = self.session.generation();
         let fresh = self.shown.is_none_or(|(_, g)| g != generation);
-        let enter = self.shown != Some((id, generation));
+        let enter = self.shown != Some((id, generation)) || self.reenter;
         let screen: &mut dyn Screen = match id {
             ScreenId::Nav => &mut self.nav,
             ScreenId::Readings => &mut self.readings,
@@ -166,6 +194,9 @@ impl Dis {
         match build_frame(screen, now, &cx, self.session.registers(), enter) {
             Ok(packed) => {
                 self.shown = Some((id, generation));
+                if enter {
+                    self.reenter = false;
+                }
                 if fresh || self.belief.is_none() {
                     // The grant's claim record cleared the centre.
                     self.belief = Some(Fb::new(cx.metrics));

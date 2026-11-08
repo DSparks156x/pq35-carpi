@@ -370,6 +370,9 @@ pub const STROKE_GAP: Duration = Duration::from_millis(10);
 #[derive(Clone, Debug)]
 pub struct QuickThenRefineIcon<K> {
     pub rect: Rect,
+    /// The rect is known blank when `set` runs (drawn right after a clear):
+    /// base rows with no ink are skipped.
+    pub on_clear: bool,
     shown: Option<K>,
     version: u32,
     job: Option<RefineJob>,
@@ -386,6 +389,7 @@ impl<K: PartialEq + Clone> QuickThenRefineIcon<K> {
     pub fn new(rect: Rect) -> Self {
         QuickThenRefineIcon {
             rect,
+            on_clear: false,
             shown: None,
             version: 0,
             job: None,
@@ -431,6 +435,7 @@ impl<K: PartialEq + Clone> QuickThenRefineIcon<K> {
         let groups = rows
             .chunks(per)
             .enumerate()
+            .filter(|(_, chunk)| !self.on_clear || chunk.iter().flatten().any(|b| *b != 0))
             .map(|(i, chunk)| {
                 Group::new(
                     "icon-base",

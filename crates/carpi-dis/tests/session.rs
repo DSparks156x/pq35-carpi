@@ -118,6 +118,17 @@ impl World {
         self.hu.ev.iter().filter(|e| f(e)).count()
     }
 
+    /// Run until no frame is in flight (refine slices keep coming for a while).
+    fn settle(&mut self) {
+        for _ in 0..1000 {
+            if self.hu.dis.session().frame_idle() {
+                return;
+            }
+            self.run(Duration::from_millis(10));
+        }
+        panic!("frames never went idle");
+    }
+
     /// What the cluster got, replayed into a model, must match the driver's belief.
     fn check_screen(&self) {
         let mut fb = Fb::new(Metrics::for_variant(Variant::White));
@@ -157,6 +168,7 @@ fn startup_busy_then_grant_and_draw() {
     assert!(w.cl.owner);
     assert_eq!(w.hu.dis.shown(), Some(ScreenId::Readings));
     assert_eq!(w.cl.drawn_unowned, 0);
+    w.settle();
     w.check_screen();
     assert_eq!(w.count(|e| *e == SessionEvent::ClusterSelected), 0);
 }
@@ -174,6 +186,7 @@ fn not_ready_mid_frame_recovers() {
     assert_eq!(w.cl.not_ready_sent, 2);
     assert!(w.count(|e| *e == SessionEvent::FrameDone) > done);
     assert_eq!(w.count(|e| matches!(e, SessionEvent::LinkClosed(_))), 0);
+    w.settle();
     w.check_screen();
 }
 
@@ -191,6 +204,7 @@ fn reinit_menu_busy_and_mode_repeat_repaint() {
     assert_eq!(w.owned(), vec![1, 3]);
     assert!(w.cl.received.iter().filter(|(_, m)| m == &[0x2F]).count() >= 1);
     assert!(w.cl.drawn[n].starts_with(&[0x52, 0x05, 0x02, 0x00, 0x1B, 0x40, 0x30]));
+    w.settle();
     w.check_screen();
 
     // Menu takes the centre, then gives it back.
@@ -205,6 +219,7 @@ fn reinit_menu_busy_and_mode_repeat_repaint() {
     w.cl.free(now);
     w.run(Duration::from_secs(1));
     assert_eq!(w.owned(), vec![1, 3, 5]);
+    w.settle();
     w.check_screen();
 
     // A repeated mode request after setup: caps and setup again, then re-claim.
@@ -212,6 +227,7 @@ fn reinit_menu_busy_and_mode_repeat_repaint() {
     w.cl.mode_request(now);
     w.run(Duration::from_secs(1));
     assert_eq!(w.owned(), vec![1, 3, 5, 7]);
+    w.settle();
     w.check_screen();
 }
 
@@ -232,6 +248,7 @@ fn loss_closes_link_and_recovers() {
     w.run(Duration::from_secs(8));
     assert_eq!(w.owned().len(), 2, "{:?}", w.hu.ev);
     assert!(w.cl.owner);
+    w.settle();
     w.check_screen();
 }
 
@@ -256,5 +273,6 @@ fn nav_with_refine_paces_strokes() {
     // Refine strokes went out, and the sim saw no stroke spacing under 10 ms.
     assert!(w.cl.drawn.iter().any(|m| m.contains(&0x63)));
     assert!(!w.hu.dis.nav().refining(), "refine should finish in 4 s");
+    w.settle();
     w.check_screen();
 }
