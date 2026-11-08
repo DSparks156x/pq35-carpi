@@ -51,9 +51,12 @@ pub struct NavInput {
     pub road: Option<String>,
     /// Left to right; empty when the phone sends none.
     pub lanes: Vec<Lane>,
-    /// Arrival time, already formatted local `HH:MM` (AA sends it so; the
-    /// caller formats CarPlay's Unix time).
+    /// Arrival time as local text, `14:32` or `2:32 PM` (AA sends it so; the
+    /// caller formats CarPlay's Unix time). Re-formatted per [`Clock`].
     pub eta: Option<String>,
+    /// The unit the phone shows distances in (`m`, `km`, `mi`, `ft`, `yd`):
+    /// [`Units::Auto`] follows it.
+    pub distance_unit: Option<String>,
     pub time_to_destination_s: Option<f64>,
     pub destination_distance_m: Option<f64>,
 }
@@ -93,6 +96,26 @@ pub struct NavConfig {
     pub flip_road: Duration,
     /// Show the trip-info pocket.
     pub pocket: bool,
+    pub units: Units,
+    pub clock: Clock,
+}
+
+/// Distance units. `Auto`: whatever the phone shows (Drew's phone: imperial).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Units {
+    #[default]
+    Auto,
+    Metric,
+    Imperial,
+}
+
+/// ETA clock. `Auto`: 12 h if the phone's ETA has AM/PM.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Clock {
+    #[default]
+    Auto,
+    H12,
+    H24,
 }
 
 impl Default for NavConfig {
@@ -105,17 +128,85 @@ impl Default for NavConfig {
             flip_lanes: Duration::from_secs(4),
             flip_road: Duration::from_secs(2),
             pocket: true,
+            units: Units::Auto,
+            clock: Clock::Auto,
         }
     }
 }
 
-/// `("350", "m")`, `("1.2", "km")`, `("12", "km")`, `("--", "")`.
+/// Metric: `("350", "m")`, `("1.2", "km")`, `("12", "km")`, `("--", "")`.
 pub fn format_distance(d: Option<f64>) -> (String, &'static str) {
-    match d.filter(|d| d.is_finite() && *d >= 0.0) {
-        None => ("--".into(), ""),
-        Some(d) if d < 995.0 => (format!("{}", ((d / 10.0).round() * 10.0) as u32), "m"),
-        Some(d) if d < 9950.0 => (format!("{:.1}", d / 1000.0), "km"),
-        Some(d) => (format!("{}", (d / 1000.0).round() as u32), "km"),
+    format_distance_in(d, false)
+}
+
+/// Metric, or imperial: feet below 0.1 mi in 50 ft steps (`"450", "ft"`),
+/// then `"0.3", "mi"` and from 10 mi whole miles.
+pub fn format_distance_in(d: Option<f64>, imperial: bool) -> (String, &'static str) {
+    let Some(d) = d.filter(|d| d.is_finite() && *d >= 0.0) else {
+        return ("--".into(), "");
+    };
+    if imperial {
+        let mi = d / 1609.344;
+        let ft = d * 3.280_84;
+        return match mi {
+            mi if mi < 0.1 => (format!("{}", ((ft / 50.0).round() * 50.0) as u32), "ft"),
+            mi if mi < 9.95 => (format!("{mi:.1}"), "mi"),
+            mi => (format!("{}", mi.round() as u32), "mi"),
+        };
+    }
+    match d {
+        d if d < 995.0 => (format!("{}", ((d / 10.0).round() * 10.0) as u32), "m"),
+        d if d < 9950.0 => (format!("{:.1}", d / 1000.0), "km"),
+        d => (format!("{}", (d / 1000.0).round() as u32), "km"),
+    }
+}
+
+/// Imperial distances for this input and config.
+pub fn imperial(i: &NavInput, cfg: &NavConfig) -> bool {
+    match cfg.units {
+        Units::Metric => false,
+        Units::Imperial => true,
+        Units::Auto => matches!(i.distance_unit.as_deref(), Some("mi" | "ft" | "yd")),
+    }
+}
+
+/// ETA forms, longest first, from the phone's text (`14:32`, `2:32 PM`).
+/// Unparseable text is shown as it came.
+pub fn eta_forms(text: &str, clock: Clock) -> Vec<String> {
+    let t = text.trim();
+    let upper = t.to_ascii_uppercase();
+    let pm = upper.ends_with("PM");
+    let ampm = pm || upper.ends_with("AM");
+    let digits = upper.trim_end_matches("AM").trim_end_matches("PM").trim();
+    let parsed = digits
+        .split_once(':')
+        .and_then(|(h, m)| Some((h.trim().parse::<u32>().ok()?, m.trim().parse::<u32>().ok()?)));
+    let Some((h, m)) = parsed.filter(|(h, m)| *h < 24 && *m < 60) else {
+        return vec![format!("ETA {t}"), t.to_string()];
+    };
+    let h24 = match (ampm, pm, h) {
+        (true, true, 12) | (false, _, _) => h,
+        (true, true, h) => h + 12,
+        (true, false, 12) => 0,
+        (true, false, h) => h,
+    };
+    let twelve = match clock {
+        Clock::H12 => true,
+        Clock::H24 => false,
+        Clock::Auto => ampm,
+    };
+    if twelve {
+        let h12 = if h24 % 12 == 0 { 12 } else { h24 % 12 };
+        let (big, small) = if h24 < 12 { ("AM", "am") } else { ("PM", "pm") };
+        vec![
+            format!("ETA {h12}:{m:02} {big}"),
+            format!("ETA {h12}:{m:02}{small}"),
+            format!("{h12}:{m:02} {big}"),
+            format!("{h12}:{m:02}{small}"),
+            format!("{h12}:{m:02}"),
+        ]
+    } else {
+        vec![format!("ETA {h24:02}:{m:02}"), format!("{h24:02}:{m:02}")]
     }
 }
 
@@ -129,10 +220,10 @@ pub fn bar_level(d: Option<f64>, range: f64) -> usize {
 
 /// Pocket pages, each as its forms from longest to shortest; the widest one
 /// that fits is shown, a page with none that fits is skipped.
-pub fn pocket_pages(i: &NavInput) -> Vec<Vec<String>> {
+pub fn pocket_pages(i: &NavInput, cfg: &NavConfig) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     if let Some(e) = i.eta.as_ref().filter(|e| !e.is_empty()) {
-        out.push(vec![format!("ETA {e}"), e.clone()]);
+        out.push(eta_forms(e, cfg.clock));
     }
     if let Some(s) = i.time_to_destination_s.filter(|s| s.is_finite() && *s >= 0.0) {
         let min = (s / 60.0).round() as u64;
@@ -147,7 +238,7 @@ pub fn pocket_pages(i: &NavInput) -> Vec<Vec<String>> {
         });
     }
     if let Some(d) = i.destination_distance_m.filter(|d| d.is_finite() && *d >= 0.0) {
-        let (v, u) = format_distance(Some(d));
+        let (v, u) = format_distance_in(Some(d), imperial(i, cfg));
         // Never without its unit (Drew: a bare "9.9" reads as nothing).
         out.push(vec![format!("{v} {u}"), format!("{v}{u}")]);
     }
@@ -288,7 +379,7 @@ impl NavScreen {
     }
 
     fn distance_groups(&mut self, cx: &Ctx) -> Vec<Group> {
-        let (v, u) = format_distance(self.input.distance_m);
+        let (v, u) = format_distance_in(self.input.distance_m, imperial(&self.input, &self.cfg));
         let mut out: Vec<Group> = self.dist.set(cx, "dist", &v).into_iter().collect();
         out.extend(self.unit.set(cx, "unit", u));
         out
@@ -326,7 +417,7 @@ impl NavScreen {
     /// Pocket: the current page's widest form that fits beside the icon.
     fn pocket_groups(&mut self, now: Instant, cx: &Ctx) -> Vec<Group> {
         let m = &cx.metrics;
-        let pages = if self.cfg.pocket { pocket_pages(&self.input) } else { Vec::new() };
+        let pages = if self.cfg.pocket { pocket_pages(&self.input, &self.cfg) } else { Vec::new() };
         let left = pocket_left(&icon_art(self.input.maneuver(), self.cfg.left_hand_traffic));
         let room = u16::from(POCKET_RIGHT - left) * 2;
         let fitting: Vec<Vec<u8>> = pages
@@ -427,6 +518,22 @@ mod tests {
     }
 
     #[test]
+    fn imperial_and_12h() {
+        assert_eq!(format_distance_in(Some(100.0), true), ("350".into(), "ft"));
+        assert_eq!(format_distance_in(Some(500.0), true), ("0.3".into(), "mi"));
+        assert_eq!(format_distance_in(Some(20_000.0), true), ("12".into(), "mi"));
+        let i = NavInput {
+            distance_unit: Some("mi".into()),
+            ..Default::default()
+        };
+        assert!(imperial(&i, &NavConfig::default()));
+        assert_eq!(eta_forms("2:32 PM", Clock::Auto)[3], "2:32pm");
+        assert_eq!(eta_forms("14:32", Clock::H12)[0], "ETA 2:32 PM");
+        assert_eq!(eta_forms("12:05 AM", Clock::H24)[1], "00:05");
+        assert_eq!(eta_forms("soon", Clock::Auto), vec!["ETA soon", "soon"]);
+    }
+
+    #[test]
     fn pocket_forms() {
         let i = NavInput {
             eta: Some("14:32".into()),
@@ -434,7 +541,7 @@ mod tests {
             destination_distance_m: Some(12_400.0),
             ..Default::default()
         };
-        let p = pocket_pages(&i);
+        let p = pocket_pages(&i, &NavConfig::default());
         assert_eq!(p[0], vec!["ETA 14:32", "14:32"]);
         assert_eq!(p[1], vec!["1h 05", "1h05", "1h"]);
         assert_eq!(p[2], vec!["12 km", "12km"]);

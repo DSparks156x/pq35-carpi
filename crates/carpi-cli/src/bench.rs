@@ -319,8 +319,10 @@ pub fn nav_at(t: Duration) -> NavInput {
         distance_m: Some(d.max(0.0)),
         road: Some(road.into()),
         lanes: bench_lanes(m, side),
-        // Trip info for the pocket: 12 km / 15 min out, ETA 14:32.
-        eta: Some("14:32".into()),
+        // Trip info for the pocket: 12 km / 15 min out. Drew's phone is
+        // imperial with a 12 h clock, so the bench says so too.
+        eta: Some("2:32 PM".into()),
+        distance_unit: Some("mi".into()),
         time_to_destination_s: Some((900.0 - s).max(0.0)),
         destination_distance_m: Some((12_400.0 - s * SPEED_MS).max(0.0)),
         ..Default::default()
