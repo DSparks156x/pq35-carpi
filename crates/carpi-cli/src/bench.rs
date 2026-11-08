@@ -42,6 +42,24 @@ pub enum Screens {
     MediaArt,
     /// A scripted call cycle.
     Call,
+    /// Acceleration test against a scripted speed trace.
+    Accel,
+}
+
+/// Speed trace, 40 s cycle, km/h: stopped 0-3 s; a pull to ~170 easing off
+/// (0-100 in ~6.5 s); lift at 21 s (aborts the quarter mile if still
+/// running); brake to 0 by 29 s; stopped until 40 s. 20 Hz with jitter.
+pub fn speed_at(t: Duration) -> f64 {
+    let s = t.as_secs_f64() % 40.0;
+    match s {
+        s if s < 3.0 => 0.0,
+        s if s < 21.0 => 210.0 * (1.0 - (-(s - 3.0) / 11.0).exp()),
+        s if s < 29.0 => {
+            let top = 210.0 * (1.0 - (-18.0f64 / 11.0).exp());
+            (top * (1.0 - (s - 21.0) / 8.0)).max(0.0)
+        }
+        _ => 0.0,
+    }
 }
 
 /// Call script, 45 s cycle: ringing 0-6 s, active 6-30, held 30-34, dialing
@@ -409,6 +427,8 @@ pub struct Bench {
     now: Instant,
     readings_cycle: u64,
     focus: bool,
+    next_speed: Instant,
+    speed_n: u32,
     probe: Option<Probe>,
 }
 
@@ -444,6 +464,8 @@ impl Bench {
             now,
             readings_cycle: 0,
             focus: false,
+            next_speed: now,
+            speed_n: 1,
             probe: (screens == Screens::Probe).then_some(Probe {
                 stage: ProbeStage::Blank,
                 at: now,
@@ -500,6 +522,13 @@ impl Bench {
             if now >= self.next_input {
                 self.inputs(now);
                 self.next_input = now + INPUT_EVERY;
+            }
+            if self.screens == Screens::Accel && now >= self.next_speed {
+                self.dis.set_speed(now, speed_at(now - self.t0));
+                // 50 ms +- 10 ms, like a real bus rate with jitter.
+                self.speed_n = self.speed_n.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                let jitter = (self.speed_n >> 16) % 21;
+                self.next_speed = now + Duration::from_millis(40 + u64::from(jitter));
             }
         }
         if now >= self.next_stats {
@@ -563,6 +592,13 @@ impl Bench {
             self.probe_step(now);
             return;
         }
+        if self.screens == Screens::Accel {
+            if self.page != Some(ScreenId::Accel) {
+                self.page = Some(ScreenId::Accel);
+                self.dis.set_user_page(now, Some(ScreenId::Accel));
+            }
+            return;
+        }
         if self.screens == Screens::Call {
             self.dis.set_call(now, call_at(now - self.t0));
             return;
@@ -579,7 +615,12 @@ impl Bench {
             Screens::Both if (t.as_secs() / FLIP_EVERY.as_secs()).is_multiple_of(2) => {
                 ScreenId::Nav
             }
-            Screens::Both | Screens::Probe | Screens::MediaStack | Screens::MediaArt | Screens::Call => {
+            Screens::Both
+            | Screens::Probe
+            | Screens::MediaStack
+            | Screens::MediaArt
+            | Screens::Call
+            | Screens::Accel => {
                 ScreenId::Readings
             }
         };
@@ -675,6 +716,9 @@ impl Bench {
                 .min(self.next_wake)
                 .min(self.next_kl15)
                 .min(self.next_input);
+            if self.screens == Screens::Accel {
+                d = d.min(self.next_speed);
+            }
         }
         d
     }

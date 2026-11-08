@@ -396,6 +396,7 @@ impl Display {
                 (true, ScreenId::Media) => "media".into(),
                 (true, ScreenId::Call) => "call".into(),
                 (true, ScreenId::Cover) => "cover".into(),
+                (true, ScreenId::Accel) => "accel".into(),
             })),
         );
         set(
@@ -407,6 +408,7 @@ impl Display {
                     ScreenId::Media => "media".into(),
                     ScreenId::Call => "call".into(),
                     ScreenId::Cover => "cover".into(),
+                    ScreenId::Accel => "accel".into(),
                 })
             }),
         );

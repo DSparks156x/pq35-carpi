@@ -367,3 +367,32 @@ fn call_ringing_inverts_then_active_ticks() {
     assert_eq!(recs.iter().filter(|r| r[0] == 0x57).count(), 1);
     assert!(!recs.iter().any(|r| r[0] == 0x52 && r[2] & 3 == 2), "{recs:02X?}");
 }
+
+#[test]
+fn accel_run_flashes_the_finished_leg_for_a_second() {
+    use carpi_dis::screens::accel::{AccelConfig, AccelScreen};
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = AccelScreen::new(AccelConfig::default());
+    s.sample(t0, 0.0);
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &f);
+    golden("accel_ready_screen", &fb.ascii());
+    let mut regs = f.regs;
+    // 25 km/h per s from 0: 0-100 finishes at 4 s.
+    let mut t = 0.05;
+    while t <= 4.1 {
+        s.sample(t0 + Duration::from_secs_f64(t), t * 25.0);
+        t += 0.05;
+    }
+    let now = t0 + Duration::from_secs_f64(4.1);
+    let u = update_only(&mut s, now, &cx, regs);
+    apply(&mut fb, &u);
+    regs = u.regs;
+    golden("accel_done_flash_screen", &fb.ascii());
+    // One second later the row goes back to plain, in one message.
+    let back = s.next_deadline(&cx).unwrap();
+    let u = update_only(&mut s, back.max(now + Duration::from_secs(1)), &cx, regs);
+    assert_eq!(u.messages.len(), 1);
+}

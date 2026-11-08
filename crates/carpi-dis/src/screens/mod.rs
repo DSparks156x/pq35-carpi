@@ -5,6 +5,7 @@
 //! first; the refine lane (native strokes) fills at most [`REFINE_MSGS`] more
 //! messages and is cancelled when its slot changes (DIS.md §2.3).
 
+pub mod accel;
 pub mod call;
 pub mod cover;
 pub mod media;

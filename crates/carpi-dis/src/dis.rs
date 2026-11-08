@@ -6,6 +6,7 @@ use crate::arbiter::{Arbiter, ArbiterConfig, Class, Surface};
 use crate::fb::Fb;
 use crate::helpers::Ctx;
 use crate::pack::{PackError, Packed, Registers};
+use crate::screens::accel::{AccelConfig, AccelScreen};
 use crate::screens::call::{CallInput, CallScreen};
 use crate::screens::cover::CoverScreen;
 use crate::screens::media::{MediaInput, MediaLayout, MediaScreen};
@@ -24,6 +25,8 @@ pub enum ScreenId {
     Call,
     /// Cover art over the whole centre (flash on a new cover, or a page).
     Cover,
+    /// Acceleration test (a user page).
+    Accel,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +44,7 @@ pub struct DisConfig {
     /// (the old page's option; Drew: 4 s from the start was too short).
     /// `None` = off.
     pub cover_flash: Option<Duration>,
+    pub accel: AccelConfig,
 }
 
 /// A flash never holds the centre longer than this, drawn or not.
@@ -63,6 +67,7 @@ impl Default for DisConfig {
             readings_pages: Vec::new(),
             media_layout: MediaLayout::default(),
             cover_flash: Some(Duration::from_secs(4)),
+            accel: AccelConfig::default(),
         }
     }
 }
@@ -75,6 +80,7 @@ pub struct Dis {
     media: MediaScreen,
     call: CallScreen,
     cover: CoverScreen,
+    accel: AccelScreen,
     cover_flash: Option<Duration>,
     flash: Option<Flash>,
     user_page: Option<ScreenId>,
@@ -103,6 +109,7 @@ impl Dis {
             media: MediaScreen::new(cfg.media_layout),
             call: CallScreen::new(),
             cover: CoverScreen::new(),
+            accel: AccelScreen::new(cfg.accel),
             cover_flash: cfg.cover_flash,
             flash: None,
             user_page: None,
@@ -210,6 +217,21 @@ impl Dis {
         self.step(now);
     }
 
+    /// Vehicle speed in km/h, every sample (the accel test times from these;
+    /// feed it at the bus rate, not throttled). Converted to mph if the accel
+    /// test is imperial.
+    pub fn set_speed(&mut self, now: Instant, kmh: f64) {
+        let v = if self.accel.timer.cfg.imperial { kmh / 1.609_344 } else { kmh };
+        self.accel.sample(now, v);
+        if self.shown.is_some_and(|(id, _)| id == ScreenId::Accel) {
+            self.step(now);
+        }
+    }
+
+    pub fn accel(&self) -> &AccelScreen {
+        &self.accel
+    }
+
     /// Call state. Any call outranks media and user pages (not nav maneuvers).
     pub fn set_call(&mut self, now: Instant, c: CallInput) {
         self.arbiter.set(Class::Call, c.state.is_some());
@@ -260,6 +282,7 @@ impl Dis {
                     ScreenId::Media => self.media.next_deadline(&cx),
                     ScreenId::Call => self.call.next_deadline(&cx),
                     ScreenId::Cover => self.cover.next_deadline(&cx),
+                    ScreenId::Accel => self.accel.next_deadline(&cx),
                 }
             }
             _ => None,
@@ -322,6 +345,7 @@ impl Dis {
             ScreenId::Media => &mut self.media,
             ScreenId::Call => &mut self.call,
             ScreenId::Cover => &mut self.cover,
+            ScreenId::Accel => &mut self.accel,
         };
         match build_frame(screen, now, &cx, self.session.registers(), enter) {
             Ok(packed) => {
