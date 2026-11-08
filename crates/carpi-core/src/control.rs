@@ -30,7 +30,7 @@ pub enum Output {
     Key(LiviKey),
     /// A projection-neutral action for LIVI over the bridge.
     Car(CarAction),
-    /// A key for the DIS controller (not built yet; logged).
+    /// A key for the DIS. The car model already acted on it; this is for logs.
     Dis(DisKey),
     /// Shutdown, reboot, save capture.
     Action(SystemAction),
@@ -43,11 +43,11 @@ const DERIVED: Duration = Duration::from_secs(1);
 pub(crate) struct Controls {
     pub gates: Vec<Gate>,
     rnse: carpi_rnse::Client,
-    light: LightModel,
+    pub light: LightModel,
     power: ShutdownPolicy,
     decoder: Decoder,
     gestures: Recogniser,
-    routes: RouteConfig,
+    pub routes: RouteConfig,
     pub focus: Focus,
 }
 

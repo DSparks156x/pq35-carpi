@@ -172,6 +172,15 @@ fn print(resp: Response) -> anyhow::Result<()> {
         Response::Command { id, command } => println!("command {id}: {command:?}"),
         Response::JobStarted { job } => println!("job {job} started"),
         Response::Job { event, .. } => println!("{}", serde_json::to_string(&event)?),
+        Response::Settings {
+            settings,
+            restart_needed,
+        } => {
+            println!("{}", serde_json::to_string_pretty(&settings)?);
+            if !restart_needed.is_empty() {
+                println!("restart needed for: {}", restart_needed.join(", "));
+            }
+        }
     }
     Ok(())
 }

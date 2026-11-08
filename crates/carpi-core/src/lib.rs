@@ -5,16 +5,22 @@
 
 pub mod bridge;
 mod control;
+pub mod diagnostics;
+pub mod display;
 
+pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
 pub use control::Output;
+pub use display::{DisSetup, Reading};
 
 use carpi_can::RxFrame;
 use carpi_can::recorder::Recorder;
+use carpi_gate::{BusView, Gate};
+use carpi_input::RouteConfig;
 use carpi_nm::{BusMonitor, Transition};
 use carpi_proto as proto;
 use carpi_state::{Store, Value};
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Bus roles. A role names what a bus is for; config maps roles to
 /// interfaces, and one interface can carry several roles.
@@ -43,6 +49,15 @@ struct Iface {
     frames: u64,
 }
 
+/// What the daemon config sets in the car model. All of it can change live
+/// through [`Car::configure`].
+#[derive(Clone, Debug, Default)]
+pub struct CoreConfig {
+    pub dis: DisSetup,
+    pub light: carpi_light::Config,
+    pub routes: RouteConfig,
+}
+
 /// A bus-state change, tagged with the interface it happened on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BusEvent {
@@ -59,6 +74,9 @@ pub struct Car {
     bridge_conn: Option<u64>,
     controls: control::Controls,
     outputs: Vec<Output>,
+    display: display::Display,
+    /// On the interface with the `diag` role, if any.
+    diag: Option<diagnostics::Diagnostics>,
 }
 
 impl Car {
@@ -74,7 +92,11 @@ impl Car {
                 frames: 0,
                 spec,
             })
-            .collect();
+            .collect::<Vec<Iface>>();
+        let diag = ifaces
+            .iter()
+            .position(|i| i.spec.has_role(ROLE_DIAG))
+            .map(diagnostics::Diagnostics::new);
         Car {
             ifaces,
             store: Store::new(),
@@ -83,7 +105,153 @@ impl Car {
             bridge_conn: None,
             controls: control::Controls::new(&names),
             outputs: Vec::new(),
+            display: display::Display::new(DisSetup::default()),
+            diag,
         }
+    }
+
+    /// Apply new settings. Nothing needs a restart.
+    pub fn configure(&mut self, cfg: CoreConfig, now: Instant) {
+        self.display.configure(cfg.dis, now);
+        self.controls.light.set_config(cfg.light);
+        self.controls.routes = cfg.routes;
+    }
+
+    /// The gate of interface `idx`, for its counters.
+    pub fn gate(&self, idx: usize) -> &Gate {
+        &self.controls.gates[idx]
+    }
+
+    /// The DDP session, for state.
+    pub fn dis_session(&self) -> &carpi_dis::Session {
+        self.display.session()
+    }
+
+    fn ican_idx(&self) -> Option<usize> {
+        self.ifaces.iter().position(|i| i.monitor.is_some())
+    }
+
+    /// What the gates see now. A separate diag bus has no ring the Pi can
+    /// see, so every gate uses the ICAN view.
+    fn view(&self, now: Instant) -> Option<BusView> {
+        self.ican().map(|m| BusView::new(m, &self.store, now))
+    }
+
+    /// DIS keys the router just produced drive the display.
+    fn take_dis_keys(&mut self, from: usize, now: Instant) {
+        let keys: Vec<carpi_input::DisKey> = self.outputs[from..]
+            .iter()
+            .filter_map(|o| match o {
+                Output::Dis(k) => Some(*k),
+                _ => None,
+            })
+            .collect();
+        for k in keys {
+            self.display.key(now, k);
+        }
+    }
+
+    /// Display and diag timers and output. [`Car::tick`] calls this; call it
+    /// at [`Car::next_deadline`] too.
+    pub fn service(&mut self, now: Instant) {
+        let view = self.view(now);
+        let ican = self.ican_idx();
+        let gate = ican.map(|i| (i, &mut self.controls.gates[i]));
+        self.display
+            .service(now, &mut self.store, view, gate, &mut self.outputs);
+        if let Some(d) = &mut self.diag {
+            let gate = &mut self.controls.gates[d.iface];
+            d.service(now, &mut self.store, view, gate, &mut self.outputs);
+        }
+    }
+
+    /// Earliest time the display or diag has something to do.
+    pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
+        [
+            self.display.next_deadline(now),
+            self.diag.as_ref().and_then(|d| d.next_deadline()),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    fn pump_diag(&mut self, now: Instant) {
+        let view = self.view(now);
+        if let Some(d) = &mut self.diag {
+            let gate = &mut self.controls.gates[d.iface];
+            d.pump(now, &mut self.store, view, gate, &mut self.outputs);
+        }
+    }
+
+    /// Diag subscriptions for every catalog value under `prefixes`, leased
+    /// for 3x `period`. Empty when there's no diag bus or nothing matches.
+    pub fn diag_subscribe(
+        &mut self,
+        prefixes: &[String],
+        period: Duration,
+        now: Instant,
+    ) -> Vec<DiagSubId> {
+        let Some(d) = &mut self.diag else {
+            return Vec::new();
+        };
+        let ids = d.subscribe(now, prefixes, period);
+        self.pump_diag(now);
+        ids
+    }
+
+    /// Extends the leases to 3x `period` from now.
+    pub fn diag_renew(&mut self, ids: &[DiagSubId], period: Duration, now: Instant) {
+        if let Some(d) = &mut self.diag {
+            d.renew(ids, now + period * diagnostics::LEASE_PERIODS);
+        }
+    }
+
+    pub fn diag_unsubscribe(&mut self, ids: &[DiagSubId], now: Instant) {
+        if let Some(d) = &mut self.diag {
+            d.unsubscribe(now, ids);
+        }
+        self.pump_diag(now);
+    }
+
+    /// Starts a diag job. `Status` isn't a job: see [`Car::diag_status`].
+    pub fn diag_start(
+        &mut self,
+        action: proto::DiagAction,
+        now: Instant,
+    ) -> Result<DiagJobId, String> {
+        use carpi_diag::Job;
+        let Some(d) = &mut self.diag else {
+            return Err("no interface has the diag role".into());
+        };
+        let (job, confirm) = match action {
+            proto::DiagAction::InstallList => (Job::InstallList, false),
+            proto::DiagAction::ReadDtcs { module } => (Job::ReadDtcs { module }, false),
+            proto::DiagAction::ClearDtcs { module, confirm } => {
+                (Job::ClearDtcs { module }, confirm)
+            }
+            proto::DiagAction::Status => return Err("status isn't a job".into()),
+        };
+        let r = d.start(now, job, confirm);
+        self.pump_diag(now);
+        r
+    }
+
+    pub fn diag_status(&self, now: Instant) -> Option<proto::DiagStatus> {
+        self.diag.as_ref().map(|d| d.status(now))
+    }
+
+    /// Diag job events since the last call, as API events.
+    pub fn drain_diag_jobs(&mut self) -> Vec<(DiagJobId, Vec<proto::JobEvent>)> {
+        self.diag
+            .as_mut()
+            .map(|d| d.drain_jobs())
+            .unwrap_or_default()
+    }
+
+    /// The diag catalog, if there's a diag bus.
+    pub fn diag_catalog(&self) -> Option<&carpi_diag::Catalog> {
+        self.diag.as_ref().map(|d| d.diag().catalog())
     }
 
     pub fn ifaces(&self) -> impl Iterator<Item = &IfaceSpec> {
@@ -119,7 +287,9 @@ impl Car {
                 store.set(name, value, rx.at, timeout)
             });
         }
-        if iface.spec.has_role(ROLE_ICAN) && !rx.frame.extended {
+        let is_ican = iface.spec.has_role(ROLE_ICAN);
+        let from = self.outputs.len();
+        if is_ican && !rx.frame.extended {
             self.controls.on_ican_frame(
                 rx.at,
                 rx.frame.id,
@@ -128,6 +298,21 @@ impl Car {
                 self.bridge_conn.is_some(),
                 &mut self.outputs,
             );
+            self.take_dis_keys(from, rx.at);
+        }
+        let view = self.view(rx.at);
+        if is_ican {
+            self.display.on_frame(rx.at, &rx.frame);
+            let gate = &mut self.controls.gates[idx];
+            self.display
+                .flush(rx.at, view, idx, gate, &mut self.outputs);
+        }
+        if let Some(d) = &mut self.diag
+            && d.iface == idx
+        {
+            d.on_frame(rx.at, &rx.frame);
+            let gate = &mut self.controls.gates[idx];
+            d.pump(rx.at, &mut self.store, view, gate, &mut self.outputs);
         }
         event
     }
@@ -153,6 +338,7 @@ impl Car {
             .iter()
             .enumerate()
             .find_map(|(i, f)| f.monitor.as_ref().map(|m| (i, m)));
+        let from = self.outputs.len();
         self.controls.tick(
             now,
             ican,
@@ -160,6 +346,8 @@ impl Car {
             self.bridge_conn.is_some(),
             &mut self.outputs,
         );
+        self.take_dis_keys(from, now);
+        self.service(now);
         out
     }
 
@@ -208,7 +396,9 @@ impl Car {
             | Request::Unsubscribe { .. }
             | Request::Commands
             | Request::CommandDone { .. }
-            | Request::Update { .. } => Response::Error {
+            | Request::Update { .. }
+            | Request::Diag { .. }
+            | Request::Settings { .. } => Response::Error {
                 message: "subscriptions, commands and jobs are handled per connection".into(),
             },
             Request::Hello { version, .. } => {

@@ -21,3 +21,6 @@ carpi-rnse.workspace = true
 carpi-light.workspace = true
 carpi-input.workspace = true
 tracing.workspace = true
+carpi-dis.workspace = true
+carpi-diag.workspace = true
+carpi-kwp.workspace = true

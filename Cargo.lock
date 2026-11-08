@@ -215,8 +215,11 @@ name = "carpi-core"
 version = "0.1.0"
 dependencies = [
  "carpi-can",
+ "carpi-diag",
+ "carpi-dis",
  "carpi-gate",
  "carpi-input",
+ "carpi-kwp",
  "carpi-light",
  "carpi-nm",
  "carpi-power",

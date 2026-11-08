@@ -8,7 +8,7 @@
 //! unsolicited and may come between a request and its reply, so clients
 //! dispatch on the type rather than pairing replies blindly:
 //! - `Update` for a `Subscribe`;
-//! - `Job` for an update job the connection started;
+//! - `Job` for an update or diag job the connection started;
 //! - `Command` to the connection that sent `Commands` (the LIVI fork),
 //!   answered with `CommandDone`. This is the daemon-to-LIVI direction of
 //!   the bridge.
@@ -77,6 +77,145 @@ pub enum Request {
         #[serde(default)]
         and_apply: bool,
     },
+    /// Starts a diagnostics job. Replies [`Response::JobStarted`], then
+    /// [`Response::Job`] events until [`JobEvent::Finished`], like `Update`.
+    /// Job numbers are shared with update jobs.
+    Diag {
+        action: DiagAction,
+    },
+    /// Daemon settings, typed. `Set` validates, saves `carpid.toml` (old one
+    /// backed up) and applies what it can live. Replies [`Response::Settings`].
+    Settings {
+        action: SettingsAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DiagAction {
+    /// Gateway installation list (`1A 9F`).
+    InstallList,
+    /// Fault codes of one module (TP2 logical ID, e.g. 1 = engine).
+    ReadDtcs { module: u8 },
+    /// Clear fault codes, then read what's left. Takes the exclusive diag
+    /// token, so it only runs with `confirm: true`.
+    ClearDtcs {
+        module: u8,
+        #[serde(default)]
+        confirm: bool,
+    },
+    /// Mode, channels and subscriptions, as one [`JobEvent::DiagStatus`].
+    Status,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SettingsAction {
+    Get,
+    Set { patch: SettingsPatch },
+}
+
+/// Everything settable through [`Request::Settings`]. The portal PIN is
+/// never returned, only whether one is set.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Settings {
+    /// `[tx] enabled`: frames the gate passes are sent, not just logged.
+    pub tx_enabled: bool,
+    /// `[power] shutdown`: act on shutdown requests.
+    pub power_shutdown: bool,
+    pub light: LightSettings,
+    pub dis: DisSettings,
+    /// The key binding table, every row. See [`Binding`].
+    pub bindings: Vec<Binding>,
+    pub portal_pin_set: bool,
+}
+
+/// Light model thresholds (`[light]`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LightSettings {
+    /// Lights on this long before night.
+    pub night_after_s: f64,
+    /// Lights off this long before day.
+    pub day_after_s: f64,
+    /// RNS-E panel level by day: 0 follows the car's dimmer, 1-100 fixed.
+    pub day_panel: u8,
+    pub night_panel: u8,
+}
+
+/// Cluster display (`[dis]`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DisSettings {
+    pub enabled: bool,
+    /// The readings page, up to 8 cells: left column top to bottom, then right.
+    pub readings: Vec<ReadingSetting>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReadingSetting {
+    /// Store name, e.g. `engine.coolant_c`.
+    pub key: String,
+    /// About 3 characters fit.
+    pub label: String,
+    #[serde(default)]
+    pub decimals: u8,
+    /// Shown value = value x scale (e.g. 0.001 for km -> 1000 km).
+    #[serde(default = "one")]
+    pub scale: f64,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+/// One key binding: in `table`, `key` + `gesture` does `action`.
+///
+/// Tables, in the order the router checks them: `dis_toggle` (one row,
+/// action `toggle`), `system`, `call_ringing`, `call_active`, `dis`, `car`,
+/// `livi`. Names are snake_case (`wheel_up`, `knob_cw`, `long`,
+/// `play_pause`, `open_page_data`, `code:30` for a raw Linux key code).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Binding {
+    pub table: String,
+    pub key: String,
+    pub gesture: String,
+    pub action: String,
+}
+
+/// Fields left out stay as they are.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SettingsPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_shutdown: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<LightSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dis_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dis_readings: Option<Vec<ReadingSetting>>,
+    /// Replaces the whole table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bindings: Option<Vec<Binding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_pin: Option<PinChange>,
+}
+
+/// The PIN never shows in `Debug` output, so it can't reach a log.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PinChange {
+    Set { pin: String },
+    Clear,
+}
+
+impl std::fmt::Debug for PinChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PinChange::Set { .. } => f.write_str("Set { pin: <hidden> }"),
+            PinChange::Clear => f.write_str("Clear"),
+        }
+    }
 }
 
 /// What an update job does. `check` and `fetch` need the internet: the AP
@@ -142,8 +281,63 @@ pub enum JobEvent {
     Releases { items: Vec<ReleaseInfo> },
     /// What's on disk.
     Installed(Installed),
+    /// Diag: the gateway's installation list.
+    InstallList { modules: Vec<InstalledModule> },
+    /// Diag: fault codes read from `module`. After a clear, what's left.
+    Dtcs { module: u8, dtcs: Vec<Dtc> },
+    /// Diag: mode, channels and subscriptions.
+    DiagStatus(DiagStatus),
     /// Last event of a job.
     Finished { ok: bool, message: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledModule {
+    /// Workshop (VCDS) address.
+    pub vcds: u8,
+    /// TP2 logical ID: what `ReadDtcs { module }` takes.
+    pub tp2: u8,
+    pub coded: bool,
+    pub status: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dtc {
+    /// VAG code, shown as 5 decimal digits.
+    pub code: u16,
+    /// Raw status byte; meaning unknown.
+    pub status: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagStatus {
+    /// `normal`, `exclusive`, `vcds_pause` or `bus_lease`.
+    pub mode: String,
+    /// Paused because another tester (VCDS) was seen.
+    pub vcds_auto_pause: bool,
+    pub channels: Vec<DiagChannel>,
+    pub subscriptions: Vec<DiagSubscription>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagChannel {
+    pub module: u8,
+    /// `closed`, `opening`, `open`, `grace`, `failed`.
+    pub state: String,
+    pub failures: u32,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagSubscription {
+    pub value: String,
+    /// `ican`, `diag:<module>:<group>` or `unavailable`.
+    pub source: String,
+    pub requested_ms: u64,
+    pub granted_ms: Option<u64>,
+    pub achieved_hz: Option<f64>,
+    /// Why it's below what was asked, if it is.
+    pub degraded: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -208,6 +402,12 @@ pub enum Response {
     Job {
         job: u32,
         event: JobEvent,
+    },
+    /// Reply to `Settings`, after a `Set` too. `restart_needed` names
+    /// settings that were saved but only take effect after a restart.
+    Settings {
+        settings: Settings,
+        restart_needed: Vec<String>,
     },
 }
 
@@ -426,6 +626,49 @@ mod tests {
         let i = JobEvent::Installed(Installed::default());
         let back: JobEvent = serde_json::from_str(&serde_json::to_string(&i).unwrap()).unwrap();
         assert_eq!(back, i);
+    }
+
+    #[test]
+    fn diag_and_settings_wire_shape() {
+        let r: Request =
+            decode(br#"{"type":"diag","action":{"kind":"clear_dtcs","module":1,"confirm":true}}"#)
+                .unwrap();
+        assert_eq!(
+            r,
+            Request::Diag {
+                action: DiagAction::ClearDtcs {
+                    module: 1,
+                    confirm: true
+                }
+            }
+        );
+        let r: Request =
+            decode(br#"{"type":"diag","action":{"kind":"clear_dtcs","module":1}}"#).unwrap();
+        assert!(matches!(
+            r,
+            Request::Diag {
+                action: DiagAction::ClearDtcs { confirm: false, .. }
+            }
+        ));
+        let r: Request = decode(
+            br#"{"type":"settings","action":{"kind":"set","patch":{"tx_enabled":true,"portal_pin":{"kind":"set","pin":"4711"}}}}"#,
+        )
+        .unwrap();
+        let Request::Settings {
+            action: SettingsAction::Set { patch },
+        } = &r
+        else {
+            panic!("{r:?}")
+        };
+        assert_eq!(patch.tx_enabled, Some(true));
+        assert!(!format!("{r:?}").contains("4711"));
+        let g: Request = decode(br#"{"type":"settings","action":{"kind":"get"}}"#).unwrap();
+        assert_eq!(
+            g,
+            Request::Settings {
+                action: SettingsAction::Get
+            }
+        );
     }
 
     #[test]
