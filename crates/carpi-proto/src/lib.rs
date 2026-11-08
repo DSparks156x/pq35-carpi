@@ -316,6 +316,41 @@ pub enum Command {
     /// resumes by itself when carpid's connection drops or after
     /// [`AP_SUSPEND_MAX_S`].
     Ap { ap: ApAction },
+    /// A projection-neutral input action from the car's keys. The fork maps
+    /// it to Android Auto keycodes or CarPlay commands for the active session
+    /// (PLAN 2.4). Sent only while the projection has focus.
+    Input { action: InputAction },
+}
+
+/// Actions the fork maps per session (AA keycode / CarPlay command).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum InputAction {
+    Up,
+    Down,
+    Left,
+    Right,
+    /// Rotary step; positive is clockwise.
+    Rotate { steps: i32 },
+    /// Select press/release.
+    Select { down: bool },
+    Back,
+    Home,
+    PlayPause,
+    Next,
+    Prev,
+    CallAccept,
+    CallEnd,
+    /// Voice assistant hold (PTT): down starts, up releases.
+    Voice { down: bool },
+    /// AA Navigation keycode / CarPlay `maps:`.
+    OpenNav,
+    /// AA Tel / CarPlay `mobilephone:`.
+    OpenPhone,
+    /// AA Media / CarPlay `nowplaying:`.
+    OpenMedia,
+    /// One of our pages in the fork (`data`, `diagnostics`, `car`, `light`).
+    OpenPage { page: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
