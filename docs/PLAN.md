@@ -191,6 +191,14 @@ Output `{ambient, lights_on, night (with hysteresis), panel_level}`. Three consu
 
 **Provisional.** A dedicated design pass is under way and will replace this section. The cluster is not a framebuffer: text, graphics-font text and lines are quick, bitmaps are slow, and full-res bitmaps are very slow. Content has to be built from the cheap primitives, with bitmaps used sparingly. There is no generic render toolkit. Each screen is designed by hand around the cluster's text and bitmap commands, including the order things are drawn in and what gets resent when a value changes. Shared code covers only the transport, the session, command encoding, message packing and text metrics. The "scene diff renderer" below is out.
 
+Pattern, Drew's nav screen:
+1. Draw the turn icon fast: a low-res bitmap, or a stock-nav clone built from graphics-font glyphs.
+2. Draw the text: distance, street.
+3. Finish a high-res pass on a bitmap icon in the background. A glyph icon needs none.
+4. Keep the text updating throughout: distance and street scroll.
+
+So screens refine progressively. Something usable goes up in the first message or two. Slow detail work is interleaved behind the fast text updates, and a refinement in flight is cancelled when the content changes, e.g. a new maneuver.
+
 The old DIS was three processes and a pile of if-chains, touched by 237 commits. The rebuild has five layers, each testable alone.
 
 1. **Transport.** `carpi-tp2` data link on the fixed 0x6C0/0x6C1 channel: data frames 2n/0n/1n, ACK Bn, receiver-not-ready 9n (wait, resend), keepalive A3 ~2 s, close A8.
