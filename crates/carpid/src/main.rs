@@ -34,7 +34,15 @@ struct Args {
 pub enum Msg {
     Frame(usize, RxFrame),
     PortEnded(usize, Option<std::io::Error>),
-    Api(carpi_proto::Request, oneshot::Sender<carpi_proto::Response>),
+    /// A request from API connection `conn`.
+    Api(
+        u64,
+        carpi_proto::Request,
+        oneshot::Sender<carpi_proto::Response>,
+    ),
+    /// Current readings under these prefixes, for a subscription.
+    Readings(Vec<String>, oneshot::Sender<Vec<carpi_proto::Reading>>),
+    ConnClosed(u64),
 }
 
 #[tokio::main]
@@ -103,9 +111,13 @@ async fn main() -> anyhow::Result<()> {
                             None => info!("{name}: replay finished"),
                         }
                     }
-                    Msg::Api(req, reply) => {
-                        let _ = reply.send(car.handle(req, Instant::now()));
+                    Msg::Api(conn, req, reply) => {
+                        let _ = reply.send(car.handle(conn, req, Instant::now()));
                     }
+                    Msg::Readings(prefixes, reply) => {
+                        let _ = reply.send(car.readings(&prefixes, Instant::now()));
+                    }
+                    Msg::ConnClosed(conn) => car.conn_closed(conn, Instant::now()),
                 }
             }
             _ = tick.tick() => {

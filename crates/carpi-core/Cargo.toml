@@ -14,3 +14,4 @@ carpi-state.workspace = true
 carpi-signals.workspace = true
 carpi-nm.workspace = true
 carpi-proto.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "carpi-power"
+description = "Shutdown policy and power backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-nm.workspace = true
+tracing.workspace = true

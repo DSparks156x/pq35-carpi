@@ -31,16 +31,144 @@ pub enum Request {
     SaveCapture {
         path: Option<String>,
     },
+    /// Stream values whose names start with any of `prefixes`. The daemon
+    /// sends `Update { sub }` at most every `period_ms`, and only when
+    /// something changed (a value, or valid <-> invalid). The first update
+    /// is a full snapshot. Replies `Ok`.
+    Subscribe {
+        sub: u32,
+        prefixes: Vec<String>,
+        period_ms: u32,
+    },
+    Unsubscribe {
+        sub: u32,
+    },
+    /// State pushed by the LIVI fork. Lands in the value store under
+    /// `projection.*`, `nav.*`, `media.*`, `call.*`, `phone.*`, `ui.*`, and
+    /// is cleared when the pushing connection closes. Replies `Ok`.
+    Bridge {
+        update: Box<BridgeUpdate>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
-    Hello { version: u32, daemon: String },
-    Values { items: Vec<Reading> },
-    Bus { buses: Vec<BusInfo> },
-    CaptureSaved { path: String, frames: usize },
-    Error { message: String },
+    Hello {
+        version: u32,
+        daemon: String,
+    },
+    Ok,
+    Values {
+        items: Vec<Reading>,
+    },
+    /// Unsolicited, for a `Subscribe`. Only changed readings after the first.
+    Update {
+        sub: u32,
+        items: Vec<Reading>,
+    },
+    Bus {
+        buses: Vec<BusInfo>,
+    },
+    CaptureSaved {
+        path: String,
+        frames: usize,
+    },
+    Error {
+        message: String,
+    },
+}
+
+/// What LIVI knows that the car needs: projection, nav, media, calls.
+/// Each variant replaces that whole section; `None` clears it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BridgeUpdate {
+    Projection {
+        projection: Option<Projection>,
+    },
+    Nav {
+        nav: Option<NavState>,
+    },
+    /// Turn icon as sent by the phone (AA asks for 256x256 PNG), base64.
+    NavIcon {
+        png_base64: Option<String>,
+    },
+    Media {
+        media: Option<MediaState>,
+    },
+    Call {
+        call: Option<CallState>,
+    },
+    Phone {
+        phone: Option<PhoneState>,
+    },
+    /// What has keyboard focus in LIVI: `"projection"`, `"livi"` (its own
+    /// menus) or `"page:<name>"` for one of our pages.
+    Focus {
+        focus: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Projection {
+    /// `"android_auto"` or `"carplay"`.
+    pub kind: String,
+    pub wireless: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct NavState {
+    /// Maneuver type in AA's vocabulary, lower snake case
+    /// (`turn`, `slight_turn`, `roundabout_enter_and_exit`, `destination`, ...).
+    pub maneuver: Option<String>,
+    /// `"left"`, `"right"`, or none.
+    pub side: Option<String>,
+    /// Roundabout exit number or turn angle where AA gives one.
+    pub roundabout_exit: Option<u32>,
+    pub roundabout_angle: Option<i32>,
+    pub distance_m: Option<f64>,
+    /// Distance as the phone formats it for display ("350 m", "0.2 mi").
+    pub distance_text: Option<String>,
+    pub time_to_maneuver_s: Option<f64>,
+    pub road: Option<String>,
+    pub cue: Option<String>,
+    pub destination: Option<String>,
+    pub eta: Option<String>,
+    /// Left to right. Empty when the phone sends no lanes.
+    pub lanes: Vec<Lane>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct Lane {
+    /// AA lane shapes (`straight`, `slight_left`, `uturn_right`, ...).
+    pub shapes: Vec<String>,
+    pub highlighted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct MediaState {
+    pub source: Option<String>,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub playing: bool,
+    pub position_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct CallState {
+    /// `"ringing"`, `"dialing"`, `"active"`, `"held"`.
+    pub state: String,
+    pub number: Option<String>,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct PhoneState {
+    pub battery_pct: Option<u8>,
+    pub signal_pct: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

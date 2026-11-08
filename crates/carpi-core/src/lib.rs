@@ -3,6 +3,8 @@
 //! Sans-IO apart from writing capture files. The daemon owns the sockets and
 //! the clock; tests and `carpi replay` drive this directly.
 
+pub mod bridge;
+
 use carpi_can::RxFrame;
 use carpi_can::recorder::Recorder;
 use carpi_nm::{BusMonitor, Transition};
@@ -50,6 +52,8 @@ pub struct Car {
     store: Store,
     recorder: Recorder,
     capture_dir: PathBuf,
+    /// API connection that last pushed bridge state (LIVI).
+    bridge_conn: Option<u64>,
 }
 
 impl Car {
@@ -70,6 +74,7 @@ impl Car {
             store: Store::new(),
             recorder,
             capture_dir,
+            bridge_conn: None,
         }
     }
 
@@ -128,9 +133,45 @@ impl Car {
         self.ifaces.iter().find_map(|i| i.monitor.as_ref())
     }
 
-    pub fn handle(&mut self, req: proto::Request, now: Instant) -> proto::Response {
+    /// Readings for every value under any of `prefixes`.
+    pub fn readings(&self, prefixes: &[String], now: Instant) -> Vec<proto::Reading> {
+        let mut out: Vec<proto::Reading> = Vec::new();
+        for p in prefixes {
+            for r in self.store.snapshot(p, now) {
+                if out.iter().any(|o| o.name == r.name) {
+                    continue;
+                }
+                out.push(proto::Reading {
+                    name: r.name,
+                    value: r.value.map(to_proto),
+                    age_ms: r.age.as_millis() as u64,
+                });
+            }
+        }
+        out
+    }
+
+    /// An API connection closed. If it was LIVI's, its bridge state is gone.
+    pub fn conn_closed(&mut self, conn: u64, now: Instant) {
+        if self.bridge_conn == Some(conn) {
+            self.bridge_conn = None;
+            bridge::clear(&mut self.store, now);
+        }
+    }
+
+    /// Answers one request from API connection `conn`. Subscriptions are
+    /// run by the connection itself, using [`Car::readings`].
+    pub fn handle(&mut self, conn: u64, req: proto::Request, now: Instant) -> proto::Response {
         use proto::{Request, Response};
         match req {
+            Request::Bridge { update } => {
+                self.bridge_conn = Some(conn);
+                bridge::apply(&mut self.store, &update, now);
+                Response::Ok
+            }
+            Request::Subscribe { .. } | Request::Unsubscribe { .. } => Response::Error {
+                message: "subscriptions are handled per connection".into(),
+            },
             Request::Hello { version, .. } => {
                 if version == proto::PROTOCOL_VERSION {
                     Response::Hello {
@@ -147,16 +188,7 @@ impl Car {
                 }
             }
             Request::Values { prefix } => Response::Values {
-                items: self
-                    .store
-                    .snapshot(&prefix, now)
-                    .into_iter()
-                    .map(|r| proto::Reading {
-                        name: r.name,
-                        value: r.value.map(to_proto),
-                        age_ms: r.age.as_millis() as u64,
-                    })
-                    .collect(),
+                items: self.readings(&[prefix], now),
             },
             Request::Bus => Response::Bus {
                 buses: self.ifaces.iter().map(|i| bus_info(i, now)).collect(),

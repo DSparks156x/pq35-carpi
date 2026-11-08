@@ -1,0 +1,16 @@
+[package]
+name = "carpi-gate"
+description = "TX gate: per-class send policy and rate caps (sans-IO)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-can.workspace = true
+carpi-nm.workspace = true
+carpi-signals.workspace = true
+carpi-state.workspace = true
+tracing.workspace = true

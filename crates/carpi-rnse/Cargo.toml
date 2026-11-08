@@ -1,0 +1,17 @@
+[package]
+name = "carpi-rnse"
+description = "Desired-state client for the RNS-E firmware's 0x7B0 commands (sans-IO)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-can.workspace = true
+carpi-gate = { path = "../carpi-gate" }
+carpi-signals.workspace = true
+
+[dev-dependencies]
+carpi-nm.workspace = true

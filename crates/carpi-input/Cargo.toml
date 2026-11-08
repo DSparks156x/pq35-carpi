@@ -1,0 +1,15 @@
+[package]
+name = "carpi-input"
+description = "Key decoders (0x5C3 wheel, 0x461 faceplate), gesture recogniser, router, LIVI uinput sink"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-signals.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.13"

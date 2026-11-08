@@ -41,6 +41,13 @@ enum Cmd {
     Bus,
     /// Save carpid's rolling capture (candump log format).
     Capture { path: Option<String> },
+    /// Stream changing values from carpid until Ctrl-C.
+    Watch {
+        #[arg(default_value = "")]
+        prefix: Vec<String>,
+        #[arg(long, default_value_t = 200)]
+        period_ms: u32,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -54,6 +61,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Values { prefix } => print(call(args.socket, Request::Values { prefix })?),
         Cmd::Bus => print(call(args.socket, Request::Bus)?),
         Cmd::Capture { path } => print(call(args.socket, Request::SaveCapture { path })?),
+        Cmd::Watch { prefix, period_ms } => watch(args.socket, prefix, period_ms),
     }
 }
 
@@ -82,8 +90,9 @@ fn replay(file: PathBuf, prefix: &str, gap_ms: f64) -> anyhow::Result<()> {
         end = rx.at;
     }
     println!("{} frames, {:.1}s", port.len(), (end - base).as_secs_f64());
-    print(car.handle(Request::Bus, end))?;
+    print(car.handle(0, Request::Bus, end))?;
     print(car.handle(
+        0,
         Request::Values {
             prefix: prefix.to_string(),
         },
@@ -93,7 +102,7 @@ fn replay(file: PathBuf, prefix: &str, gap_ms: f64) -> anyhow::Result<()> {
 
 fn print(resp: Response) -> anyhow::Result<()> {
     match resp {
-        Response::Values { items } => {
+        Response::Values { items } | Response::Update { items, .. } => {
             let w = items.iter().map(|r| r.name.len()).max().unwrap_or(0);
             for r in items {
                 let v = match r.value {
@@ -130,44 +139,77 @@ fn print(resp: Response) -> anyhow::Result<()> {
         }
         Response::CaptureSaved { path, frames } => println!("{frames} frames -> {path}"),
         Response::Hello { daemon, .. } => println!("{daemon}"),
+        Response::Ok => {}
         Response::Error { message } => bail!(message),
     }
     Ok(())
 }
 
 #[cfg(unix)]
-fn call(socket: Option<PathBuf>, req: Request) -> anyhow::Result<Response> {
-    use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
+struct Client(std::os::unix::net::UnixStream);
 
-    let path = socket.unwrap_or_else(|| {
-        std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir)
-            .join("carpid.sock")
-    });
-    let mut s =
-        UnixStream::connect(&path).with_context(|| format!("connecting to {}", path.display()))?;
-    let mut send = |req: &Request| -> anyhow::Result<Response> {
-        s.write_all(&carpi_proto::encode(req))?;
-        let mut prefix = [0u8; 4];
-        s.read_exact(&mut prefix)?;
-        let mut body = vec![0u8; carpi_proto::body_len(prefix).map_err(anyhow::Error::msg)?];
-        s.read_exact(&mut body)?;
-        Ok(carpi_proto::decode(&body)?)
-    };
-    match send(&Request::Hello {
-        version: carpi_proto::PROTOCOL_VERSION,
-        client: "carpi".into(),
-    })? {
-        Response::Hello { .. } => {}
-        Response::Error { message } => bail!(message),
-        other => bail!("unexpected reply to hello: {other:?}"),
+#[cfg(unix)]
+impl Client {
+    fn connect(socket: Option<PathBuf>) -> anyhow::Result<Self> {
+        let path = socket.unwrap_or_else(|| {
+            std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+                .join("carpid.sock")
+        });
+        let s = std::os::unix::net::UnixStream::connect(&path)
+            .with_context(|| format!("connecting to {}", path.display()))?;
+        let mut c = Client(s);
+        match c.request(&Request::Hello {
+            version: carpi_proto::PROTOCOL_VERSION,
+            client: "carpi".into(),
+        })? {
+            Response::Hello { .. } => Ok(c),
+            Response::Error { message } => bail!(message),
+            other => bail!("unexpected reply to hello: {other:?}"),
+        }
     }
-    send(&req)
+
+    fn request(&mut self, req: &Request) -> anyhow::Result<Response> {
+        use std::io::Write;
+        self.0.write_all(&carpi_proto::encode(req))?;
+        self.recv()
+    }
+
+    fn recv(&mut self) -> anyhow::Result<Response> {
+        use std::io::Read;
+        let mut prefix = [0u8; 4];
+        self.0.read_exact(&mut prefix)?;
+        let mut body = vec![0u8; carpi_proto::body_len(prefix).map_err(anyhow::Error::msg)?];
+        self.0.read_exact(&mut body)?;
+        Ok(carpi_proto::decode(&body)?)
+    }
+}
+
+#[cfg(unix)]
+fn call(socket: Option<PathBuf>, req: Request) -> anyhow::Result<Response> {
+    Client::connect(socket)?.request(&req)
+}
+
+#[cfg(unix)]
+fn watch(socket: Option<PathBuf>, prefixes: Vec<String>, period_ms: u32) -> anyhow::Result<()> {
+    let mut c = Client::connect(socket)?;
+    print(c.request(&Request::Subscribe {
+        sub: 1,
+        prefixes,
+        period_ms,
+    })?)?;
+    loop {
+        print(c.recv()?)?;
+    }
 }
 
 #[cfg(not(unix))]
 fn call(_socket: Option<PathBuf>, _req: Request) -> anyhow::Result<Response> {
+    bail!("talking to carpid needs a Unix socket; use `carpi replay` here")
+}
+
+#[cfg(not(unix))]
+fn watch(_socket: Option<PathBuf>, _prefixes: Vec<String>, _period_ms: u32) -> anyhow::Result<()> {
     bail!("talking to carpid needs a Unix socket; use `carpi replay` here")
 }
