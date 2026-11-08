@@ -18,7 +18,10 @@
 //! 2. Bytes since the last `39` are counted across messages. If a group would
 //!    push that count past `cmd_buffer`, the packer commits first (`39` ends the
 //!    current message) and starts the group in a fresh buffer and message.
-//!    `cmd_buffer` defaults to `max_msg` (guess), which makes rule 1 the old rule.
+//!    `cmd_buffer` is `max_msg`, which makes rule 1 the whole rule: bench
+//!    2026-11-08 (`carpi dis-bench --screen probe`), a bar of 21 B messages with
+//!    no `39` grew one message at a time. The white cluster applies each
+//!    message on arrival; nothing buffers across messages.
 //! 3. A frame ends with `39`. Inline `39` at a message end works (bench,
 //!    `clusterRE/dis_findings.txt:334-335`); we never put records after a `39` in
 //!    the same message.

@@ -58,6 +58,10 @@ impl Default for ClusterSpec {
 pub struct ClusterFaults {
     /// Off the bus: hears nothing, sends nothing.
     pub silent: bool,
+    /// Every claim gets `53 84` and no free follows, for the rest of the
+    /// current (or first) link; a later handshake (`15`) clears it. Bench:
+    /// left behind by a killed session.
+    pub stuck_busy: bool,
     /// Answer the next N ACK-requesting frames with `9n` and drop them.
     pub not_ready: u32,
 }
@@ -78,6 +82,8 @@ pub struct SimCluster {
     next_frame_at: Instant,
     out: Vec<(Instant, Frame)>,
     menu_busy: bool,
+    /// `stuck_busy` was set when this link's handshake ran.
+    stuck_link: bool,
     startup_pending: Option<Duration>,
     last_msg_end: Option<Instant>,
     /// We hold the centre for the head unit.
@@ -115,6 +121,7 @@ impl SimCluster {
             next_frame_at: now,
             out: Vec::new(),
             menu_busy: false,
+            stuck_link: false,
             last_msg_end: None,
             owner: false,
             received: Vec::new(),
@@ -253,7 +260,13 @@ impl SimCluster {
         self.received.push((now, m.clone()));
         let at = now + self.spec.reply_delay;
         match m[0] {
-            0x15 => self.say(at, vec![0x00, 0x01]),
+            0x15 => {
+                if self.stuck_link {
+                    self.faults.stuck_busy = false;
+                }
+                self.stuck_link = self.faults.stuck_busy;
+                self.say(at, vec![0x00, 0x01]);
+            }
             0x08 => {
                 let caps = self.spec.caps.clone();
                 self.say(at, caps);
@@ -271,7 +284,7 @@ impl SimCluster {
                     self.say(at, vec![0x53, 0x84]);
                     self.say(at + d, vec![0x53, 0x05]);
                     self.say(at + d + Duration::from_millis(20), vec![0x2E]);
-                } else if self.menu_busy {
+                } else if self.menu_busy || self.faults.stuck_busy {
                     self.say(at, vec![0x53, 0x84]);
                 } else {
                     self.owner = true;

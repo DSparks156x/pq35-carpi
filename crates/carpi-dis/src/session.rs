@@ -34,6 +34,10 @@ pub struct SessionConfig {
     /// `53 05` in sight. Old code: 5 s (`dc/dis_service.py:278`). Bench: a
     /// cluster answered a fresh claim `53 84` and never sent free.
     pub claim_retry: Duration,
+    /// Busy this long with no free: drop the link and redo the handshake.
+    /// Ours. Bench: a cluster left behind by a killed session said `53 84` to
+    /// every claim for minutes on an idle centre.
+    pub busy_relink: Duration,
     /// After `53 05`, wait this long for `2E` before claiming anyway. Ours.
     pub free_wait: Duration,
     /// `0B 02 xx` recoveries per link session. Old code: 3 (`dc/ddp_protocol.py:1932-1971`).
@@ -51,6 +55,7 @@ impl Default for SessionConfig {
             step_timeout: Duration::from_secs(3),
             claim_timeout: Duration::from_secs(1),
             claim_retry: Duration::from_secs(5),
+            busy_relink: Duration::from_secs(30),
             free_wait: Duration::from_secs(1),
             recovery_budget: 3,
             backoff_gap: Duration::from_millis(20),
@@ -154,6 +159,8 @@ pub struct Session {
     hold_until: Option<Instant>,
     /// While `Window::Busy`: claim again at this time.
     busy_reclaim: Option<Instant>,
+    /// Start of the current unbroken busy spell.
+    busy_since: Option<Instant>,
     events: VecDeque<SessionEvent>,
 }
 
@@ -182,6 +189,7 @@ impl Session {
             prev_gap: Duration::ZERO,
             hold_until: None,
             busy_reclaim: None,
+            busy_since: None,
             events: VecDeque::new(),
         }
     }
@@ -300,8 +308,14 @@ impl Session {
             }
             Window::Busy if self.busy_reclaim.is_some_and(|t| now >= t) => {
                 self.busy_reclaim = None;
-                self.window = Window::Idle;
-                self.maybe_claim(now);
+                if self.busy_since.is_some_and(|t| now - t >= self.cfg.busy_relink) {
+                    self.busy_since = None;
+                    self.link.close(now);
+                    self.drain(now);
+                } else {
+                    self.window = Window::Idle;
+                    self.maybe_claim(now);
+                }
             }
             _ => {}
         }
@@ -356,6 +370,8 @@ impl Session {
                 Event::NotReady => self.backoff_left = self.cfg.backoff_msgs,
                 Event::Closed { reason, .. } => {
                     self.lose();
+                    self.busy_since = None;
+                    self.busy_reclaim = None;
                     self.phase = Phase::Down;
                     self.window = Window::Idle;
                     self.step_deadline = None;
@@ -515,6 +531,7 @@ impl Session {
     fn on_status(&mut self, now: Instant, v: u8) {
         match WindowStatus::parse(v) {
             WindowStatus::Granted => {
+                self.busy_since = None;
                 if matches!(self.window, Window::Claiming { .. }) {
                     self.window = Window::Owned;
                     self.generation = self.generation.wrapping_add(1);
@@ -528,9 +545,11 @@ impl Session {
                 self.lose();
                 self.window = Window::Busy;
                 self.busy_reclaim = Some(now + self.cfg.claim_retry);
+                self.busy_since.get_or_insert(now);
                 self.events.push_back(SessionEvent::Busy);
             }
             WindowStatus::Free => {
+                self.busy_since = None;
                 self.lose();
                 self.window = Window::Free {
                     until: now + self.cfg.free_wait,

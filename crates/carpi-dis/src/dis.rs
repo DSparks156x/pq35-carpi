@@ -5,7 +5,7 @@
 use crate::arbiter::{Arbiter, ArbiterConfig, Class, Surface};
 use crate::fb::Fb;
 use crate::helpers::Ctx;
-use crate::pack::PackError;
+use crate::pack::{PackError, Packed, Registers};
 use crate::screens::nav::{NavConfig, NavInput, NavScreen};
 use crate::screens::readings::{ReadingSpec, ReadingsInput, ReadingsPage, ReadingsScreen};
 use crate::screens::{Screen, build_frame};
@@ -40,6 +40,8 @@ pub struct Dis {
     shown: Option<(ScreenId, u32)>,
     /// Re-enter the shown screen on the next frame (subpage change).
     reenter: bool,
+    /// Bench probes: hold the centre, draw nothing; the probe sends raw frames.
+    probe: bool,
     belief: Option<Fb>,
     /// Last packing failure (a screen/helper bug); the frame was skipped.
     pub last_error: Option<PackError>,
@@ -59,6 +61,7 @@ impl Dis {
             user_page: None,
             shown: None,
             reenter: false,
+            probe: false,
             belief: None,
             last_error: None,
         }
@@ -88,6 +91,24 @@ impl Dis {
             self.reenter = true;
         }
         self.step(now);
+    }
+
+    /// Bench probes only: keep the centre claimed and stop drawing screens.
+    pub fn set_probe(&mut self, now: Instant, on: bool) {
+        self.probe = on;
+        self.shown = None;
+        self.step(now);
+    }
+
+    /// Bench probes only: send `messages` as one frame, as given (no packer,
+    /// no commit added). `false` if not owned or a frame is in flight.
+    pub fn submit_raw(&mut self, now: Instant, messages: Vec<crate::pack::Message>) -> bool {
+        let p = Packed {
+            messages,
+            regs: Registers::default(),
+            spans: Vec::new(),
+        };
+        self.probe && self.session.frame_idle() && self.session.submit(now, p).is_ok()
     }
 
     /// DIS focus (the wheel drives the DIS): the readings page name inverts.
@@ -174,6 +195,10 @@ impl Dis {
     }
 
     fn step(&mut self, now: Instant) {
+        if self.probe {
+            self.session.set_want(now, true);
+            return;
+        }
         let class = self.arbiter.winner(now, Surface::Centre);
         let want = self.screen_for(class);
         self.session.set_want(now, want.is_some());

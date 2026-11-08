@@ -13,7 +13,7 @@ Tags: **[M500]** measured on the A3 bench at 500 kbit/s, direct to the cluster. 
 - So there is no framebuffer, no scene and no differ. **Every screen is hand-authored**: an ordered list of cluster commands with slots for variable data, plus that screen's own rules for what to re-send when a slot changes.
 - Each screen gets something usable up in the first message or two: icon first, then text. Slow detail work (high-res passes) runs in a cancellable **refine lane**, interleaved with the **update lane** (distance, scrolling), which always goes first. A few reusable helpers (number field, scroll text, quick-then-refine icon, glyph cells) cover the common cases. There's no engine.
 - The shared layer under the screens is thin: TP2 link, DDP session, command encoder, message packer, text metrics, frame pacer. The arbiter picks which screen owns the centre and what goes on the top lines.
-- **Command buffer (Drew, overrides "nothing is atomic" below).** The cluster collects commands in a buffer. It applies the buffer on `39`, and also on its own when the buffer fills. Drew roughly knows the size. So a clear only looks clean if it lands in the same buffer as the redraw. Clear in one flush and draw in the next, and you see the blank. The packer therefore works in **groups**: a group (e.g. clear a field and redraw it, or one scroll step) must never straddle an auto-commit. If the group won't fit in what's left of the buffer, commit first and start the group in a fresh buffer. Screens declare their groups, and the buffer size goes in the cluster profile. There are cheaper, craftier ways to clear than a plain clear: overdraw, inverse or XOR. Those belong to the screens and helpers, using Drew's knowledge. The no-commit probe that "still updated the screen" was most likely an auto-commit.
+- **Command buffer: one message (bench, 2026-11-08).** Probe (`carpi dis-bench --screen probe`): a bar grows one 21 B message every 250 ms with no `39`; it grew smoothly to 60. The white cluster applies each message as it arrives and buffers nothing across messages. So **a clear and its redraw must share a message**, and a group (clear + redraw, one scroll step) never straddles a message boundary. The packer already works that way (`cmd_buffer` = `max_msg`). `39` still ends every frame, as stock does, but it doesn't gate what shows. Clearing tricks (blank padding, tail clears, inverse fills) belong to the screens and helpers.
 - In the car the Pi is on ICAN (100 kbit/s), the cluster is on its own 500 kbit/s bus, and the gateway sits between them. Every DDP byte crosses ICAN, which is shared, and every ACK crosses the gateway twice. Bench **throughput** numbers don't carry over. Bench **cluster behaviour** (limits, ROP rules, pacing needs) does.
 
 ## 1. Cost model
@@ -256,6 +256,13 @@ Ladder: lower the per-value rate, then update only half the cells per frame (rou
   2. FIS-Control on, pure forward bridge to prove the redirect.
   3. carpid owning the centre: measure ACK round trip, 9n rate and DIS share of ICAN under driving load, with eyes or camera on each screen.
   4. Then the stock-radio peer.
+
+## 3b. Bench findings (2026-11-08, A3/TT white cluster, 500k direct)
+
+- **Nav** (Drew: looks right): the old 72x72 Maps icons at px (6,2) with the old maneuver mapping; distance and unit centred in x 40..56 at y 8/17; road centred in x 1..63 at y 39, marquee only when wider. All positions from the measured font widths. The procedural arrows were invented and looked wrong; gone.
+- **Readings** (Drew: looks right): icon + centred value + unit legend per cell, old 10x14 icons and 3x5 unit legends as placeholders until better art. No centre line (it clipped things). Subpages step with the wheel (up/down while DIS focus is on); the centred page name inverts while focused (`52` fill + black `57` in one group).
+- **Busy**: a fresh claim can get `53 84` with no free for minutes on an idle centre (left behind by a killed session). Re-claim every 5 s; after 30 s of unbroken busy, drop the link and redo the handshake. End bench runs with the stop file, not a kill.
+- **Command buffer**: one message, see §0.
 
 ## 4. Questions only Drew can answer
 

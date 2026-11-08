@@ -30,6 +30,54 @@ pub enum Screens {
     Nav,
     Readings,
     Both,
+    /// Command-buffer probe: no screens, raw frames, Drew watches.
+    Probe,
+}
+
+pub fn stop_file() -> std::path::PathBuf {
+    std::env::var_os("CARPI_BENCH_STOP").map_or_else(|| "dis-bench.stop".into(), Into::into)
+}
+
+/// Bar probe steps: one message each (see [`probe_segment`]), no commit.
+const PROBE_SEGMENTS: u8 = 60;
+const PROBE_EVERY: Duration = Duration::from_millis(250);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProbeStage {
+    Blank,
+    Bar(u8),
+    Commit,
+}
+
+/// Find the cluster's auto-commit size. Blank + `39`, then a bar grows one
+/// step per message every 250 ms with a step count beside it and *no* `39`,
+/// then a `39`, repeat. If the cluster buffers until full, the bar and count
+/// jump together; the counts Drew sees at each jump give the size.
+struct Probe {
+    stage: ProbeStage,
+    at: Instant,
+    round: u32,
+}
+
+/// Step `i` of the bar: full clip, the step count (1-based, 2 digits),
+/// segment `i`. 21 B, so a jump after n steps means a ~21n B buffer.
+pub fn probe_segment(i: u8) -> Vec<u8> {
+    use carpi_dis::cmd::{Ink, Op, text_flags};
+    use carpi_dis::font::{Font, audscii};
+    use carpi_dis::proto::{FULL, Rect};
+    let mut b = Op::Clip(FULL).encode();
+    b.extend(
+        Op::Text {
+            clip: FULL,
+            x: 24,
+            y: 36,
+            flags: text_flags(Font::Fixed, Ink::Opaque),
+            bytes: audscii(&format!("{:02}", i + 1)),
+        }
+        .encode(),
+    );
+    b.extend(Op::Fill(Rect::new(2 + i, 12, 1, 16)).encode());
+    b
 }
 
 /// Scripted legs: maneuver, side, roundabout angle, road.
@@ -199,6 +247,7 @@ pub struct Bench {
     now: Instant,
     readings_cycle: u64,
     focus: bool,
+    probe: Option<Probe>,
 }
 
 impl Bench {
@@ -228,14 +277,25 @@ impl Bench {
             now,
             readings_cycle: 0,
             focus: false,
+            probe: (screens == Screens::Probe).then_some(Probe {
+                stage: ProbeStage::Blank,
+                at: now,
+                round: 1,
+            }),
         };
+        if screens == Screens::Probe {
+            b.dis.set_probe(now, true);
+        }
         b.dis.start(now);
         b.tick(now);
         b
     }
 
+    /// Time's up, or the stop file exists (`CARPI_BENCH_STOP`, default
+    /// `dis-bench.stop` in the working dir), so runs end cleanly instead of
+    /// being killed with the link open.
     pub fn done(&self, now: Instant) -> bool {
-        now >= self.end
+        now >= self.end || stop_file().exists()
     }
 
     fn say(&mut self, now: Instant, s: String) {
@@ -283,7 +343,59 @@ impl Bench {
         self.after(now);
     }
 
+    fn probe_step(&mut self, now: Instant) {
+        use carpi_dis::cmd::Op;
+        use carpi_dis::pack::Message;
+        let Some(p) = &self.probe else { return };
+        if now < p.at || !self.dis.session().owned() || !self.dis.session().frame_idle() {
+            return;
+        }
+        let (stage, round) = (p.stage, p.round);
+        let msg = |bytes: Vec<u8>| Message {
+            bytes,
+            gap: Duration::ZERO,
+        };
+        let (frame, next, wait, say) = match stage {
+            ProbeStage::Blank => {
+                let mut b = Op::Clear(carpi_dis::proto::FULL).encode();
+                b.push(0x39);
+                let say = Some(format!("probe round {round}: blank"));
+                (vec![msg(b)], ProbeStage::Bar(0), Duration::from_secs(2), say)
+            }
+            ProbeStage::Bar(i) => {
+                let next = if i + 1 >= PROBE_SEGMENTS {
+                    ProbeStage::Commit
+                } else {
+                    ProbeStage::Bar(i + 1)
+                };
+                let say = (i == 0).then(|| format!("probe round {round}: bar, no commits"));
+                (vec![msg(probe_segment(i))], next, PROBE_EVERY, say)
+            }
+            ProbeStage::Commit => (
+                vec![msg(vec![0x39])],
+                ProbeStage::Blank,
+                Duration::from_secs(3),
+                Some(format!("probe round {round}: commit")),
+            ),
+        };
+        if self.dis.submit_raw(now, frame) {
+            if let Some(s) = say {
+                self.say(now, s);
+            }
+            let p = self.probe.as_mut().unwrap();
+            p.stage = next;
+            p.at = now + wait;
+            if stage == ProbeStage::Commit {
+                p.round += 1;
+            }
+        }
+    }
+
     fn inputs(&mut self, now: Instant) {
+        if self.probe.is_some() {
+            self.probe_step(now);
+            return;
+        }
         let t = now - self.t0;
         let page = match self.screens {
             Screens::Nav => ScreenId::Nav,
@@ -291,7 +403,7 @@ impl Bench {
             Screens::Both if (t.as_secs() / FLIP_EVERY.as_secs()).is_multiple_of(2) => {
                 ScreenId::Nav
             }
-            Screens::Both => ScreenId::Readings,
+            Screens::Both | Screens::Probe => ScreenId::Readings,
         };
         if self.screens != Screens::Readings {
             self.dis.set_nav(now, nav_at(t));

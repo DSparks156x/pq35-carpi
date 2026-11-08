@@ -94,9 +94,9 @@ pub struct Profile {
     /// Largest application message. White 105: bench policy; 195 worked, 208
     /// froze (`[dis]` §1). Red 42: old-code policy (`dc/dis_service.py:641,677`), guess.
     pub max_msg: usize,
-    /// Bytes the cluster buffers before it applies them on its own (auto-commit).
-    /// Unknown. Guess = `max_msg`: the old code only ever relied on a clear and
-    /// its redraw sharing one message (see `pack`), never on more.
+    /// Bytes the cluster buffers before it applies them on its own. White:
+    /// one message, bench 2026-11-08 (no-`39` bar probe grew per message), so
+    /// `max_msg`. Red: same, guess.
     pub cmd_buffer: usize,
     /// Glyphs per `57`. Stock 49-byte record budget (`dc/native_nav_glyphs.py:44`). Bench.
     pub max_glyphs: usize,

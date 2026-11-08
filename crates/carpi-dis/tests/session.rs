@@ -174,6 +174,22 @@ fn startup_busy_then_grant_and_draw() {
 }
 
 #[test]
+fn stuck_busy_reclaims_then_relinks() {
+    let mut w = World::new(ClusterSpec::default());
+    w.cl.faults.stuck_busy = true;
+    w.run(Duration::from_secs(20));
+    // Re-claimed every 5 s, still nothing.
+    assert!(w.count(|e| *e == SessionEvent::Busy) >= 4, "{:?}", w.hu.ev);
+    assert!(w.owned().is_empty());
+    // After 30 s of busy the link drops, the handshake reruns and we get it.
+    w.run(Duration::from_secs(20));
+    assert!(w.count(|e| matches!(e, SessionEvent::LinkClosed(_))) >= 1);
+    assert_eq!(w.owned().len(), 1);
+    w.settle();
+    w.check_screen();
+}
+
+#[test]
 fn not_ready_mid_frame_recovers() {
     let mut w = World::new(ClusterSpec::default());
     w.run(Duration::from_secs(3));
