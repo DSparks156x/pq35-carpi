@@ -21,6 +21,44 @@ pub const GW_BREMSE_GETRIEBE: u32 = 0x359;
 pub const GW_MOTOR: u32 = 0x35B;
 pub const LENKWINKEL_1: u32 = 0x3C3;
 pub const BREMSE_10: u32 = 0x5B5;
+/// mGateway_1: second gateway speed, reverse light.
+pub const GATEWAY_1: u32 = 0x351;
+/// mMotor7: oil temperature, boost, altitude factor, generator.
+pub const MOTOR_7: u32 = 0x555;
+/// mMotor_10: manifold pressure, overrun cutoff.
+pub const MOTOR_10: u32 = 0x58C;
+/// mNavig_1: measured yaw rate, sent by the nav unit.
+pub const NAVIG_1: u32 = 0x2A1;
+/// Custom Haldex firmware (7316+): fixed model-yaw/torque frame, 50 Hz.
+pub const HALDEX_YAW: u32 = 0x679;
+/// Custom Haldex firmware: paged telemetry, byte 0 = `0xD0 | page`.
+pub const HALDEX_TELEMETRY: u32 = 0x6DA;
+
+// --- Trip computer (MFA, gateway to the RNS-E) -------------------------------
+/// Instant consumption, range.
+pub const MFA_1: u32 = 0x629;
+/// Short-term memory (since start).
+pub const MFA_2: u32 = 0x62B;
+/// Long-term memory.
+pub const MFA_3: u32 = 0x62D;
+/// Tank-cycle memory, current/previous multiplexed on bit 15.
+pub const MFA_4: u32 = 0x529;
+/// Driving time, time to refuel.
+pub const MFA_5: u32 = 0x52B;
+/// mEinheiten: display units the cluster is set to.
+pub const EINHEITEN: u32 = 0x60E;
+
+// --- Electrical, climate, parking ---------------------------------------------
+/// mBEM_02: energy management, battery state of charge.
+pub const BEM_02: u32 = 0x658;
+/// mClima_1: climatronic outside temp, refrigerant, blower.
+pub const CLIMA_1: u32 = 0x3E1;
+/// mClima_3: climatronic switches.
+pub const CLIMA_3: u32 = 0x5E1;
+/// mParkhilfe_3: parking aid state.
+pub const PARKHILFE_3: u32 = 0x545;
+/// mParkhilfe_5: parking aid distances.
+pub const PARKHILFE_5: u32 = 0x54B;
 
 // --- Cluster / gateway info ------------------------------------------------
 pub const GW_KOMBI: u32 = 0x527;
