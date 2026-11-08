@@ -146,7 +146,6 @@ impl Default for RouteConfig {
             ((K::Nav, Short), C::OpenNav),
             ((K::Tel, Short), C::OpenPhone),
             ((K::Media, Short), C::OpenMedia),
-            ((K::Info, Short), C::OpenPage(Page::Data)),
             ((K::Car, Short), C::OpenPage(Page::Car)),
         ]);
         let livi = HashMap::from([
@@ -168,6 +167,9 @@ impl Default for RouteConfig {
             ((K::Return, Long), L::Home),
             ((K::Setup, Short), L::Home),
             ((K::Name, Short), L::Home),
+            // Drew: INFO back to AA's maps/media split, which is what Home
+            // gives from inside an app (bench, 2026-11-08).
+            ((K::Info, Short), L::Home),
             ((K::Knob(1), Detent), L::KnobRight),
             ((K::Knob(-1), Detent), L::KnobLeft),
         ]);
@@ -300,7 +302,7 @@ mod tests {
             (TV, Key::Nav, Short, Car(CarAction::OpenNav)),
             (TV, Key::Tel, Short, Car(CarAction::OpenPhone)),
             (TV, Key::Media, Short, Car(CarAction::OpenMedia)),
-            (TV, Key::Info, Short, Car(CarAction::OpenPage(Page::Data))),
+            (TV, Key::Info, Short, Livi(LiviKey::Home)),
             (TV, Key::Car, Short, Car(CarAction::OpenPage(Page::Car))),
             (TV, Key::Name, Short, Livi(LiviKey::Home)),
             // Calls take the wheel click and TEL.
