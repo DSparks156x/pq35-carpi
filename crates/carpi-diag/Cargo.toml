@@ -1,0 +1,18 @@
+[package]
+name = "carpi-diag"
+description = "Diagnostics (sans-IO): value catalog, TP2 channel manager, scheduler, exclusive modes, jobs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-can.workspace = true
+carpi-tp2.workspace = true
+carpi-kwp.workspace = true
+carpi-state.workspace = true
+
+[dev-dependencies]
+carpi-sim.workspace = true

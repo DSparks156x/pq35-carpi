@@ -135,6 +135,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "carpi-diag"
+version = "0.1.0"
+dependencies = [
+ "carpi-can",
+ "carpi-kwp",
+ "carpi-sim",
+ "carpi-state",
+ "carpi-tp2",
+]
+
+[[package]]
+name = "carpi-dis"
+version = "0.1.0"
+dependencies = [
+ "carpi-can",
+ "carpi-sim",
+ "carpi-tp2",
+]
+
+[[package]]
 name = "carpi-gate"
 version = "0.1.0"
 dependencies = [

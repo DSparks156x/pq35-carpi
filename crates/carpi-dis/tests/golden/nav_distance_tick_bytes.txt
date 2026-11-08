@@ -1,0 +1,5 @@
+# 1 messages, 11 B
+msg 0 (11 B, gap 0 ms)
+  57 08 06 21 0A 65 20 37 39 30
+  39
+  groups: dist@0..10

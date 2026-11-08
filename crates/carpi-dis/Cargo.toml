@@ -1,0 +1,16 @@
+[package]
+name = "carpi-dis"
+description = "Cluster display (DIS) driver, sans-IO: DDP session, encoder, packer, helpers, screens, arbiter, top lines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-can.workspace = true
+carpi-tp2.workspace = true
+
+[dev-dependencies]
+carpi-sim.workspace = true

@@ -1,0 +1,235 @@
+//! Screen goldens (bytes and what we believe is on screen) and the nav refine lane.
+
+mod common;
+
+use carpi_dis::cmd::{Op, records};
+use carpi_dis::fb::Fb;
+use carpi_dis::helpers::Ctx;
+use carpi_dis::icons::{self, Maneuver, Side};
+use carpi_dis::pack::{Packed, Packer, Registers};
+use carpi_dis::proto::Profile;
+use carpi_dis::screens::nav::{ICON, NavConfig, NavInput, NavScreen};
+use carpi_dis::screens::readings::{ReadingSpec, ReadingsInput, ReadingsScreen};
+use carpi_dis::screens::{REFINE_MSGS, Screen, build_frame};
+use common::{apply, dump, golden};
+use std::time::{Duration, Instant};
+
+fn nav_input(maneuver: &str, side: &str, d: f64, road: &str) -> NavInput {
+    NavInput {
+        maneuver: Some(maneuver.into()),
+        side: Some(side.into()),
+        roundabout_angle: None,
+        distance_m: Some(d),
+        road: Some(road.into()),
+    }
+}
+
+/// Pack only the update lane (no refine slice).
+fn update_only(s: &mut dyn Screen, now: Instant, cx: &Ctx, regs: Registers) -> Packed {
+    let mut p = Packer::new(cx.profile, regs);
+    for g in s.update(now, cx) {
+        p.push(&g).unwrap();
+    }
+    p.finish()
+}
+
+fn readings() -> ReadingsScreen {
+    let spec = |k: &str, l: &str, d| ReadingSpec {
+        key: k.into(),
+        label: l.into(),
+        decimals: d,
+    };
+    ReadingsScreen::new(vec![
+        spec("engine.oil_temp_c", "Oil", 0),
+        spec("engine.coolant_c", "H2O", 0),
+        spec("engine.boost_bar", "Bst", 2),
+        spec("engine.iat_c", "IAT", 0),
+        spec("battery.v", "Bat", 1),
+        spec("engine.rpm", "RPM", 0),
+        spec("haldex.lock_pct", "Hdx", 0),
+        spec("engine.afr", "AFR", 1),
+    ])
+}
+
+#[test]
+fn nav_enter_and_distance_tick() {
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = NavScreen::new(NavConfig::default());
+    s.set(t0, nav_input("turn", "left", 347.0, "Hauptstrasse"));
+    let enter = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    golden("nav_enter_bytes", &dump(&enter));
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &enter);
+    golden("nav_enter_screen", &fb.ascii());
+    // Icon first after the clear, then text, then bar (Drew's order).
+    let tags: Vec<&str> = enter.spans.iter().map(|g| g.tag).collect();
+    let pos = |t| tags.iter().position(|x| *x == t).unwrap();
+    assert!(
+        pos("icon-base") < pos("dist") && pos("dist") < pos("road") && pos("road") < pos("bar")
+    );
+    assert!(
+        enter.messages.iter().all(|m| m.gap.is_zero()),
+        "no strokes in enter"
+    );
+
+    // Distance tick far out: one padded run, two CAN frames at most.
+    let mut s2 = NavScreen::new(NavConfig::default());
+    s2.set(t0, nav_input("turn", "left", 820.0, "Hauptstrasse"));
+    let e2 = build_frame(&mut s2, t0, &cx, Registers::default(), true).unwrap();
+    s2.set(t0, nav_input("turn", "left", 790.0, "Hauptstrasse"));
+    let tick = update_only(&mut s2, t0, &cx, e2.regs);
+    golden("nav_distance_tick_bytes", &dump(&tick));
+    assert_eq!(tick.spans.len(), 1);
+    assert!(tick.bytes() <= 14, "{} B", tick.bytes());
+}
+
+#[test]
+fn nav_refine_completes_to_native_art() {
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = NavScreen::new(NavConfig::default());
+    s.set(
+        t0,
+        nav_input("roundabout_enter_and_exit", "right", 600.0, "A9"),
+    );
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &f);
+    let mut regs = f.regs;
+    let mut frames = 0;
+    while s.refining() {
+        let f = build_frame(&mut s, t0, &cx, regs, false).unwrap();
+        assert!(f.messages.len() <= REFINE_MSGS + 1, "slice too big");
+        for m in &f.messages {
+            if records(&m.bytes).unwrap().iter().any(|r| r[0] == 0x63) {
+                assert_eq!(m.gap, Duration::from_millis(10));
+            }
+        }
+        apply(&mut fb, &f);
+        regs = f.regs;
+        frames += 1;
+        assert!(frames < 500);
+    }
+    let art = icons::draw(Maneuver::Roundabout(90), 64, 76);
+    assert_eq!(fb.region(ICON), art.px, "refined icon != native art");
+    golden("nav_refined_screen", &fb.ascii());
+}
+
+#[test]
+fn nav_refine_cancels_on_maneuver_change() {
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = NavScreen::new(NavConfig::default());
+    s.set(
+        t0,
+        nav_input("roundabout_enter_and_exit", "right", 600.0, "A9"),
+    );
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &f);
+    let mut regs = f.regs;
+    for _ in 0..2 {
+        let f = build_frame(&mut s, t0, &cx, regs, false).unwrap();
+        apply(&mut fb, &f);
+        regs = f.regs;
+    }
+    assert!(s.refining(), "job A should still be mid-way");
+    let v = s.icon_version();
+
+    s.set(t0, nav_input("turn", "right", 600.0, "A9"));
+    let f = build_frame(&mut s, t0, &cx, regs, false).unwrap();
+    assert_eq!(s.icon_version(), v + 1);
+    // The new base comes before any stroke, and covers the whole icon.
+    let recs: Vec<Vec<u8>> = f
+        .messages
+        .iter()
+        .flat_map(|m| records(&m.bytes).unwrap().into_iter().map(<[u8]>::to_vec))
+        .collect();
+    let first_base = recs.iter().position(|r| r[0] == 0x55 && r[2] == 2).unwrap();
+    let first_stroke = recs.iter().position(|r| r[0] == 0x63);
+    assert!(first_stroke.is_none_or(|i| i > first_base));
+    apply(&mut fb, &f);
+    regs = f.regs;
+    while s.refining() {
+        let f = build_frame(&mut s, t0, &cx, regs, false).unwrap();
+        apply(&mut fb, &f);
+        regs = f.regs;
+    }
+    let art = icons::draw(Maneuver::Turn(Side::Right), 64, 76);
+    assert_eq!(fb.region(ICON), art.px, "leftovers from job A");
+}
+
+#[test]
+fn red_cluster_never_refines() {
+    let cx = Ctx::new(Profile::RED);
+    let t0 = Instant::now();
+    let mut s = NavScreen::new(NavConfig::default());
+    s.set(t0, nav_input("turn", "left", 300.0, "A9"));
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    assert!(f.messages.iter().all(|m| m.bytes.len() <= 42));
+    assert!(!s.refining());
+}
+
+#[test]
+fn readings_enter_and_value_change() {
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = readings();
+    let mut input = ReadingsInput {
+        title: "Engine".into(),
+        values: [
+            Some(92.0),
+            Some(88.0),
+            Some(1.234),
+            Some(31.0),
+            Some(14.1),
+            Some(2450.0),
+            None,
+            Some(14.7),
+        ],
+    };
+    s.set(input.clone());
+    let enter = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    golden("readings_enter_bytes", &dump(&enter));
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &enter);
+    golden("readings_enter_screen", &fb.ascii());
+
+    input.values[0] = Some(103.0);
+    s.set(input.clone());
+    let upd = build_frame(&mut s, t0, &cx, enter.regs, false).unwrap();
+    golden("readings_value_bytes", &dump(&upd));
+    assert_eq!(upd.spans.len(), 1);
+    let ops = s_value_ops(&upd);
+    assert_eq!(ops, 1, "one text run, no clear");
+    apply(&mut fb, &upd);
+    golden("readings_value_screen", &fb.ascii());
+
+    // Narrower value: still one run, no clear (pad covers the old digits).
+    input.values[0] = Some(7.0);
+    s.set(input);
+    let upd = build_frame(&mut s, t0, &cx, upd.regs, false).unwrap();
+    assert_eq!(s_value_ops(&upd), 1);
+    assert!(!upd.messages[0].bytes.starts_with(&[0x52, 0x05, 0x02]));
+}
+
+/// Records in the frame other than the trailing commit.
+fn s_value_ops(p: &Packed) -> usize {
+    p.messages
+        .iter()
+        .flat_map(|m| records(&m.bytes).unwrap())
+        .filter(|r| r[0] != 0x39)
+        .count()
+}
+
+#[test]
+fn enter_starts_with_full_clear() {
+    let cx = Ctx::new(Profile::WHITE);
+    let mut s = readings();
+    let f = build_frame(&mut s, Instant::now(), &cx, Registers::default(), true).unwrap();
+    assert_eq!(
+        &f.messages[0].bytes[..7],
+        &Op::Clear(carpi_dis::proto::FULL).encode()[..]
+    );
+}

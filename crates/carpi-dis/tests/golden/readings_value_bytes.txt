@@ -1,0 +1,5 @@
+# 1 messages, 10 B
+msg 0 (10 B, gap 0 ms)
+  57 07 06 0A 0C 65 31 30 33
+  39
+  groups: value@0..9

@@ -25,6 +25,8 @@ carpi-input = { path = "crates/carpi-input" }
 carpi-tp2 = { path = "crates/carpi-tp2" }
 carpi-kwp = { path = "crates/carpi-kwp" }
 carpi-sim = { path = "crates/carpi-sim" }
+carpi-diag = { path = "crates/carpi-diag" }
+carpi-dis = { path = "crates/carpi-dis" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
