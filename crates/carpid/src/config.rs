@@ -51,9 +51,12 @@ use std::path::{Path, PathBuf};
 /// enabled = false      # off: nothing is sent to the cluster
 /// claim = "always"     # or "tab": idle as a cluster-menu tab until picked
 /// default_page = "readings"   # or "accel", "media"
-/// auto_nav = true      # nav guidance, calls, media each take the centre
-/// auto_phone = true    #   while they have content, and give it back
-/// auto_media = true
+/// claim_nav = true     # nav guidance takes the centre when it starts...
+/// release_nav = true   # ...and gives it back when it ends (false: stays up)
+/// claim_phone = true   # same for calls
+/// release_phone = true
+/// claim_media = true   # same for media
+/// release_media = true
 /// media_layout = "stack"      # or "art" (cover beside the text)
 /// cover_flash_s = 4    # full cover on a new track, after it's drawn; 0 = off
 /// units = "auto"       # or "metric", "imperial" (auto: as the phone shows)
@@ -198,9 +201,16 @@ pub struct Dis {
     pub readings: Option<Vec<ReadingCfg>>,
     pub claim: Claim,
     pub default_page: DisPage,
-    pub auto_nav: bool,
-    pub auto_phone: bool,
-    pub auto_media: bool,
+    /// `auto_*` is the first name these had (still accepted).
+    #[serde(alias = "auto_nav")]
+    pub claim_nav: bool,
+    pub release_nav: bool,
+    #[serde(alias = "auto_phone")]
+    pub claim_phone: bool,
+    pub release_phone: bool,
+    #[serde(alias = "auto_media")]
+    pub claim_media: bool,
+    pub release_media: bool,
     pub media_layout: DisMediaLayout,
     pub cover_flash_s: f64,
     pub units: DisUnits,
@@ -232,9 +242,12 @@ impl Default for Dis {
             readings: None,
             claim: Claim::Always,
             default_page: DisPage::Readings,
-            auto_nav: true,
-            auto_phone: true,
-            auto_media: true,
+            claim_nav: true,
+            release_nav: true,
+            claim_phone: true,
+            release_phone: true,
+            claim_media: true,
+            release_media: true,
             media_layout: DisMediaLayout::Stack,
             cover_flash_s: 4.0,
             units: DisUnits::Auto,
@@ -607,9 +620,12 @@ impl Config {
                     DisPage::Accel => carpi_core::DisScreen::Accel,
                     DisPage::Media => carpi_core::DisScreen::Media,
                 },
-                auto_nav: self.dis.auto_nav,
-                auto_phone: self.dis.auto_phone,
-                auto_media: self.dis.auto_media,
+                claim_nav: self.dis.claim_nav,
+                release_nav: self.dis.release_nav,
+                claim_phone: self.dis.claim_phone,
+                release_phone: self.dis.release_phone,
+                claim_media: self.dis.claim_media,
+                release_media: self.dis.release_media,
                 media_layout: match self.dis.media_layout {
                     DisMediaLayout::Stack => carpi_core::DisMediaLayout::Stack,
                     DisMediaLayout::Art => carpi_core::DisMediaLayout::Art,
@@ -715,6 +731,17 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dis_old_auto_names_still_parse() {
+        let base = "[bus.ican]\niface = 'can0'\n";
+        let cfg = Config::parse(&format!(
+            "{base}[dis]\nauto_media = false\nrelease_nav = false\n"
+        ))
+        .unwrap();
+        let d = cfg.core().dis;
+        assert!(!d.claim_media && d.claim_nav && !d.release_nav && d.release_media);
+    }
 
     #[test]
     fn shared_and_separate_ifaces() {

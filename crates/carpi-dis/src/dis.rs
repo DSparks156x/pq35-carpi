@@ -54,10 +54,16 @@ pub struct DisConfig {
     pub claim_always: bool,
     /// The page "always" shows, and the cluster menu tab opens to.
     pub default_page: ScreenId,
-    /// Each takes the centre while it has content and gives it back after.
-    pub auto_nav: bool,
-    pub auto_call: bool,
-    pub auto_media: bool,
+    /// Per source (Drew): take the centre when it gets content, and give it
+    /// back when the content goes. Claim without release keeps that screen
+    /// up after its content ends, until a page is picked or something else
+    /// claims.
+    pub claim_nav: bool,
+    pub release_nav: bool,
+    pub claim_call: bool,
+    pub release_call: bool,
+    pub claim_media: bool,
+    pub release_media: bool,
 }
 
 /// A flash never holds the centre longer than this, drawn or not.
@@ -83,9 +89,12 @@ impl Default for DisConfig {
             accel: AccelConfig::default(),
             claim_always: true,
             default_page: ScreenId::Readings,
-            auto_nav: true,
-            auto_call: true,
-            auto_media: true,
+            claim_nav: true,
+            release_nav: true,
+            claim_call: true,
+            release_call: true,
+            claim_media: true,
+            release_media: true,
         }
     }
 }
@@ -111,7 +120,12 @@ pub struct Dis {
     want: Option<ScreenId>,
     claim_always: bool,
     default_page: ScreenId,
-    auto: (bool, bool, bool),
+    /// (claim, release) for nav, call, media.
+    claims: [(bool, bool); 3],
+    /// Content per source as last fed: nav, call, media.
+    content: [bool; 3],
+    /// A source ended without release: its screen stays up.
+    sticky: Option<ScreenId>,
     /// The cluster menu picked our tab; applied on the next tick.
     tab_picked: bool,
     /// Bench probes: hold the centre, draw nothing; the probe sends raw frames.
@@ -125,7 +139,10 @@ impl Dis {
     pub fn new(cfg: DisConfig) -> Self {
         Dis {
             session: Session::new(cfg.session),
-            arbiter: Arbiter::new(cfg.arbiter),
+            arbiter: Arbiter::new(ArbiterConfig {
+                nav_whole_route: cfg.arbiter.nav_whole_route || cfg.claim_nav,
+                ..cfg.arbiter
+            }),
             nav: NavScreen::new(cfg.nav),
             readings: if cfg.readings_pages.is_empty() {
                 ReadingsScreen::new(cfg.readings)
@@ -145,7 +162,13 @@ impl Dis {
             want: None,
             claim_always: cfg.claim_always,
             default_page: cfg.default_page,
-            auto: (cfg.auto_nav, cfg.auto_call, cfg.auto_media),
+            claims: [
+                (cfg.claim_nav, cfg.release_nav),
+                (cfg.claim_call, cfg.release_call),
+                (cfg.claim_media, cfg.release_media),
+            ],
+            content: [false; 3],
+            sticky: None,
             tab_picked: false,
             probe: false,
             belief: None,
@@ -229,9 +252,10 @@ impl Dis {
     }
 
     pub fn set_nav(&mut self, now: Instant, n: NavInput) {
-        if self.auto.0 {
+        if self.claims[0].0 {
             self.arbiter.nav(now, n.maneuver.as_deref(), n.distance_m);
         }
+        self.content_changed(0, n.maneuver.is_some(), ScreenId::Nav);
         self.nav.set(now, n);
         self.step(now);
     }
@@ -240,7 +264,8 @@ impl Dis {
     /// candidate for the centre (below nav, calls and user pages).
     pub fn set_media(&mut self, now: Instant, m: MediaInput) {
         let on = m.title.is_some() || m.duration_ms.is_some_and(|d| d > 0);
-        self.arbiter.set(Class::Media, on && self.auto.2);
+        self.arbiter.set(Class::Media, on && self.claims[2].0);
+        self.content_changed(2, on, ScreenId::Media);
         let new_cover = m.cover.as_ref().map(|(id, _)| *id);
         if new_cover.is_some() && new_cover != self.cover.id() {
             // Flash only if media has the centre right now (not on a cold start
@@ -293,7 +318,8 @@ impl Dis {
 
     /// Call state. Any call outranks media and user pages (not nav maneuvers).
     pub fn set_call(&mut self, now: Instant, c: CallInput) {
-        self.arbiter.set(Class::Call, c.state.is_some() && self.auto.1);
+        self.arbiter.set(Class::Call, c.state.is_some() && self.claims[1].0);
+        self.content_changed(1, c.state.is_some(), ScreenId::Call);
         self.call.set(now, c);
         self.step(now);
     }
@@ -303,8 +329,28 @@ impl Dis {
         self.step(now);
     }
 
+    /// Source `i` (nav, call, media) gained or lost content. Losing it while
+    /// its screen is up, claimed and not set to release, keeps the screen.
+    fn content_changed(&mut self, i: usize, has: bool, screen: ScreenId) {
+        let was = std::mem::replace(&mut self.content[i], has);
+        let (claim, release) = self.claims[i];
+        if has && !was && claim {
+            // Something new claims: an old held screen gives way.
+            self.sticky = None;
+        }
+        if was && !has && claim && !release && self.want == Some(screen) {
+            self.sticky = Some(screen);
+        }
+        if has && self.sticky == Some(screen) {
+            self.sticky = None;
+        }
+    }
+
     /// The page the driver picked (stalk / DIS menu). `None` = nothing.
     pub fn set_user_page(&mut self, now: Instant, page: Option<ScreenId>) {
+        if page.is_some() {
+            self.sticky = None;
+        }
         if page.is_some() && page != self.user_page {
             self.arbiter.manual_select();
         }
@@ -396,7 +442,9 @@ impl Dis {
             Class::NavManeuver => Some(ScreenId::Nav),
             Class::UserPage => self.user_page,
             // Nothing else wants the centre: our default page, if we claim always.
-            Class::Idle if self.claim_always => Some(self.default_page),
+            Class::Idle => self
+                .sticky
+                .or(self.claim_always.then_some(self.default_page)),
             Class::Media if self.egg.is_some() => Some(ScreenId::Egg),
             Class::Media if self.flash.is_some() => Some(ScreenId::Cover),
             Class::Media => Some(ScreenId::Media),

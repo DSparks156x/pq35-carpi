@@ -199,7 +199,7 @@ fn play(r: &mut Rig, title: &str) {
 #[test]
 fn top_lines_skip_the_centre_and_leave_line_2_to_the_cluster() {
     let mut r = Rig::new(DisSetup {
-        auto_media: false,
+        claim_media: false,
         ..enabled()
     });
     r.on_tv = true;

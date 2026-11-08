@@ -78,6 +78,10 @@ pub struct ArbiterConfig {
     pub route_gap: Duration,
     /// A lower class can't take over sooner than this after a switch. Ours.
     pub min_dwell: Duration,
+    /// Nav holds the centre for the whole route (Drew: "claim on nav"),
+    /// instead of only near turns and briefly after a maneuver change. A
+    /// page picked by hand still holds nav off until the maneuver changes.
+    pub nav_whole_route: bool,
 }
 
 impl Default for ArbiterConfig {
@@ -88,6 +92,7 @@ impl Default for ArbiterConfig {
             peek: Duration::from_secs(5),
             route_gap: Duration::from_secs(3),
             min_dwell: Duration::from_secs(2),
+            nav_whole_route: false,
         }
     }
 }
@@ -100,6 +105,8 @@ struct NavPolicy {
     approaching: bool,
     armed: bool,
     gap_until: Option<Instant>,
+    /// Picked away by hand; cleared when the maneuver changes.
+    suppressed: bool,
 }
 
 pub struct Arbiter {
@@ -151,6 +158,7 @@ impl Arbiter {
             n.maneuver = Some(m.to_string());
             n.peek_until = Some(now + self.cfg.peek);
             n.armed = true;
+            n.suppressed = false;
         }
         if let Some(d) = distance_m.filter(|d| d.is_finite() && *d >= 0.0) {
             if d > self.cfg.return_m {
@@ -169,12 +177,21 @@ impl Arbiter {
         self.nav.peek_until = None;
         self.nav.approaching = false;
         self.nav.armed = false;
+        self.nav.suppressed = true;
+    }
+
+    /// Nav guidance is running (a maneuver is known, or a short route gap).
+    pub fn nav_available(&self) -> bool {
+        self.nav.available
     }
 
     fn nav_active(&mut self, now: Instant) -> bool {
         let n = &mut self.nav;
         if n.gap_until.is_some_and(|t| now >= t) {
             *n = NavPolicy::default();
+        }
+        if self.cfg.nav_whole_route {
+            return n.available && !n.suppressed;
         }
         n.available && (n.approaching || n.peek_until.is_some_and(|t| now < t))
     }

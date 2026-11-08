@@ -46,9 +46,12 @@ pub fn get(cfg: &Config) -> Settings {
                 crate::config::DisPage::Accel => carpi_proto::DisPage::Accel,
                 crate::config::DisPage::Media => carpi_proto::DisPage::Media,
             },
-            auto_nav: cfg.dis.auto_nav,
-            auto_phone: cfg.dis.auto_phone,
-            auto_media: cfg.dis.auto_media,
+            claim_nav: cfg.dis.claim_nav,
+            release_nav: cfg.dis.release_nav,
+            claim_phone: cfg.dis.claim_phone,
+            release_phone: cfg.dis.release_phone,
+            claim_media: cfg.dis.claim_media,
+            release_media: cfg.dis.release_media,
             media_layout: match cfg.dis.media_layout {
                 crate::config::DisMediaLayout::Stack => carpi_proto::DisMediaLayout::Stack,
                 crate::config::DisMediaLayout::Art => carpi_proto::DisMediaLayout::Art,
@@ -282,14 +285,29 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         if let Some(v) = d.default_page {
             doc["dis"]["default_page"] = value(snake(&v));
         }
-        if let Some(v) = d.auto_nav {
-            doc["dis"]["auto_nav"] = value(v);
+        if let Some(v) = d.claim_nav {
+            // The old name would shadow it on the next read.
+            doc["dis"].as_table_like_mut().map(|t| t.remove("auto_nav"));
+            doc["dis"]["claim_nav"] = value(v);
         }
-        if let Some(v) = d.auto_phone {
-            doc["dis"]["auto_phone"] = value(v);
+        if let Some(v) = d.release_nav {
+            doc["dis"]["release_nav"] = value(v);
         }
-        if let Some(v) = d.auto_media {
-            doc["dis"]["auto_media"] = value(v);
+        if let Some(v) = d.claim_phone {
+            // The old name would shadow it on the next read.
+            doc["dis"].as_table_like_mut().map(|t| t.remove("auto_phone"));
+            doc["dis"]["claim_phone"] = value(v);
+        }
+        if let Some(v) = d.release_phone {
+            doc["dis"]["release_phone"] = value(v);
+        }
+        if let Some(v) = d.claim_media {
+            // The old name would shadow it on the next read.
+            doc["dis"].as_table_like_mut().map(|t| t.remove("auto_media"));
+            doc["dis"]["claim_media"] = value(v);
+        }
+        if let Some(v) = d.release_media {
+            doc["dis"]["release_media"] = value(v);
         }
         if let Some(v) = d.media_layout {
             doc["dis"]["media_layout"] = value(snake(&v));
@@ -465,14 +483,15 @@ mod tests {
         let before = get(&Config::parse(FILE).unwrap());
         assert_eq!(before.dis.claim, DisClaim::Always);
         assert_eq!(before.dis.default_page, DisPage::Readings);
-        assert!(before.dis.auto_media);
+        assert!(before.dis.claim_media && before.dis.release_media);
         let cfg = set(
             &p,
             &SettingsPatch {
                 dis: Some(DisPatch {
                     claim: Some(DisClaim::Tab),
                     default_page: Some(DisPage::Media),
-                    auto_phone: Some(false),
+                    claim_phone: Some(false),
+                    release_media: Some(false),
                     media_layout: Some(DisMediaLayout::Art),
                     cover_flash_s: Some(0.0),
                     units: Some(carpi_proto::DisUnits::Imperial),
@@ -486,7 +505,8 @@ mod tests {
         let after = get(&cfg);
         assert_eq!(after.dis.claim, DisClaim::Tab);
         assert_eq!(after.dis.default_page, DisPage::Media);
-        assert!(!after.dis.auto_phone && after.dis.auto_nav, "only phone changed");
+        assert!(!after.dis.claim_phone && after.dis.claim_nav, "only phone changed");
+        assert!(!after.dis.release_media && after.dis.release_nav);
         assert_eq!(after.dis.media_layout, DisMediaLayout::Art);
         assert_eq!(after.dis.units, carpi_proto::DisUnits::Imperial);
         assert_eq!(after.dis.clock, carpi_proto::DisClock::H12);

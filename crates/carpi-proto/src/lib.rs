@@ -396,13 +396,20 @@ pub struct DisSettings {
     /// The page "always" shows, and the cluster-menu tab opens to.
     #[serde(default)]
     pub default_page: DisPage,
-    /// Each takes the centre while it has content and gives it back after.
+    /// Per source: take the centre when it gets content (`claim_*`), give
+    /// it back when the content goes (`release_*`; off: the screen stays up).
     #[serde(default = "yes")]
-    pub auto_nav: bool,
+    pub claim_nav: bool,
     #[serde(default = "yes")]
-    pub auto_phone: bool,
+    pub release_nav: bool,
     #[serde(default = "yes")]
-    pub auto_media: bool,
+    pub claim_phone: bool,
+    #[serde(default = "yes")]
+    pub release_phone: bool,
+    #[serde(default = "yes")]
+    pub claim_media: bool,
+    #[serde(default = "yes")]
+    pub release_media: bool,
     #[serde(default)]
     pub media_layout: DisMediaLayout,
     /// Full cover on a new track, held this long once drawn; 0 = off.
@@ -481,11 +488,17 @@ pub struct DisPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_page: Option<DisPage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_nav: Option<bool>,
+    pub claim_nav: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_phone: Option<bool>,
+    pub release_nav: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_media: Option<bool>,
+    pub claim_phone: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_phone: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_media: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_media: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_layout: Option<DisMediaLayout>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

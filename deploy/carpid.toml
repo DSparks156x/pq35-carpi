@@ -76,10 +76,15 @@ enabled = false
 # "tab": idle as a tab in the cluster menu until it's picked there.
 claim = "always"
 default_page = "readings"   # or "accel", or "media" (the old client's start page)
-# Each takes the centre while it has content and gives it back after.
-auto_nav = true
-auto_phone = true
-auto_media = true
+# Per source: claim_* takes the centre when it gets content, release_* gives
+# it back when the content goes (false: its screen stays up until a page is
+# picked or something else claims).
+claim_nav = true
+release_nav = true
+claim_phone = true
+release_phone = true
+claim_media = true
+release_media = true
 media_layout = "stack"      # or "art"
 cover_flash_s = 4           # full cover on a new track once drawn; 0 = off
 units = "auto"              # or "metric", "imperial" (auto: as the phone shows)

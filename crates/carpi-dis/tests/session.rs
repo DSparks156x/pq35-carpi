@@ -447,7 +447,7 @@ fn tab_mode_idles_until_the_cluster_menu_picks_us() {
         ClusterSpec::default(),
         DisConfig {
             claim_always: false,
-            auto_media: false,
+            claim_media: false,
             ..DisConfig::default()
         },
     );
@@ -455,7 +455,7 @@ fn tab_mode_idles_until_the_cluster_menu_picks_us() {
     let now = w.now();
     w.hu.dis.set_media(now, song());
     w.run(Duration::from_secs(5));
-    // auto_media off and no page: we hold nothing.
+    // claim_media off and no page: we hold nothing.
     assert_eq!(w.hu.dis.wanted(), None);
     assert!(!w.cl.owner);
     // The driver picks our tab in the cluster menu (2E while we're idle).
@@ -465,4 +465,59 @@ fn tab_mode_idles_until_the_cluster_menu_picks_us() {
     assert_eq!(w.hu.dis.user_page(), Some(ScreenId::Readings));
     assert_eq!(w.hu.dis.shown(), Some(ScreenId::Readings));
     assert!(w.cl.owner);
+}
+
+#[test]
+fn claim_without_release_keeps_the_screen_until_a_page_is_picked() {
+    let mut w = World::with(
+        ClusterSpec::default(),
+        DisConfig {
+            release_media: false,
+            ..DisConfig::default()
+        },
+    );
+    w.hu.dis.set_user_page(w.now(), None);
+    w.run(Duration::from_secs(4));
+    let now = w.now();
+    w.hu.dis.set_media(now, song());
+    w.run(Duration::from_secs(3));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
+    // Media ends: no release, so it stays.
+    let now = w.now();
+    w.hu.dis.set_media(now, Default::default());
+    w.run(Duration::from_secs(4));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
+    // A page picked by hand ends the hold.
+    let now = w.now();
+    w.hu.dis.set_user_page(now, Some(ScreenId::Accel));
+    w.run(Duration::from_secs(3));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Accel));
+}
+
+#[test]
+fn claim_on_nav_holds_the_whole_route() {
+    use carpi_dis::screens::nav::NavInput;
+    let mut w = World::new(ClusterSpec::default());
+    w.hu.dis.set_user_page(w.now(), None);
+    w.run(Duration::from_secs(4));
+    let leg = |d: f64| NavInput {
+        maneuver: Some("turn".into()),
+        side: Some("left".into()),
+        distance_m: Some(d),
+        road: Some("A9".into()),
+        ..Default::default()
+    };
+    let now = w.now();
+    w.hu.dis.set_nav(now, leg(5000.0));
+    // Far from the turn and long after the 5 s peek: still nav.
+    w.run(Duration::from_secs(10));
+    let now = w.now();
+    w.hu.dis.set_nav(now, leg(4800.0));
+    w.run(Duration::from_secs(2));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Nav));
+    // Route ends: released after the route-gap hold.
+    let now = w.now();
+    w.hu.dis.set_nav(now, NavInput::default());
+    w.run(Duration::from_secs(6));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Readings));
 }
