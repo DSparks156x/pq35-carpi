@@ -361,6 +361,8 @@ pub struct Datalog {
 
 struct Inner {
     setup: Setup,
+    /// `[logs] max_pct`, live from the settings.
+    max_pct: Mutex<u8>,
     tx: mpsc::Sender<Msg>,
     hub: Arc<CommandHub>,
     catalog: Catalog,
@@ -413,10 +415,23 @@ struct Plan {
 }
 
 impl Datalog {
+    /// `[logs] max_pct`, live.
+    pub fn set_max_pct(&self, pct: u8) {
+        *self.inner.max_pct.lock().unwrap_or_else(|e| e.into_inner()) = pct;
+    }
+
+    fn setup(&self) -> Setup {
+        Setup {
+            max_pct: *self.inner.max_pct.lock().unwrap_or_else(|e| e.into_inner()),
+            ..self.inner.setup.clone()
+        }
+    }
+
     pub fn new(setup: Setup, tx: mpsc::Sender<Msg>, hub: Arc<CommandHub>) -> Self {
         let (file, broken) = read_profiles(&setup.profiles);
         Datalog {
             inner: Arc::new(Inner {
+                max_pct: Mutex::new(setup.max_pct),
                 setup,
                 tx,
                 hub,
@@ -604,7 +619,7 @@ impl Datalog {
         let start_values = self.readings(&[CLOCK, ODOMETER]).await;
         let start_time = SystemTime::now();
 
-        let setup = self.inner.setup.clone();
+        let setup = self.setup();
         let p = profile.clone();
         let l = load.clone();
         let (meta, dir, file) = tokio::task::spawn_blocking(move || open(&setup, &p, &l))
@@ -783,7 +798,7 @@ impl Datalog {
             if rows == 1 { "" } else { "s" }
         );
         let end = End {
-            setup: self.inner.setup.clone(),
+            setup: self.setup(),
             meta: plan.meta,
             dir: plan.dir,
             profile: plan.profile,

@@ -189,6 +189,8 @@ pub struct Captures {
 
 struct Inner {
     setup: Setup,
+    /// `minutes` and `max_pct`, live from the settings.
+    limits: Mutex<(u64, u8)>,
     tx: mpsc::Sender<Msg>,
     hub: Arc<CommandHub>,
     limiter: Mutex<Limiter>,
@@ -206,6 +208,7 @@ impl Captures {
             .unwrap_or_default();
         Captures {
             inner: Arc::new(Inner {
+                limits: Mutex::new((setup.minutes, setup.max_pct)),
                 setup,
                 tx,
                 hub,
@@ -220,6 +223,20 @@ impl Captures {
     /// `page`, `portal`, `cli`, `crash:<unit>`, `error:<what>`. Answers
     /// `Response::Captured`, or `Response::Error` (also when an automatic
     /// one is over its rate limit).
+    /// `[logs] capture_minutes` and `max_pct`, live.
+    pub fn set_limits(&self, minutes: u64, max_pct: u8) {
+        *self.inner.limits.lock().unwrap_or_else(|e| e.into_inner()) = (minutes, max_pct);
+    }
+
+    fn setup(&self) -> Setup {
+        let (minutes, max_pct) = *self.inner.limits.lock().unwrap_or_else(|e| e.into_inner());
+        Setup {
+            minutes,
+            max_pct,
+            ..self.inner.setup.clone()
+        }
+    }
+
     /// The logs folder.
     pub fn root(&self) -> &Path {
         &self.inner.setup.root
@@ -248,7 +265,7 @@ impl Captures {
     /// Retention once at startup.
     pub fn prune_now(&self) {
         let root = self.inner.setup.root.clone();
-        let pct = self.inner.setup.max_pct;
+        let pct = self.setup().max_pct;
         tokio::task::spawn_blocking(move || {
             let _ = std::fs::create_dir_all(&root);
             prune(&Logs::new(&root), pct, None);
@@ -277,7 +294,7 @@ impl Captures {
             };
         }
         let _busy = self.inner.busy.lock().await;
-        let s = &self.inner.setup;
+        let s = self.setup();
         let back = Duration::from_secs(s.minutes * 60);
         let (snapshot, end, note) = match after {
             Some(a) => (None, a.end, Some(a.note)),
@@ -297,7 +314,7 @@ impl Captures {
             }
         };
         let job = Job {
-            setup: s.clone(),
+            setup: s,
             trigger: trigger.clone(),
             snapshot,
             start: end.checked_sub(back).unwrap_or(end),

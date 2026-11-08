@@ -26,7 +26,8 @@ max_pct = 25
 
 # Set the Pi clock from the car's (0x65D) when they differ by more than
 # 2 minutes and network time hasn't synced. Needs os/profile.sh (polkit rule)
-# and the Pi's timezone set to the car's (profile --tz).
+# and the Pi's timezone set to the car's (profile --tz, or the settings API;
+# the timezone isn't kept here).
 [clock]
 set_from_car = true
 
@@ -35,14 +36,23 @@ set_from_car = true
 enabled = false
 
 # Off: when the bus goes silent with Kl15 off, the shutdown is logged, not run.
+# silent_s: how long the bus stays quiet first (15-600). radio_hold_min: the
+# wait instead while the radio was last seen playing (0-120, 0 = no hold).
 [power]
 shutdown = false
+silent_s = 60
+radio_hold_min = 30
 
-# Keys to LIVI through a uinput keyboard (needs deploy/99-carpi-uinput.rules).
+# Keys to LIVI through a uinput keyboard (needs deploy/99-carpi-uinput.rules;
+# a change needs a carpid restart).
+# long_ms: faceplate long press (200-1500). extended_s: faceplate hold for
+# system actions (3-20). The wheel's long press stays 1 s.
 # bindings: the whole key table, replacing the built-in one. Set it through
 # the settings API, which writes it here.
 [input]
 uinput = true
+long_ms = 440
+extended_s = 10
 
 # Light model (docs/PLAN.md 2.6). auto_brightness off: BB 00 once, then the
 # RNS-E does its own thing. ambient_source: cluster, climatronic or blend.
@@ -99,12 +109,20 @@ nav_dest_distance = true
 nav_lanes = "flip"          # near a turn: "flip" with the road, "swap" for it, "off"
 
 # Phone portal: http://<pi>:5003/files. Uploads need the PIN once one is set
-# (set it through the settings API).
+# (set it through the settings API). protect_downloads: downloads need it too
+# (a change needs a carpid restart).
 # Remove this section to turn the portal off.
 [portal]
 bind = "0.0.0.0:5003"
+protect_downloads = false
 
 # Updates (carpi-update reads this too). See docs/DEPLOY.md section 3.
 [update]
 repo = "DSparks156x/pq35-carpi"
-channel = "stable"
+channel = "stable"                # or "beta"
+
+# A/V over SD: the settings API edits env (only the keys it knows; comments
+# and other lines stay) and restarts unit, a user unit, to apply it.
+[avsd]
+env = "~/avsd/avsd.env"
+unit = "avsd-chain.service"

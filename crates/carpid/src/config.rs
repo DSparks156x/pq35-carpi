@@ -27,15 +27,20 @@ use std::path::{Path, PathBuf};
 ///
 /// [clock]
 /// set_from_car = true  # set the Pi clock from the car's (0x65D) when off by > 2 min
+///                      # (the timezone is the Pi's own: timedatectl, or the settings API)
 ///
 /// [tx]
 /// enabled = false      # off: gate-approved frames are logged, not sent
 ///
 /// [power]
 /// shutdown = false     # off: a shutdown request is logged, not acted on
+/// silent_s = 60        # shut down this long after the bus goes quiet (15-600)
+/// radio_hold_min = 30  # wait this long instead while the radio plays (0-120, 0 = no hold)
 ///
 /// [input]
-/// uinput = true        # keys to LIVI through a virtual keyboard
+/// uinput = true        # keys to LIVI through a virtual keyboard (restart to change)
+/// long_ms = 440        # faceplate long press (200-1500); the wheel's stays 1 s
+/// extended_s = 10      # faceplate hold for system actions (3-20)
 /// # bindings = [ { table = "livi", key = "wheel_up", gesture = "short", action = "prev" }, ... ]
 ///
 /// [light]              # see deploy/carpid.toml and docs/PLAN.md 2.6
@@ -79,6 +84,10 @@ use std::path::{Path, PathBuf};
 /// [update]             # read by carpi-update too; see docs/DEPLOY.md
 /// repo = "DSparks156x/pq35-carpi"
 /// channel = "stable"   # or "beta"
+///
+/// [avsd]               # A/V over SD: the settings API edits its env file
+/// env = "~/avsd/avsd.env"
+/// unit = "avsd-chain.service"   # user unit restarted after a change
 /// ```
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,6 +113,8 @@ pub struct Config {
     pub light: Light,
     #[serde(default)]
     pub dis: Dis,
+    #[serde(default)]
+    pub avsd: Avsd,
     /// Absent: no portal. `config_file` is always the file carpid loaded.
     pub portal: Option<carpi_portal::PortalConfig>,
 }
@@ -413,12 +424,26 @@ pub struct Tx {
     pub enabled: bool,
 }
 
-/// Off by default: the first runs on the car log the shutdown request.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Shutdown off by default: the first runs on the car log the request.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
 pub struct Power {
-    #[serde(default)]
     pub shutdown: bool,
+    /// Bus quiet this long: shut down.
+    pub silent_s: u32,
+    /// The wait while the radio was last seen on; 0 = no hold.
+    pub radio_hold_min: u32,
+}
+
+impl Default for Power {
+    fn default() -> Self {
+        let d = carpi_power::Config::default();
+        Power {
+            shutdown: false,
+            silent_s: d.silent_for.as_secs() as u32,
+            radio_hold_min: (d.radio_hold.as_secs() / 60) as u32,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -426,6 +451,12 @@ pub struct Power {
 pub struct Input {
     #[serde(default = "yes")]
     pub uinput: bool,
+    /// Faceplate long press.
+    #[serde(default = "default_long_ms")]
+    pub long_ms: u32,
+    /// Faceplate hold for system actions.
+    #[serde(default = "default_extended_s")]
+    pub extended_s: u32,
     /// The whole binding table. Absent: the built-in one.
     pub bindings: Option<Vec<BindingCfg>>,
 }
@@ -434,8 +465,51 @@ impl Default for Input {
     fn default() -> Self {
         Input {
             uinput: true,
+            long_ms: default_long_ms(),
+            extended_s: default_extended_s(),
             bindings: None,
         }
+    }
+}
+
+fn default_long_ms() -> u32 {
+    440
+}
+
+fn default_extended_s() -> u32 {
+    10
+}
+
+/// `[avsd]`: the A/V-over-SD chain's settings file and unit.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Avsd {
+    /// `~/` is the home folder.
+    pub env: PathBuf,
+    /// User unit restarted after a change.
+    pub unit: String,
+}
+
+impl Default for Avsd {
+    fn default() -> Self {
+        Avsd {
+            env: "~/avsd/avsd.env".into(),
+            unit: "avsd-chain.service".into(),
+        }
+    }
+}
+
+/// `~/x` -> `$HOME/x`.
+pub fn expand_home(p: &Path) -> PathBuf {
+    let home = || {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+    };
+    match p.to_str() {
+        Some("~") => home(),
+        Some(s) if s.starts_with("~/") => home().join(&s[2..]),
+        _ => p.to_path_buf(),
     }
 }
 
@@ -507,16 +581,7 @@ impl Default for LogsCfg {
 impl LogsCfg {
     /// `dir` with `~/` expanded.
     pub fn root(&self) -> PathBuf {
-        let home = || {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(std::env::temp_dir)
-        };
-        match self.dir.to_str() {
-            Some("~") => home(),
-            Some(s) if s.starts_with("~/") => home().join(&s[2..]),
-            _ => self.dir.clone(),
-        }
+        expand_home(&self.dir)
     }
 }
 
@@ -615,6 +680,26 @@ impl Config {
         if !(1..=90).contains(&self.logs.max_pct) {
             return Err("[logs] max_pct must be 1-90".into());
         }
+        if !(15..=600).contains(&self.power.silent_s) {
+            return Err("[power] silent_s must be 15-600".into());
+        }
+        if self.power.radio_hold_min > 120 {
+            return Err("[power] radio_hold_min must be 0-120".into());
+        }
+        if !(200..=1500).contains(&self.input.long_ms) {
+            return Err("[input] long_ms must be 200-1500".into());
+        }
+        if !(3..=20).contains(&self.input.extended_s) {
+            return Err("[input] extended_s must be 3-20".into());
+        }
+        if let Some(c) = &self.update.channel
+            && c != "stable"
+            && c != "beta"
+        {
+            return Err(format!(
+                "[update] channel must be stable or beta, not {c:?}"
+            ));
+        }
         for (i, p) in self.dis.pages.iter().enumerate() {
             let at = format!("[dis] pages {} ('{}')", i + 1, p.name);
             if p.name.trim().is_empty() {
@@ -681,6 +766,23 @@ impl Config {
             )
             .map_err(|e| format!("[input] bindings: {e}")),
         }
+    }
+
+    /// `[power]` for the shutdown policy.
+    pub fn power_policy(&self) -> carpi_power::Config {
+        carpi_power::Config {
+            silent_for: std::time::Duration::from_secs(self.power.silent_s.into()),
+            radio_hold: std::time::Duration::from_secs(u64::from(self.power.radio_hold_min) * 60),
+            ..Default::default()
+        }
+    }
+
+    /// `[input]` key timings.
+    pub fn gestures(&self) -> carpi_input::GestureConfig {
+        carpi_input::GestureConfig::new(
+            std::time::Duration::from_millis(self.input.long_ms.into()),
+            std::time::Duration::from_secs(self.input.extended_s.into()),
+        )
     }
 
     pub fn readings(&self) -> Vec<Reading> {
@@ -827,6 +929,7 @@ impl Config {
             update: Update::default(),
             light: Light::default(),
             dis: Dis::default(),
+            avsd: Avsd::default(),
             portal: None,
         }
     }

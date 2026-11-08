@@ -165,11 +165,13 @@ if ! id -nG "$USERNAME" | tr ' ' '\n' | grep -qx adm; then
 fi
 
 # 8. carpid sets the clock from the car's while network time hasn't synced (timedated; needs
-#    set-ntp too, since timedated refuses set-time while NTP is on).
-put_file /etc/polkit-1/rules.d/50-carpi-time.rules "// carpid: set the clock from the car's (crates/carpid/src/clock.rs).
+#    set-ntp too, since timedated refuses set-time while NTP is on), and the timezone from
+#    the settings page.
+put_file /etc/polkit-1/rules.d/50-carpi-time.rules "// carpid: set the clock from the car's, and the timezone (crates/carpid/src/clock.rs).
 polkit.addRule(function(action, subject) {
   if ((action.id == \"org.freedesktop.timedate1.set-time\" ||
-       action.id == \"org.freedesktop.timedate1.set-ntp\") && subject.user == \"$USERNAME\") {
+       action.id == \"org.freedesktop.timedate1.set-ntp\" ||
+       action.id == \"org.freedesktop.timedate1.set-timezone\") && subject.user == \"$USERNAME\") {
     return polkit.Result.YES;
   }
 });" || true

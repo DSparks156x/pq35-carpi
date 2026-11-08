@@ -11,7 +11,8 @@
 //! sequence is: `set-ntp false`, `set-time`, `set-ntp true`. Turning NTP back
 //! on restarts timesyncd, which still corrects the clock once it reaches a
 //! server. The car clock is local, so the Pi's timezone must match it
-//! (os/profile.sh --tz).
+//! (os/profile.sh --tz, or the settings API: `set-timezone`, also granted).
+//! glibc reads the timezone once, so carpid needs a restart after a change.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -240,6 +241,109 @@ pub fn set_from_car(_car: i64, _pi: i64) -> Result<Option<String>, String> {
     Err("setting the clock needs Linux (timedated)".into())
 }
 
+const ZONEINFO: &str = "/usr/share/zoneinfo";
+
+/// Zones offered besides every `America/*` and `Europe/*`.
+const OTHER_ZONES: &[&str] = &[
+    "UTC",
+    "Africa/Johannesburg",
+    "Asia/Dubai",
+    "Asia/Kolkata",
+    "Asia/Shanghai",
+    "Asia/Singapore",
+    "Asia/Tokyo",
+    "Australia/Perth",
+    "Australia/Sydney",
+    "Pacific/Auckland",
+    "Pacific/Honolulu",
+];
+
+/// The Pi's timezone: `/etc/localtime`'s link into the zoneinfo tree.
+pub fn timezone() -> String {
+    std::fs::read_link("/etc/localtime")
+        .ok()
+        .and_then(|p| {
+            let s = p.to_string_lossy().into_owned();
+            s.split_once("zoneinfo/").map(|(_, z)| z.to_string())
+        })
+        .unwrap_or_default()
+}
+
+/// Timezone choices from the zoneinfo folder, sorted. Read once.
+pub fn timezones() -> &'static [String] {
+    static LIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| zones_in(std::path::Path::new(ZONEINFO)))
+}
+
+fn zones_in(root: &std::path::Path) -> Vec<String> {
+    fn walk(dir: &std::path::Path, name: &str, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let n = format!("{name}/{}", e.file_name().to_string_lossy());
+            match e.file_type() {
+                Ok(t) if t.is_dir() => walk(&e.path(), &n, out),
+                Ok(_) => out.push(n),
+                Err(_) => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for area in ["America", "Europe"] {
+        walk(&root.join(area), area, &mut out);
+    }
+    out.extend(
+        OTHER_ZONES
+            .iter()
+            .filter(|z| root.join(z).is_file())
+            .map(|z| z.to_string()),
+    );
+    out.retain(|z| {
+        z.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c))
+    });
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The command that sets `tz`, if it's one of `choices`.
+pub fn set_timezone_command(tz: &str, choices: &[String]) -> Result<Vec<String>, String> {
+    if !choices.iter().any(|c| c == tz) {
+        return Err(if choices.is_empty() {
+            "no timezone database on this machine".into()
+        } else {
+            format!("unknown timezone {tz:?}")
+        });
+    }
+    Ok(["timedatectl", "set-timezone", tz]
+        .iter()
+        .map(|s| s.to_string())
+        .collect())
+}
+
+/// Runs `cmd` with a time limit. Async: carpid's loop keeps going.
+pub async fn run(cmd: Vec<String>) -> Result<(), String> {
+    let (prog, args) = cmd.split_first().ok_or("empty command")?;
+    let out = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio::process::Command::new(prog).args(args).output(),
+    )
+    .await
+    .map_err(|_| format!("{} timed out", cmd.join(" ")))?
+    .map_err(|e| format!("{prog}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}: {}",
+            cmd.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +376,39 @@ mod tests {
         assert_eq!(needs_set(car + 5 * 3600, car), Some(car));
         // An unset car clock is no time at all.
         assert_eq!(car_now("2000-01-01T00:00:00", 0), None);
+    }
+
+    #[test]
+    fn timezone_command_and_choices() {
+        let d = tempfile::tempdir().unwrap();
+        for z in [
+            "Europe/Berlin",
+            "America/Chicago",
+            "America/Indiana/Knox",
+            "Asia/Tokyo",
+            "Asia/Omsk",
+        ] {
+            let p = d.path().join(z);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "TZif").unwrap();
+        }
+        let zones = zones_in(d.path());
+        assert_eq!(
+            zones,
+            [
+                "America/Chicago",
+                "America/Indiana/Knox",
+                "Asia/Tokyo",
+                "Europe/Berlin"
+            ]
+        );
+        assert_eq!(
+            set_timezone_command("Europe/Berlin", &zones).unwrap(),
+            ["timedatectl", "set-timezone", "Europe/Berlin"]
+        );
+        assert!(set_timezone_command("Asia/Omsk", &zones).is_err());
+        assert!(set_timezone_command("Europe/Berlin; reboot", &zones).is_err());
+        assert!(set_timezone_command("UTC", &[]).is_err());
     }
 
     #[test]

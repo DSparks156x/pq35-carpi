@@ -14,6 +14,7 @@
 
 mod act;
 mod api;
+mod avsd;
 pub mod capture;
 mod clock;
 mod commands;
@@ -107,6 +108,8 @@ struct Daemon {
     /// Next car-clock comparison; true while one is setting the clock.
     clock_at: Instant,
     clock_busy: Arc<AtomicBool>,
+    /// The CAN ring's length, fixed at start.
+    ring_minutes: u64,
 }
 
 /// Nudges are saved this long after the last one, so a run of key presses
@@ -159,6 +162,8 @@ async fn main() -> anyhow::Result<()> {
     let recorder = Recorder::new(Duration::from_secs(ring_min * 60), 2_000_000);
     let mut car = Car::new(ifaces.clone(), recorder, config::raw_capture_dir());
     car.configure(cfg.core(), Instant::now());
+    car.set_power(cfg.power_policy());
+    car.set_gestures(cfg.gestures());
     let mut act = act::Actuators::new(
         &cfg,
         ifaces.iter().map(|i| i.name.clone()).collect(),
@@ -258,6 +263,8 @@ async fn main() -> anyhow::Result<()> {
         info!("no [portal] in the config; phone portal off");
     }
 
+    // The timezone list, read once off the loop.
+    tokio::task::spawn_blocking(clock::timezones);
     let socket = cfg.api.socket.clone();
     let mut d = Daemon {
         cfg,
@@ -275,6 +282,7 @@ async fn main() -> anyhow::Result<()> {
         beat_at: Instant::now(),
         clock_at: Instant::now() + Duration::from_secs(10),
         clock_busy: Arc::new(AtomicBool::new(false)),
+        ring_minutes: ring_min,
     };
 
     let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -400,7 +408,33 @@ impl Daemon {
                 }
             },
             Msg::Settings(action, reply) => {
-                let _ = reply.send(self.settings(car, action, now));
+                let (mut resp, tz) = self.settings(car, action, now);
+                match tz {
+                    None => {
+                        let _ = reply.send(resp);
+                    }
+                    // timedatectl runs off the loop; the reply waits for it.
+                    Some(cmd) => {
+                        tokio::spawn(async move {
+                            match clock::run(cmd).await {
+                                Ok(()) => {
+                                    if let Response::Settings { settings, .. } = &mut resp {
+                                        settings.clock.timezone = clock::timezone();
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("timezone: {e}");
+                                    resp = Response::Error {
+                                        message: format!(
+                                            "settings saved, but the timezone wasn't set: {e}"
+                                        ),
+                                    };
+                                }
+                            }
+                            let _ = reply.send(resp);
+                        });
+                    }
+                }
             }
             Msg::ConnClosed(conn) => car.conn_closed(conn, now),
             Msg::Snapshot(back, reply) => {
@@ -473,51 +507,120 @@ impl Daemon {
         });
     }
 
-    fn settings(&mut self, car: &mut Car, action: SettingsAction, now: Instant) -> Response {
+    fn current(&self) -> carpi_proto::Settings {
+        let mut s = settings::get(&self.cfg);
+        settings::system(&mut s, &self.cfg);
+        s
+    }
+
+    /// The reply, and a timezone command to run before sending it.
+    fn settings(
+        &mut self,
+        car: &mut Car,
+        action: SettingsAction,
+        now: Instant,
+    ) -> (Response, Option<Vec<String>>) {
         let patch = match action {
             SettingsAction::Get => {
-                return Response::Settings {
-                    settings: settings::get(&self.cfg),
+                let r = Response::Settings {
+                    settings: self.current(),
                     restart_needed: Vec::new(),
                 };
+                return (r, None);
             }
             SettingsAction::Set { patch } => *patch,
         };
+        match self.set(car, &patch, now) {
+            Ok(r) => r,
+            Err(message) => (Response::Error { message }, None),
+        }
+    }
+
+    fn set(
+        &mut self,
+        car: &mut Car,
+        patch: &carpi_proto::SettingsPatch,
+        now: Instant,
+    ) -> Result<(Response, Option<Vec<String>>), String> {
+        // Checked before anything is saved.
+        let tz = match patch.clock.as_ref().and_then(|c| c.timezone.as_deref()) {
+            Some(tz) if tz != clock::timezone() => {
+                Some(clock::set_timezone_command(tz, clock::timezones())?)
+            }
+            _ => None,
+        };
+        let avsd_env = config::expand_home(&self.cfg.avsd.env);
+        let avsd = patch.avsd.as_ref();
+        if let Some(a) = avsd.filter(|a| !a.values.is_empty()) {
+            let text = std::fs::read_to_string(&avsd_env)
+                .map_err(|e| format!("can't read {}: {e}", avsd_env.display()))?;
+            avsd::edit(&text, &a.values)?;
+        }
         // The file must have the latest learned points before it's patched.
         self.save_learned(true);
         if !self.have_file {
-            return Response::Error {
-                message: format!(
-                    "no config file at {}; settings can't be saved",
-                    self.config_path.display()
-                ),
-            };
+            return Err(format!(
+                "no config file at {}; settings can't be saved",
+                self.config_path.display()
+            ));
         }
-        let new = match settings::set(&self.config_path, &patch) {
-            Ok(c) => c,
-            Err(message) => return Response::Error { message },
-        };
-        // All live.
+        let new = settings::set(&self.config_path, patch)?;
         car.configure(new.core(), now);
+        car.set_power(new.power_policy());
+        car.set_gestures(new.gestures());
         if new.tx.enabled != self.cfg.tx.enabled {
             self.act.set_tx_enabled(new.tx.enabled);
         }
         self.act.set_shutdown_enabled(new.power.shutdown);
+        self.captures
+            .set_limits(new.logs.capture_minutes, new.logs.max_pct);
+        self.datalog.set_max_pct(new.logs.max_pct);
         if let Some(cell) = &self.portal_pin {
             *cell.write().unwrap_or_else(|e| e.into_inner()) =
                 new.portal.as_ref().and_then(|p| p.pin.clone());
         }
         info!("settings saved to {}", self.config_path.display());
-        // The portal starts and stops with carpid.
         let mut restart_needed = Vec::new();
+        // The portal starts and stops with carpid, and reads its config once.
         if new.portal.is_some() != self.portal_pin.is_some() {
             restart_needed.push("portal".into());
         }
-        self.cfg = new;
-        Response::Settings {
-            settings: settings::get(&self.cfg),
-            restart_needed,
+        let protect = |c: &config::Config| c.portal.as_ref().map(|p| p.protect_downloads);
+        if self.portal_pin.is_some() && protect(&new) != protect(&self.cfg) {
+            restart_needed.push("portal.protect_downloads".into());
         }
+        // The keyboard is opened at start.
+        if new.input.uinput != self.cfg.input.uinput {
+            restart_needed.push("input.uinput".into());
+        }
+        // The CAN ring is sized at start.
+        if new.logs.capture_minutes > self.ring_minutes {
+            restart_needed.push("logs.capture_minutes".into());
+        }
+        // glibc reads the timezone once.
+        if tz.is_some() {
+            restart_needed.push("clock.timezone".into());
+        }
+        self.cfg = new;
+        if let Some(a) = avsd {
+            let changed = if a.values.is_empty() {
+                false
+            } else {
+                // Checked above; it can only fail on the write now.
+                match avsd::save(&avsd_env, &a.values) {
+                    Ok(c) => c,
+                    Err(e) => return Err(format!("carpid.toml saved, but {e}")),
+                }
+            };
+            if changed || a.restart {
+                avsd::restart(self.cfg.avsd.unit.clone());
+            }
+        }
+        let r = Response::Settings {
+            settings: self.current(),
+            restart_needed,
+        };
+        Ok((r, tz))
     }
 
     /// Writes learned light points once they've settled (`now`: at once).

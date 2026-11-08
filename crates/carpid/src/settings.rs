@@ -3,14 +3,16 @@
 //! checks the result with the loader's own rules, then replaces the file
 //! atomically with a backup beside it. A rejected patch leaves the file alone.
 //!
-//! Everything here applies live (see `main.rs`); `restart_needed` stays for
-//! settings that can't.
+//! Most of it applies live (see `main.rs`); `restart_needed` names what
+//! can't. The timezone (timedated) and the A/V-over-SD settings (avsd.env)
+//! aren't in carpid.toml: `main.rs` sets those, and [`system`] reads them.
 
 use crate::config::Config;
 use carpi_proto::{
     AmbientSource, Binding, LearnedPoint, LightPatch, PinChange, ReadingSetting, Settings,
-    SettingsPatch,
+    SettingsPatch, UpdateChannel,
 };
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Value, value};
 
@@ -128,14 +130,121 @@ pub fn get(cfg: &Config) -> Settings {
             .as_ref()
             .and_then(|p| p.pin.as_deref())
             .is_some_and(|p| !p.is_empty()),
-        logs: Default::default(),
-        clock: Default::default(),
-        power: Default::default(),
-        input: Default::default(),
-        portal: Default::default(),
-        update: Default::default(),
-        avsd: Default::default(),
+        logs: carpi_proto::LogsSettings {
+            capture_minutes: cfg.logs.capture_minutes as u32,
+            max_pct: cfg.logs.max_pct,
+        },
+        clock: carpi_proto::ClockSettings {
+            set_from_car: cfg.clock.set_from_car,
+            ..Default::default()
+        },
+        power: carpi_proto::PowerSettings {
+            shutdown: cfg.power.shutdown,
+            silent_s: cfg.power.silent_s,
+            radio_hold_min: cfg.power.radio_hold_min,
+        },
+        input: carpi_proto::InputSettings {
+            uinput: cfg.input.uinput,
+            long_ms: cfg.input.long_ms,
+            extended_s: cfg.input.extended_s,
+        },
+        portal: carpi_proto::PortalSettings {
+            protect_downloads: cfg.portal.as_ref().is_some_and(|p| p.protect_downloads),
+            address: cfg.portal.as_ref().map(|p| portal_address(p.bind, None)),
+        },
+        update: carpi_proto::UpdateSettings {
+            channel: match cfg.update.channel.as_deref() {
+                Some("beta") => UpdateChannel::Beta,
+                _ => UpdateChannel::Stable,
+            },
+            version: String::new(),
+        },
+        avsd: carpi_proto::AvsdSettings {
+            path: crate::config::expand_home(&cfg.avsd.env)
+                .display()
+                .to_string(),
+            found: false,
+            values: crate::avsd::values(""),
+            ranges: crate::avsd::ranges(),
+        },
     }
+}
+
+/// The parts [`get`] can't know from carpid.toml: timezone, portal address
+/// on the hotspot, release, avsd.env.
+pub fn system(s: &mut Settings, cfg: &Config) {
+    s.clock.timezone = crate::clock::timezone();
+    s.clock.timezones = crate::clock::timezones().to_vec();
+    if let Some(p) = &cfg.portal {
+        s.portal.address = Some(portal_address(p.bind, hotspot_ip()));
+    }
+    s.update.version = version(Path::new(MANIFEST));
+    s.avsd = crate::avsd::read(&crate::config::expand_home(&cfg.avsd.env));
+}
+
+const MANIFEST: &str = "/opt/carpi/current/manifest.json";
+
+/// LIVI's hotspot address when wlan0 has none (its default).
+const HOTSPOT_IP: Ipv4Addr = Ipv4Addr::new(10, 10, 0, 1);
+
+/// The URL the phone uses: the bind address, or the hotspot's when bound to
+/// every interface.
+pub fn portal_address(bind: SocketAddr, wlan: Option<Ipv4Addr>) -> String {
+    let ip = if bind.ip().is_unspecified() {
+        IpAddr::V4(wlan.unwrap_or(HOTSPOT_IP))
+    } else {
+        bind.ip()
+    };
+    format!("http://{}", SocketAddr::new(ip, bind.port()))
+}
+
+/// `carpid 0.1.0, release 2026.11.08 (stable)`.
+pub fn version(manifest: &Path) -> String {
+    let carpid = format!("carpid {}", env!("CARGO_PKG_VERSION"));
+    let m = std::fs::read(manifest)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+    match m {
+        Some(m) => format!(
+            "{carpid}, release {} ({})",
+            m["version"].as_str().unwrap_or("?"),
+            m["channel"].as_str().unwrap_or("?")
+        ),
+        None => format!("{carpid} (no release manifest)"),
+    }
+}
+
+/// wlan0's IPv4 address (the hotspot's while it runs).
+#[cfg(unix)]
+fn hotspot_ip() -> Option<Ipv4Addr> {
+    let mut found = None;
+    // SAFETY: getifaddrs fills a list we only read, then free once.
+    unsafe {
+        let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut list) != 0 {
+            return None;
+        }
+        let mut p = list;
+        while !p.is_null() {
+            let a = &*p;
+            if !a.ifa_addr.is_null()
+                && i32::from((*a.ifa_addr).sa_family) == libc::AF_INET
+                && std::ffi::CStr::from_ptr(a.ifa_name).to_bytes() == b"wlan0"
+            {
+                let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
+                found = Some(Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)));
+                break;
+            }
+            p = a.ifa_next;
+        }
+        libc::freeifaddrs(list);
+    }
+    found
+}
+
+#[cfg(not(unix))]
+fn hotspot_ip() -> Option<Ipv4Addr> {
+    None
 }
 
 /// One element per line, so the file stays readable.
@@ -294,9 +403,64 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         table(&mut doc, "tx")?;
         doc["tx"]["enabled"] = value(v);
     }
+    // The old flat field first: `power.shutdown` wins.
     if let Some(v) = patch.power_shutdown {
         table(&mut doc, "power")?;
         doc["power"]["shutdown"] = value(v);
+    }
+    if let Some(p) = &patch.power {
+        table(&mut doc, "power")?;
+        if let Some(v) = p.shutdown {
+            doc["power"]["shutdown"] = value(v);
+        }
+        if let Some(v) = p.silent_s {
+            doc["power"]["silent_s"] = value(i64::from(v));
+        }
+        if let Some(v) = p.radio_hold_min {
+            doc["power"]["radio_hold_min"] = value(i64::from(v));
+        }
+    }
+    if let Some(l) = &patch.logs {
+        table(&mut doc, "logs")?;
+        if let Some(v) = l.capture_minutes {
+            if !(1..=30).contains(&v) {
+                return Err("capture length must be 1-30 minutes".into());
+            }
+            doc["logs"]["capture_minutes"] = value(i64::from(v));
+        }
+        if let Some(v) = l.max_pct {
+            if !(5..=75).contains(&v) {
+                return Err("space for logs must be 5-75 % of the disk".into());
+            }
+            doc["logs"]["max_pct"] = value(i64::from(v));
+        }
+    }
+    // The timezone isn't in the file (main.rs sets it).
+    if let Some(v) = patch.clock.as_ref().and_then(|c| c.set_from_car) {
+        table(&mut doc, "clock")?;
+        doc["clock"]["set_from_car"] = value(v);
+    }
+    if let Some(i) = &patch.input {
+        table(&mut doc, "input")?;
+        if let Some(v) = i.uinput {
+            doc["input"]["uinput"] = value(v);
+        }
+        if let Some(v) = i.long_ms {
+            doc["input"]["long_ms"] = value(i64::from(v));
+        }
+        if let Some(v) = i.extended_s {
+            doc["input"]["extended_s"] = value(i64::from(v));
+        }
+    }
+    if let Some(v) = patch.portal.as_ref().and_then(|p| p.protect_downloads) {
+        if !doc.get("portal").is_some_and(Item::is_table) {
+            return Err("the portal is off ([portal] isn't in carpid.toml)".into());
+        }
+        doc["portal"]["protect_downloads"] = value(v);
+    }
+    if let Some(v) = patch.update.as_ref().and_then(|u| u.channel) {
+        table(&mut doc, "update")?;
+        doc["update"]["channel"] = value(name(v));
     }
     if let Some(l) = &patch.light {
         light(&mut doc, l)?;
@@ -335,7 +499,9 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         }
         if let Some(v) = d.claim_phone {
             // The old name would shadow it on the next read.
-            doc["dis"].as_table_like_mut().map(|t| t.remove("auto_phone"));
+            doc["dis"]
+                .as_table_like_mut()
+                .map(|t| t.remove("auto_phone"));
             doc["dis"]["claim_phone"] = value(v);
         }
         if let Some(v) = d.release_phone {
@@ -343,7 +509,9 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         }
         if let Some(v) = d.claim_media {
             // The old name would shadow it on the next read.
-            doc["dis"].as_table_like_mut().map(|t| t.remove("auto_media"));
+            doc["dis"]
+                .as_table_like_mut()
+                .map(|t| t.remove("auto_media"));
             doc["dis"]["claim_media"] = value(v);
         }
         if let Some(v) = d.release_media {
@@ -457,6 +625,7 @@ pub fn set(path: &Path, patch: &SettingsPatch) -> Result<Config, String> {
 mod tests {
     use super::*;
     use carpi_proto::DarkModeSource;
+    use std::time::Duration;
 
     const FILE: &str = "# my car\n[bus.ican]\niface = \"can0\" # TT\n\n[tx]\nenabled = false\n\n[portal]\nbind = \"0.0.0.0:5003\"\n";
 
@@ -601,13 +770,19 @@ mod tests {
         let after = get(&cfg);
         assert_eq!(after.dis.claim, DisClaim::Tab);
         assert_eq!(after.dis.default_page, DisPage::Media);
-        assert!(!after.dis.claim_phone && after.dis.claim_nav, "only phone changed");
+        assert!(
+            !after.dis.claim_phone && after.dis.claim_nav,
+            "only phone changed"
+        );
         assert!(!after.dis.release_media && after.dis.release_nav);
         assert_eq!(after.dis.media_layout, DisMediaLayout::Art);
         assert_eq!(after.dis.units, carpi_proto::DisUnits::Imperial);
         assert_eq!(after.dis.pages.len(), 1);
         assert_eq!(after.dis.pages[0].cells[0].unit.as_deref(), Some("psi"));
-        assert_eq!(cfg.core().dis.pages[0].cells[0].icon.as_deref(), Some("boost"));
+        assert_eq!(
+            cfg.core().dis.pages[0].cells[0].icon.as_deref(),
+            Some("boost")
+        );
         assert_eq!(after.dis.clock, carpi_proto::DisClock::H12);
         assert_eq!(after.dis.nav_style, carpi_proto::DisNavStyle::Stock);
         assert!(!after.dis.nav_eta && after.dis.nav_time_left);
@@ -806,6 +981,208 @@ mod tests {
         assert_eq!(
             (l.latitude, l.longitude, l.utc_offset_hours),
             (None, None, None)
+        );
+    }
+
+    #[test]
+    fn new_sections_round_trip() {
+        use carpi_proto::{
+            ClockPatch, InputPatch, LogsPatch, PortalPatch, PowerPatch, UpdatePatch,
+        };
+        let (_d, p) = file();
+        let before = get(&Config::parse(FILE).unwrap());
+        assert_eq!(before.logs, carpi_proto::LogsSettings::default());
+        assert_eq!(before.power, carpi_proto::PowerSettings::default());
+        assert_eq!(before.input, carpi_proto::InputSettings::default());
+        assert_eq!(before.update.channel, UpdateChannel::Stable);
+        assert_eq!(
+            before.portal.address.as_deref(),
+            Some("http://10.10.0.1:5003")
+        );
+        assert_eq!(before.avsd.ranges.len(), before.avsd.values.len());
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                logs: Some(LogsPatch {
+                    capture_minutes: Some(20),
+                    max_pct: Some(50),
+                }),
+                clock: Some(ClockPatch {
+                    set_from_car: Some(false),
+                    timezone: Some("Europe/Berlin".into()),
+                }),
+                power: Some(PowerPatch {
+                    shutdown: Some(true),
+                    silent_s: Some(90),
+                    radio_hold_min: Some(0),
+                }),
+                input: Some(InputPatch {
+                    uinput: Some(false),
+                    long_ms: Some(600),
+                    extended_s: Some(5),
+                }),
+                portal: Some(PortalPatch {
+                    protect_downloads: Some(true),
+                }),
+                update: Some(UpdatePatch {
+                    channel: Some(UpdateChannel::Beta),
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let after = get(&cfg);
+        assert_eq!((after.logs.capture_minutes, after.logs.max_pct), (20, 50));
+        assert!(!after.clock.set_from_car);
+        assert_eq!(
+            after.power,
+            carpi_proto::PowerSettings {
+                shutdown: true,
+                silent_s: 90,
+                radio_hold_min: 0,
+            }
+        );
+        assert!(after.power_shutdown, "the old field follows");
+        assert_eq!(
+            after.input,
+            carpi_proto::InputSettings {
+                uinput: false,
+                long_ms: 600,
+                extended_s: 5,
+            }
+        );
+        assert!(after.portal.protect_downloads);
+        assert_eq!(after.update.channel, UpdateChannel::Beta);
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(get(&Config::parse(&text).unwrap()), after);
+        assert!(text.contains("channel = \"beta\""), "{text}");
+        assert!(!text.contains("Europe"), "the timezone isn't in the file");
+        assert!(text.contains("# my car") && text.contains("# TT"));
+        // What the car model gets.
+        assert_eq!(cfg.power_policy().silent_for, Duration::from_secs(90));
+        assert_eq!(cfg.power_policy().radio_hold, Duration::ZERO);
+        assert_eq!(
+            cfg.gestures().timing(carpi_input::Key::Next).long,
+            Some(Duration::from_millis(600))
+        );
+
+        // The old flat field still works, and power.shutdown wins over it.
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                power_shutdown: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!get(&cfg).power.shutdown);
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                power_shutdown: Some(false),
+                power: Some(PowerPatch {
+                    shutdown: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(get(&cfg).power.shutdown);
+
+        // Out of range is refused, the file kept.
+        let text = std::fs::read_to_string(&p).unwrap();
+        for bad in [
+            SettingsPatch {
+                logs: Some(LogsPatch {
+                    capture_minutes: Some(31),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            SettingsPatch {
+                logs: Some(LogsPatch {
+                    max_pct: Some(4),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            SettingsPatch {
+                power: Some(PowerPatch {
+                    silent_s: Some(14),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            SettingsPatch {
+                power: Some(PowerPatch {
+                    radio_hold_min: Some(121),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            SettingsPatch {
+                input: Some(InputPatch {
+                    long_ms: Some(1501),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            SettingsPatch {
+                input: Some(InputPatch {
+                    extended_s: Some(2),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ] {
+            assert!(set(&p, &bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), text);
+    }
+
+    #[test]
+    fn portal_address_and_version() {
+        let any: SocketAddr = "0.0.0.0:5003".parse().unwrap();
+        assert_eq!(portal_address(any, None), "http://10.10.0.1:5003");
+        assert_eq!(
+            portal_address(any, Some(Ipv4Addr::new(10, 42, 0, 1))),
+            "http://10.42.0.1:5003"
+        );
+        let one: SocketAddr = "192.168.1.5:8080".parse().unwrap();
+        assert_eq!(portal_address(one, None), "http://192.168.1.5:8080");
+        let d = tempfile::tempdir().unwrap();
+        let m = d.path().join("manifest.json");
+        assert!(version(&m).ends_with("(no release manifest)"));
+        std::fs::write(&m, r#"{"version":"2026.11.08","channel":"beta"}"#).unwrap();
+        assert!(
+            version(&m).ends_with(", release 2026.11.08 (beta)"),
+            "{}",
+            version(&m)
+        );
+    }
+
+    #[test]
+    fn protect_downloads_needs_the_portal_section() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("carpid.toml");
+        std::fs::write(&p, "[bus.ican]\niface = \"can0\"\n").unwrap();
+        let e = set(
+            &p,
+            &SettingsPatch {
+                portal: Some(carpi_proto::PortalPatch {
+                    protect_downloads: Some(true),
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(e.contains("portal is off"), "{e}");
+        assert_eq!(
+            get(&Config::parse("[bus.ican]\niface='x'\n").unwrap())
+                .portal
+                .address,
+            None
         );
     }
 
