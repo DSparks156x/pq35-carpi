@@ -6,6 +6,7 @@
 //! messages and is cancelled when its slot changes (DIS.md §2.3).
 
 pub mod call;
+pub mod cover;
 pub mod media;
 pub mod nav;
 pub mod readings;

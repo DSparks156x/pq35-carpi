@@ -295,6 +295,7 @@ fn media_input(pos_s: u64, playing: bool) -> carpi_dis::screens::media::MediaInp
         position_ms: Some(pos_s * 1000),
         duration_ms: Some(200_000),
         art: Some((1, art)),
+        cover: None,
     }
 }
 

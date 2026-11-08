@@ -41,6 +41,9 @@ pub struct MediaInput {
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
     pub art: Option<(u64, Art)>,
+    /// The same cover for the full-centre screen and the flash: 64x48 logical
+    /// (`image::cover(.., 64, 48, ..)`) or 128x96 native. Same id as `art`.
+    pub cover: Option<(u64, Art)>,
 }
 
 /// Centred on the three text rows beside it (y 2..29; Drew: it sat too high).

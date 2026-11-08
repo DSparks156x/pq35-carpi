@@ -84,45 +84,69 @@ const TRACKS: [(&str, &str, &str, u64); 3] = [
 ];
 const TRACK_SECS: u64 = 25;
 
-/// Real covers for the bench: `<name>.thumb.bin` files (48x48, 1-bit MSB rows)
-/// in `$CARPI_BENCH_COVERS`, from `cargo run -p carpi-dis --example covers`.
-fn bench_covers() -> &'static [Art] {
+/// Real covers for the bench: `<name>.<kind>.bin` files (1-bit MSB rows) in
+/// `$CARPI_BENCH_COVERS`, from `cargo run -p carpi-dis --example covers`:
+/// `thumb` 48x48 for the media art layout, `cover` 128x96 native for the
+/// full-centre cover and its flash.
+fn bench_covers(kind: &str, w: usize, h: usize) -> Vec<Art> {
+    let Some(dir) = std::env::var_os("CARPI_BENCH_COVERS") else {
+        return Vec::new();
+    };
+    let suffix = format!(".{kind}.bin");
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.to_string_lossy().ends_with(&suffix))
+        .collect();
+    files.sort();
+    files
+        .iter()
+        .filter_map(|f| std::fs::read(f).ok())
+        .filter(|b| b.len() == w.div_ceil(8) * h)
+        .map(|b| Art {
+            w,
+            h,
+            px: (0..w * h)
+                .map(|i| b[(i / w) * w.div_ceil(8) + (i % w) / 8] & (0x80 >> (i % 8)) != 0)
+                .collect(),
+        })
+        .collect()
+}
+
+fn thumbs() -> &'static [Art] {
     static C: std::sync::OnceLock<Vec<Art>> = std::sync::OnceLock::new();
-    C.get_or_init(|| {
-        let Some(dir) = std::env::var_os("CARPI_BENCH_COVERS") else {
-            return Vec::new();
-        };
-        let (w, h) = (usize::from(ART.w) * 2, usize::from(ART.h) * 2);
-        let mut files: Vec<_> = std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.to_string_lossy().ends_with(".thumb.bin"))
-            .collect();
-        files.sort();
-        files
-            .iter()
-            .filter_map(|f| std::fs::read(f).ok())
-            .filter(|b| b.len() == w.div_ceil(8) * h)
-            .map(|b| Art {
-                w,
-                h,
-                px: (0..w * h)
-                    .map(|i| b[(i / w) * w.div_ceil(8) + (i % w) / 8] & (0x80 >> (i % 8)) != 0)
-                    .collect(),
-            })
-            .collect()
-    })
+    C.get_or_init(|| bench_covers("thumb", usize::from(ART.w) * 2, usize::from(ART.h) * 2))
+}
+
+fn full_covers() -> &'static [Art] {
+    static C: std::sync::OnceLock<Vec<Art>> = std::sync::OnceLock::new();
+    C.get_or_init(|| bench_covers("cover", 128, 96))
+}
+
+/// The full-centre cover for a track: real if there are any, else the
+/// synthetic pattern at 128x96.
+pub fn full_cover(track: usize) -> Art {
+    let real = full_covers();
+    if !real.is_empty() {
+        return real[track % real.len()].clone();
+    }
+    pattern(track, 128, 96)
 }
 
 /// A cover per track: the next real one if `CARPI_BENCH_COVERS` has any, else
 /// a synthetic grey pattern dithered to the thumbnail.
 pub fn cover(track: usize) -> Art {
-    let real = bench_covers();
+    let real = thumbs();
     if !real.is_empty() {
         return real[track % real.len()].clone();
     }
+    pattern(track, usize::from(ART.w) * 2, usize::from(ART.h) * 2)
+}
+
+/// Synthetic grey test pattern per track, dithered to `w` x `h`.
+fn pattern(track: usize, ow: usize, oh: usize) -> Art {
     let n = 96usize;
     let mut g = vec![0u8; n * n];
     for y in 0..n {
@@ -140,8 +164,7 @@ pub fn cover(track: usize) -> Art {
             g[y * n + x] = (v * 255.0) as u8;
         }
     }
-    let (w, h) = (usize::from(ART.w) * 2, usize::from(ART.h) * 2);
-    dither(&g, n, n, w, h)
+    dither(&g, n, n, ow, oh)
 }
 
 /// Media `t` into the script: a track every 25 s; paused 8..11 s in; a seek
@@ -168,6 +191,7 @@ pub fn media_at(t: Duration) -> MediaInput {
         position_ms: Some(pos.min(len) * 1000),
         duration_ms: Some(len * 1000),
         art: Some((s / TRACK_SECS, cover((s / TRACK_SECS) as usize))),
+        cover: Some((s / TRACK_SECS, full_cover((s / TRACK_SECS) as usize))),
     }
 }
 

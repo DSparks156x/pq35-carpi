@@ -7,13 +7,14 @@ use crate::fb::Fb;
 use crate::helpers::Ctx;
 use crate::pack::{PackError, Packed, Registers};
 use crate::screens::call::{CallInput, CallScreen};
+use crate::screens::cover::CoverScreen;
 use crate::screens::media::{MediaInput, MediaLayout, MediaScreen};
 use crate::screens::nav::{NavConfig, NavInput, NavScreen};
 use crate::screens::readings::{ReadingSpec, ReadingsInput, ReadingsPage, ReadingsScreen};
 use crate::screens::{Screen, build_frame};
 use crate::session::{Session, SessionConfig, SessionEvent};
 use carpi_can::Frame;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScreenId {
@@ -21,9 +22,11 @@ pub enum ScreenId {
     Readings,
     Media,
     Call,
+    /// Cover art over the whole centre (flash on a new cover, or a page).
+    Cover,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DisConfig {
     pub session: SessionConfig,
     pub arbiter: ArbiterConfig,
@@ -33,6 +36,35 @@ pub struct DisConfig {
     /// Subpages the wheel steps through.
     pub readings_pages: Vec<ReadingsPage>,
     pub media_layout: MediaLayout,
+    /// When the cover changes while media has the centre, show the full cover
+    /// (native refine included) and hold it this long once it's fully drawn
+    /// (the old page's option; Drew: 4 s from the start was too short).
+    /// `None` = off.
+    pub cover_flash: Option<Duration>,
+}
+
+/// A flash never holds the centre longer than this, drawn or not.
+const FLASH_CAP: Duration = Duration::from_secs(20);
+
+/// A running cover flash: the hold starts once the cover is fully drawn.
+#[derive(Clone, Copy, Debug)]
+struct Flash {
+    cap_at: Instant,
+    hold_until: Option<Instant>,
+}
+
+impl Default for DisConfig {
+    fn default() -> Self {
+        DisConfig {
+            session: SessionConfig::default(),
+            arbiter: ArbiterConfig::default(),
+            nav: NavConfig::default(),
+            readings: Vec::new(),
+            readings_pages: Vec::new(),
+            media_layout: MediaLayout::default(),
+            cover_flash: Some(Duration::from_secs(4)),
+        }
+    }
 }
 
 pub struct Dis {
@@ -42,6 +74,9 @@ pub struct Dis {
     readings: ReadingsScreen,
     media: MediaScreen,
     call: CallScreen,
+    cover: CoverScreen,
+    cover_flash: Option<Duration>,
+    flash: Option<Flash>,
     user_page: Option<ScreenId>,
     /// Screen entered, and the generation it was entered in.
     shown: Option<(ScreenId, u32)>,
@@ -67,6 +102,9 @@ impl Dis {
             },
             media: MediaScreen::new(cfg.media_layout),
             call: CallScreen::new(),
+            cover: CoverScreen::new(),
+            cover_flash: cfg.cover_flash,
+            flash: None,
             user_page: None,
             shown: None,
             reenter: false,
@@ -156,6 +194,18 @@ impl Dis {
     pub fn set_media(&mut self, now: Instant, m: MediaInput) {
         let on = m.title.is_some() || m.duration_ms.is_some_and(|d| d > 0);
         self.arbiter.set(Class::Media, on);
+        let new_cover = m.cover.as_ref().map(|(id, _)| *id);
+        if new_cover.is_some() && new_cover != self.cover.id() {
+            // Flash only if media has the centre right now (not on a cold start
+            // under another screen, which would steal the centre later).
+            if let (Some(_), Some(ScreenId::Media)) = (self.cover_flash, self.shown()) {
+                self.flash = Some(Flash {
+                    cap_at: now + FLASH_CAP,
+                    hold_until: None,
+                });
+            }
+        }
+        self.cover.set(m.cover.clone());
         self.media.set(now, m);
         self.step(now);
     }
@@ -209,6 +259,7 @@ impl Dis {
                     ScreenId::Readings => self.readings.next_deadline(&cx),
                     ScreenId::Media => self.media.next_deadline(&cx),
                     ScreenId::Call => self.call.next_deadline(&cx),
+                    ScreenId::Cover => self.cover.next_deadline(&cx),
                 }
             }
             _ => None,
@@ -217,16 +268,29 @@ impl Dis {
             self.session.next_deadline(),
             self.arbiter.next_deadline(now),
             screen,
+            self.flash.as_ref().map(|f| f.hold_until.unwrap_or(f.cap_at)),
         ]
         .into_iter()
         .flatten()
         .min()
     }
 
-    fn screen_for(&self, c: Class) -> Option<ScreenId> {
+    fn screen_for(&mut self, now: Instant, c: Class) -> Option<ScreenId> {
+        if let Some(f) = &mut self.flash {
+            let drawn = self.shown.is_some_and(|(id, _)| id == ScreenId::Cover)
+                && !self.cover.refining()
+                && self.session.frame_idle();
+            if f.hold_until.is_none() && drawn {
+                f.hold_until = Some(now + self.cover_flash.unwrap_or_default());
+            }
+            if now >= f.cap_at || f.hold_until.is_some_and(|t| now >= t) {
+                self.flash = None;
+            }
+        }
         match c {
             Class::NavManeuver => Some(ScreenId::Nav),
             Class::UserPage => self.user_page,
+            Class::Media if self.flash.is_some() => Some(ScreenId::Cover),
             Class::Media => Some(ScreenId::Media),
             Class::Call => Some(ScreenId::Call),
             // No screens yet for alerts or the stock radio.
@@ -240,7 +304,7 @@ impl Dis {
             return;
         }
         let class = self.arbiter.winner(now, Surface::Centre);
-        let want = self.screen_for(class);
+        let want = self.screen_for(now, class);
         self.session.set_want(now, want.is_some());
         let (Some(id), Some(profile)) = (want, self.session.profile()) else {
             return;
@@ -257,6 +321,7 @@ impl Dis {
             ScreenId::Readings => &mut self.readings,
             ScreenId::Media => &mut self.media,
             ScreenId::Call => &mut self.call,
+            ScreenId::Cover => &mut self.cover,
         };
         match build_frame(screen, now, &cx, self.session.registers(), enter) {
             Ok(packed) => {

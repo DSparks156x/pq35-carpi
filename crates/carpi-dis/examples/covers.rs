@@ -7,7 +7,8 @@
 //! Writes `sheet.png` (per cover: source, the grey stage, the 48x48 thumbnail
 //! and the 96x96 full cover, drawn like the white cluster: lit px on black,
 //! 4x) and `<name>.thumb.bin` / `<name>.full.bin` (1-bit,
-//! MSB-first rows) for `carpi dis-bench` (`CARPI_BENCH_COVERS=<out dir>`), plus
+//! MSB-first rows) and `<name>.cover.bin` (128x96 native, the full-centre
+//! cover) for `carpi dis-bench` (`CARPI_BENCH_COVERS=<out dir>`), plus
 //! `<name>.thumb.png` / `<name>.centre.png` tiles (48x48 and the full 128x96
 //! centre) for comparisons.
 
@@ -128,6 +129,7 @@ fn main() {
         }
         let write = |kind: &str, a: &Art| std::fs::write(out.join(format!("{stem}.{kind}.bin")), bits(a)).expect("write");
         write("thumb", &thumb);
+        write("cover", &centre);
         write("full", &full);
     }
     let path: &Path = &out.join("sheet.png");

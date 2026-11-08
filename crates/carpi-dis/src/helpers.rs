@@ -448,11 +448,16 @@ impl<K: PartialEq + Clone> QuickThenRefineIcon<K> {
                 )
             })
             .collect();
-        self.job = p.hires.then(|| RefineJob {
-            version: self.version,
-            strokes: strokes(self.rect, art),
-            next: 0,
-        });
+        // No job when the base is already exact (e.g. doubled logical art).
+        self.job = p
+            .hires
+            .then(|| strokes(self.rect, art))
+            .filter(|s| !s.is_empty())
+            .map(|strokes| RefineJob {
+                version: self.version,
+                strokes,
+                next: 0,
+            });
         groups
     }
 

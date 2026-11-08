@@ -316,3 +316,52 @@ fn media_takes_the_centre_without_a_user_page() {
     w.settle();
     w.check_screen();
 }
+
+#[test]
+fn new_cover_flashes_full_centre_then_back_to_media() {
+    use carpi_dis::icons::Art;
+    use carpi_dis::screens::media::MediaInput;
+    let cover = |id: u64| {
+        let a = Art {
+            w: 128,
+            h: 96,
+            px: (0..128 * 96).map(|i| (i as u64 + id) % 5 == 0).collect(),
+        };
+        Some((id, a))
+    };
+    let media = |id: u64| MediaInput {
+        title: Some(format!("Song {id}")),
+        duration_ms: Some(180_000),
+        position_ms: Some(1_000),
+        playing: true,
+        cover: cover(id),
+        ..Default::default()
+    };
+    let mut w = World::new(ClusterSpec::default());
+    w.hu.dis.set_user_page(w.now(), None);
+    let now = w.now();
+    w.hu.dis.set_media(now, media(1));
+    w.run(Duration::from_secs(3));
+    // First cover arrived before media had the centre: no flash.
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
+    let now = w.now();
+    w.hu.dis.set_media(now, media(2));
+    w.run(Duration::from_secs(1));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Cover));
+    // Native refine runs, then the 4 s hold starts; back to media before the
+    // 20 s cap.
+    let start = w.now();
+    let mut back = None;
+    for _ in 0..250 {
+        w.run(Duration::from_millis(100));
+        if w.hu.dis.shown() == Some(ScreenId::Media) {
+            back = Some(w.now() - start);
+            break;
+        }
+    }
+    let back = back.expect("flash ended");
+    assert!(back >= Duration::from_secs(4), "{back:?}");
+    assert!(back < Duration::from_secs(20), "{back:?}");
+    w.settle();
+    w.check_screen();
+}
