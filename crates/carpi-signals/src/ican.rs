@@ -100,6 +100,12 @@ pub static MESSAGES: &[Message] = &[
         decode: dimmung,
     },
     Message {
+        id: RADIO_4,
+        name: "mRadio_4",
+        cycle: ms(1000),
+        decode: radio_4,
+    },
+    Message {
         id: DIAGNOSE_1,
         name: "mDiagnose_1",
         cycle: ms(1000),
@@ -312,6 +318,19 @@ fn dimmung(d: &[u8], e: Emit) {
         unless(d, 15, num_max(d, 8, 7, 1.0, 0.0, 100)),
     );
     e("light.dim_sensor", num(d, 16, 8, 1.0, 0.0, &[254, 255]));
+}
+
+/// TV source marker in 0x661 byte 3 (RA4_Radio_Para2).
+pub const RADIO_4_TV: u8 = 0x37;
+
+/// 0x661, sent by the RNS-E. Byte 3 says which source is active; 0x37 is TV.
+fn radio_4(d: &[u8], e: Emit) {
+    e("rnse.radio_on", flag(d, 0));
+    e("rnse.mode", num(d, 8, 8, 1.0, 0.0, &[]));
+    e(
+        "rnse.on_tv",
+        d.get(3).map(|b| Value::Bool(*b == RADIO_4_TV)),
+    );
 }
 
 /// 0x65D, odometer and the car's clock.

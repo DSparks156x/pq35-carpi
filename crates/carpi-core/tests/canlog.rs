@@ -53,6 +53,8 @@ fn decodes_parked_car() {
     let s = car.store();
     assert_eq!(s.get_bool("ignition.kl15", end), Some(true));
     assert_eq!(s.get_bool("ignition.zas.kl15", end), Some(true));
+    // 0x661 `83 01 12 37`: the log was taken with the RNS-E on TV.
+    assert_eq!(s.get_bool("rnse.on_tv", end), Some(true));
     assert_eq!(s.get_num("vehicle.speed_kmh", end), Some(0.0));
     // Drew: "sounds plausibly close".
     let odo = s.get_num("vehicle.odometer_km", end).unwrap();

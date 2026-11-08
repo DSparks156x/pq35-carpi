@@ -44,6 +44,9 @@ pub const RNSE_DDP_RX: u32 = 0x7B3;
 pub const RNSE_TOPLINE_1: u32 = 0x7B4;
 pub const RNSE_TOPLINE_2: u32 = 0x7B5;
 pub const RNSE_NAV_STATUS: u32 = 0x604;
+/// mRadio_4: radio on/mode. Byte 3 is 0x37 while the TV source is active
+/// (stock firmware too).
+pub const RADIO_4: u32 = 0x661;
 
 // --- Cluster display ---------------------------------------------------------
 pub const DIS_TOPLINE_1: u32 = 0x363;
