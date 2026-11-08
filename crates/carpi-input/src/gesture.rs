@@ -62,7 +62,8 @@ impl GestureConfig {
 impl Default for GestureConfig {
     /// Wheel: long = 3 press frames at the assumed 500 ms repeat (1 s). No
     /// key uses a double, so none waits for one. Faceplate: long = frame 5 at
-    /// 110 ms (440 ms); extended 5.5 s (Drew: "quite long, 5 s+").
+    /// 110 ms (440 ms); extended 10 s (Drew: rare, "could be 10s plus"; long
+    /// still fires on the way).
     fn default() -> Self {
         let ms = Duration::from_millis;
         let wheel_long = Timing {
@@ -71,7 +72,7 @@ impl Default for GestureConfig {
         };
         let panel = Timing {
             long: Some(ms(440)),
-            extended: Some(ms(5500)),
+            extended: Some(ms(10_000)),
             double: None,
         };
         let mut timings = HashMap::new();
@@ -309,7 +310,7 @@ mod tests {
     #[test]
     fn shipped_defaults() {
         let c = GestureConfig::default();
-        assert_eq!(c.timing(Key::Next).extended, Some(ms(5500)));
+        assert_eq!(c.timing(Key::Next).extended, Some(ms(10_000)));
         assert_eq!(c.timing(Key::WheelClick).double, None);
         assert_eq!(c.timing(Key::Mode).double, None);
     }

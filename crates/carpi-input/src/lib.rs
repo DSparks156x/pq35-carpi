@@ -83,12 +83,12 @@ mod tests {
         let p = ids::RNSE_KEYS;
         let on: &[u8] = &[0x37, 0x30, 1, 0x02, 0x00, 0];
         let off: &[u8] = &[0x37, 0x30, 4, 0x02, 0x00, 0];
-        // 55 frames = 6 s, past the 5.5 s extended threshold.
-        let mut frames: Vec<(u64, u32, &[u8])> = (0..55).map(|i| (i * 110, p, on)).collect();
+        // 95 frames = 10.5 s, past the 10 s extended threshold.
+        let mut frames: Vec<(u64, u32, &[u8])> = (0..95).map(|i| (i * 110, p, on)).collect();
         for i in 0..5 {
-            frames.push((55 * 110 + i * 110, p, off));
+            frames.push((95 * 110 + i * 110, p, off));
         }
-        let got = pipeline(TV, &frames, 8000);
+        let got = pipeline(TV, &frames, 13000);
         // D-pad right on the way (like Hudiy), then shutdown once.
         assert_eq!(
             got,

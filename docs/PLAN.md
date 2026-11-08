@@ -142,7 +142,7 @@ raw frames ─▶ decoders ─▶ KeyEvent{key, Down|Repeat|Up, t} ─▶ gestur
   - Wheel 0x5C3 byte 1 (0B up, 0C down, 08 click, 1C MODE, 2A PTT, 06/07 volume, 00 release; the TT gateway turns a second MODE press into 01).
   - Faceplate and TV-panel 0x461 (`37 30 SS K1 K2 00`, 01 pressed ~110 ms repeat, 04 released ×5).
   - Knob as signed detents.
-- **Gestures**: short, long, extended, double, with per-key timing in config. Timings start from the old code's numbers (wheel long = 3 repeats, 0x461 long 5 frames / extended 30) and get replaced by captured ones.
+- **Gestures**: short, long, extended, double, with per-key timing in config. Timings start from the old code's numbers (wheel long = 3 repeats, 0x461 long 5 frames / extended 30) and get replaced by captured ones. Long fires at its threshold while held; extended (10 s, rare system actions) fires later if the key stays down, so a long press never waits for release.
 - **Router**: decides per gesture from context in the store: `rnse.source` (TV or not), `livi.connected`, `focus` (LIVI, DIS page, our pages). Rules:
   - Nothing routes unless the RNS-E is on TV (Drew: wheel keys ignored outside TV; firmware can be changed if needed).
   - DIS focus (entered by a wheel gesture) sends up/down/click to the DIS.
