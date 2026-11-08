@@ -14,7 +14,9 @@
 
 use carpi_can::Frame;
 use carpi_dis::screens::call::CallInput;
-use carpi_dis::screens::media::{MediaInput, MediaLayout};
+use carpi_dis::icons::Art;
+use carpi_dis::image::{CoverParams, cover};
+use carpi_dis::screens::media::{ART as MEDIA_ART, MediaInput, MediaLayout};
 use carpi_dis::screens::nav::{
     Clock, LaneLayout, NavConfig, NavInput, NavStyle, Units, format_distance_in,
 };
@@ -220,6 +222,10 @@ pub(crate) struct Display {
     top_text: String,
     last_error: Option<String>,
     focus: bool,
+    /// The current cover, decoded once per `media.art_id`.
+    art: Option<(u64, Art, Art)>,
+    /// The id last tried (so a cover that won't decode isn't retried every tick).
+    art_tried: Option<u64>,
     media: Option<MediaInput>,
     call: Option<CallInput>,
     /// Logged state, so the journal shows each change once (car test
@@ -302,7 +308,27 @@ fn new_dis(setup: &DisSetup) -> Dis {
     })
 }
 
-fn media_input(store: &Store, now: Instant) -> MediaInput {
+/// The cover in `media.art_*` (bridge 4a21f85) as the two arts the DIS uses:
+/// the 48x48 px thumbnail for the art layout and the 128x96 native cover for
+/// the full-centre screen and the flash, both through the cover pipeline
+/// (Drew's old tester preset). `None` if there's no art or it won't decode.
+pub fn decode_cover(base64_text: &str) -> Option<(Art, Art)> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_text)
+        .ok()?;
+    let img = image::load_from_memory(&bytes).ok()?.to_rgb8();
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let raw = img.as_raw();
+    let p = CoverParams::default();
+    let (tw, th) = (usize::from(MEDIA_ART.w) * 2, usize::from(MEDIA_ART.h) * 2);
+    Some((cover(raw, w, h, tw, th, &p), cover(raw, w, h, 128, 96, &p)))
+}
+
+fn media_input(store: &Store, now: Instant, art: Option<&(u64, Art, Art)>) -> MediaInput {
     if store.get_bool("media.active", now) != Some(true) {
         return MediaInput::default();
     }
@@ -319,9 +345,8 @@ fn media_input(store: &Store, now: Instant) -> MediaInput {
         playing: store.get_bool("media.playing", now) == Some(true),
         position_ms: ms("media.position_ms"),
         duration_ms: ms("media.duration_ms"),
-        // No album art reaches carpid yet (LIVI doesn't forward it).
-        art: None,
-        cover: None,
+        art: art.map(|(id, thumb, _)| (*id, thumb.clone())),
+        cover: art.map(|(id, _, full)| (*id, full.clone())),
     }
 }
 
@@ -516,6 +541,8 @@ impl Display {
             top_text: String::new(),
             last_error: None,
             focus: false,
+            art: None,
+            art_tried: None,
             media: None,
             call: None,
             log: LogState::default(),
@@ -605,6 +632,35 @@ impl Display {
         self.dis.set_user_page(now, page);
     }
 
+    /// Decode a new cover when `media.art_id` changes; drop it when it goes.
+    fn update_art(&mut self, store: &Store, now: Instant) {
+        let id = store.get_num("media.art_id", now).map(|v| v as u64);
+        if id.is_none() {
+            self.art = None;
+            self.art_tried = None;
+            return;
+        }
+        if id == self.art_tried {
+            return;
+        }
+        self.art_tried = id;
+        let decoded = text(store, "media.art_base64", now).and_then(|t| decode_cover(&t));
+        match (id, decoded) {
+            (Some(id), Some((thumb, full))) => {
+                tracing::info!("dis: new cover {id:x}");
+                self.art = Some((id, thumb, full));
+            }
+            (Some(id), None) => {
+                tracing::warn!(
+                    "dis: cover {id:x} ({:?}) didn't decode",
+                    text(store, "media.art_mime", now)
+                );
+                self.art = None;
+            }
+            _ => {}
+        }
+    }
+
     /// DIS focus on or off (the wheel drives the DIS).
     pub fn set_focus(&mut self, now: Instant, on: bool) {
         if on != self.focus {
@@ -678,7 +734,8 @@ impl Display {
                 self.dis.set_readings(now, r.clone());
                 self.readings = Some(r);
             }
-            let m = media_input(store, now);
+            self.update_art(store, now);
+            let m = media_input(store, now, self.art.as_ref());
             if self.media.as_ref() != Some(&m) {
                 self.dis.set_media(now, m.clone());
                 self.media = Some(m);

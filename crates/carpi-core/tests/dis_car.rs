@@ -264,3 +264,71 @@ fn unit_conversion() {
     assert_eq!(carpi_core::display::key_unit("engine.boost.actual"), "mbar");
     assert_eq!(carpi_core::display::key_unit("engine.oil_temp_c"), "°C");
 }
+
+/// A real cover: a sample from Drew's old tester folder if it's there, else
+/// a drawn PNG (a white disc on black).
+fn cover_bytes() -> Vec<u8> {
+    let sample = std::path::Path::new(
+        "../../../RNS-E-Hudiy/tools/dis_image_tester/albumcovers/Daft_Punk_Alive.png",
+    );
+    if let Ok(b) = std::fs::read(sample) {
+        return b;
+    }
+    let img = image::RgbImage::from_fn(200, 200, |x, y| {
+        let (dx, dy) = (x as f64 - 100.0, y as f64 - 100.0);
+        if dx * dx + dy * dy < 70.0 * 70.0 {
+            image::Rgb([255, 255, 255])
+        } else {
+            image::Rgb([0, 0, 0])
+        }
+    });
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn send_art(r: &mut Rig, bytes: &[u8]) {
+    use base64::Engine;
+    r.car.handle(
+        1,
+        Request::Bridge {
+            update: Box::new(BridgeUpdate::MediaArt {
+                art: Some(carpi_proto::MediaArt {
+                    id: carpi_proto::media_art_id(bytes),
+                    mime: "image/png".into(),
+                    data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+                }),
+            }),
+        },
+        r.now,
+    );
+}
+
+#[test]
+fn album_art_reaches_the_cluster() {
+    let mut r = Rig::new(DisSetup {
+        media_layout: carpi_core::DisMediaLayout::Art,
+        ..enabled()
+    });
+    let png = cover_bytes();
+    let (thumb, full) = {
+        use base64::Engine;
+        carpi_core::display::decode_cover(&base64::engine::general_purpose::STANDARD.encode(&png))
+            .expect("decodes")
+    };
+    assert!(thumb.px.iter().any(|p| *p) && full.px.iter().any(|p| *p));
+    play(&mut r, "Song");
+    send_art(&mut r, &png);
+    r.run(Duration::from_secs(6));
+    assert_eq!(r.text("dis.shown").as_deref(), Some("media"));
+    // The thumbnail went out: opaque 55 rows inside the art rect.
+    let n = r.cl.drawn.iter().filter(|m| m.windows(2).any(|w| w[0] == 0x55)).count();
+    assert!(n > 0, "no bitmap sent");
+    // A new cover while media is up flashes the full cover.
+    let mut other = png.clone();
+    other.extend_from_slice(b"\0");
+    play(&mut r, "Next Song");
+    send_art(&mut r, &other);
+    r.run(Duration::from_millis(500));
+    assert_eq!(r.text("dis.shown").as_deref(), Some("cover"));
+}
