@@ -1,0 +1,20 @@
+[package]
+name = "carpi-cli"
+description = "carpi: debug and bench tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "carpi"
+path = "src/main.rs"
+
+[dependencies]
+carpi-can.workspace = true
+carpi-core.workspace = true
+carpi-proto.workspace = true
+anyhow.workspace = true
+clap.workspace = true

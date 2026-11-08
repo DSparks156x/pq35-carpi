@@ -1,0 +1,14 @@
+[package]
+name = "carpi-proto"
+description = "carpid local API messages and framing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+# Permissive on purpose: the GPL LIVI fork links this crate.
+license = "MIT OR Apache-2.0"
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

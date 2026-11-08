@@ -1,0 +1,173 @@
+//! `carpi`: talk to carpid, or run a candump file through the car model
+//! offline.
+
+use anyhow::{Context, bail};
+use carpi_can::ReplayPort;
+use carpi_can::recorder::Recorder;
+use carpi_core::{Car, IfaceSpec};
+use carpi_proto::{Request, Response};
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+#[derive(Parser)]
+#[command(version, about = "pq35-carpi debug tool")]
+struct Args {
+    /// carpid socket (default: $XDG_RUNTIME_DIR/carpid.sock).
+    #[arg(long, global = true)]
+    socket: Option<PathBuf>,
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Decode a candump file offline and print bus events and final values.
+    Replay {
+        file: PathBuf,
+        /// Only print values starting with this.
+        #[arg(long, default_value = "")]
+        prefix: String,
+        /// Gap between frames for files without timestamps.
+        #[arg(long, default_value_t = 3.5)]
+        gap_ms: f64,
+    },
+    /// Live values from carpid.
+    Values {
+        #[arg(default_value = "")]
+        prefix: String,
+    },
+    /// Bus and NM ring state from carpid.
+    Bus,
+    /// Save carpid's rolling capture (candump log format).
+    Capture { path: Option<String> },
+}
+
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    match args.cmd {
+        Cmd::Replay {
+            file,
+            prefix,
+            gap_ms,
+        } => replay(file, &prefix, gap_ms),
+        Cmd::Values { prefix } => print(call(args.socket, Request::Values { prefix })?),
+        Cmd::Bus => print(call(args.socket, Request::Bus)?),
+        Cmd::Capture { path } => print(call(args.socket, Request::SaveCapture { path })?),
+    }
+}
+
+fn replay(file: PathBuf, prefix: &str, gap_ms: f64) -> anyhow::Result<()> {
+    let port = ReplayPort::load(&file, None, Duration::from_secs_f64(gap_ms / 1000.0), false)
+        .with_context(|| format!("reading {}", file.display()))?;
+    let mut car = Car::new(
+        vec![IfaceSpec {
+            name: "replay".into(),
+            roles: vec!["ican".into()],
+        }],
+        Recorder::new(Duration::ZERO, 1),
+        std::env::temp_dir(),
+    );
+    let base = Instant::now();
+    let mut end = base;
+    for rx in port.iter_from(base) {
+        if let Some(ev) = car.ingest(0, &rx) {
+            println!(
+                "{:>9.3}s  bus {} -> {}",
+                (rx.at - base).as_secs_f64(),
+                ev.transition.from,
+                ev.transition.to
+            );
+        }
+        end = rx.at;
+    }
+    println!("{} frames, {:.1}s", port.len(), (end - base).as_secs_f64());
+    print(car.handle(Request::Bus, end))?;
+    print(car.handle(
+        Request::Values {
+            prefix: prefix.to_string(),
+        },
+        end,
+    ))
+}
+
+fn print(resp: Response) -> anyhow::Result<()> {
+    match resp {
+        Response::Values { items } => {
+            let w = items.iter().map(|r| r.name.len()).max().unwrap_or(0);
+            for r in items {
+                let v = match r.value {
+                    Some(carpi_proto::Value::Bool(b)) => b.to_string(),
+                    Some(carpi_proto::Value::Num(n)) => {
+                        format!("{}", (n * 1000.0).round() / 1000.0)
+                    }
+                    Some(carpi_proto::Value::Text(s)) => s,
+                    None => "-".into(),
+                };
+                println!("{:w$}  {:>12}  {:>6} ms", r.name, v, r.age_ms);
+            }
+        }
+        Response::Bus { buses } => {
+            for b in buses {
+                println!(
+                    "{} ({}): {} frames, {}",
+                    b.iface,
+                    b.role,
+                    b.frames,
+                    b.state.as_deref().unwrap_or("no ring")
+                );
+                for m in b.ring {
+                    println!(
+                        "  node {:02X} -> {:02X}{}{}  {} ms",
+                        m.node,
+                        m.successor,
+                        if m.sleep_ind { " sleep-ind" } else { "" },
+                        if m.sleep_ack { " sleep-ack" } else { "" },
+                        m.age_ms
+                    );
+                }
+            }
+        }
+        Response::CaptureSaved { path, frames } => println!("{frames} frames -> {path}"),
+        Response::Hello { daemon, .. } => println!("{daemon}"),
+        Response::Error { message } => bail!(message),
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn call(socket: Option<PathBuf>, req: Request) -> anyhow::Result<Response> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let path = socket.unwrap_or_else(|| {
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("carpid.sock")
+    });
+    let mut s =
+        UnixStream::connect(&path).with_context(|| format!("connecting to {}", path.display()))?;
+    let mut send = |req: &Request| -> anyhow::Result<Response> {
+        s.write_all(&carpi_proto::encode(req))?;
+        let mut prefix = [0u8; 4];
+        s.read_exact(&mut prefix)?;
+        let mut body = vec![0u8; carpi_proto::body_len(prefix).map_err(anyhow::Error::msg)?];
+        s.read_exact(&mut body)?;
+        Ok(carpi_proto::decode(&body)?)
+    };
+    match send(&Request::Hello {
+        version: carpi_proto::PROTOCOL_VERSION,
+        client: "carpi".into(),
+    })? {
+        Response::Hello { .. } => {}
+        Response::Error { message } => bail!(message),
+        other => bail!("unexpected reply to hello: {other:?}"),
+    }
+    send(&req)
+}
+
+#[cfg(not(unix))]
+fn call(_socket: Option<PathBuf>, _req: Request) -> anyhow::Result<Response> {
+    bail!("talking to carpid needs a Unix socket; use `carpi replay` here")
+}

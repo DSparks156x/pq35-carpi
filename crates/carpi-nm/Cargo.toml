@@ -1,0 +1,12 @@
+[package]
+name = "carpi-nm"
+description = "OSEK NM ring observer and bus-state machine (sans-IO)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-signals.workspace = true

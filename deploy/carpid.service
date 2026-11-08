@@ -1,0 +1,18 @@
+# User service, so carpid and LIVI run as the same user and share the API
+# socket ($XDG_RUNTIME_DIR/carpid.sock). Needs lingering for the user:
+#   loginctl enable-linger $USER
+# Install:
+#   cp deploy/carpid.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now carpid
+[Unit]
+Description=pq35-carpi car daemon
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/carpid --config %h/.config/carpi/carpid.toml
+Restart=always
+RestartSec=1
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,12 @@
+[package]
+name = "carpi-signals"
+description = "CAN IDs in one place, and hand-written decoders for the ICAN messages we use"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-state.workspace = true

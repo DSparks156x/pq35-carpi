@@ -1,0 +1,15 @@
+[package]
+name = "carpi-can"
+description = "CAN frames, candump files, replay, recorder and the SocketCAN port"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+socketcan.workspace = true
