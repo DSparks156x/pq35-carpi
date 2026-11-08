@@ -14,6 +14,9 @@ carpi-core.workspace = true
 carpi-input.workspace = true
 carpi-power.workspace = true
 carpi-proto.workspace = true
+carpi-light.workspace = true
+carpi-portal.workspace = true
+toml_edit = "0.25"
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -25,3 +28,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"

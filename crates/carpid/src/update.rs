@@ -265,6 +265,11 @@ impl Jobs {
         }
     }
 
+    /// A job number, unique across update and diag jobs.
+    pub fn next_job(&self) -> u32 {
+        self.next.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
     /// Starts a job; its events go to `events` and it ends with `Finished`.
     /// Runs to the end even if the asking connection closes.
     pub fn start(
@@ -276,7 +281,7 @@ impl Jobs {
         if self.busy.swap(true, Ordering::SeqCst) {
             return Err("an update job is running".into());
         }
-        let job = self.next.fetch_add(1, Ordering::SeqCst) + 1;
+        let job = self.next_job();
         let me = self.clone();
         tokio::spawn(async move {
             let updater = Child {

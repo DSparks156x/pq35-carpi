@@ -2,25 +2,30 @@
 //!
 //! Opens every configured interface, decodes ICAN into the value store,
 //! watches the NM ring, keeps a rolling capture and answers the local API.
-//! The car model decides what to send (RNS-E label/brightness), which keys go
-//! to LIVI, and when to power off; `act` carries that out. Sending and
-//! powering off stay off until enabled in the config. Update jobs run
-//! `carpi-update` and ask LIVI to drop its hotspot while they fetch.
+//! The car model decides what to send (RNS-E label/brightness, the cluster
+//! display and top lines, diagnostics), which keys go to LIVI, and when to
+//! power off; `act` carries that out. Sending and powering off stay off until
+//! enabled in the config. Update jobs run `carpi-update` and ask LIVI to drop
+//! its hotspot while they fetch. With `[portal]`, the phone portal runs too.
 
 mod act;
 mod api;
 mod commands;
 mod config;
+mod portal;
+mod settings;
 mod update;
 
 use anyhow::Context;
 use carpi_can::recorder::Recorder;
 use carpi_can::{Port, ReplayPort, RxFrame};
-use carpi_core::Car;
+use carpi_core::{Car, DiagJobId, DiagSubId};
+use carpi_proto::{DiagAction, JobEvent, Response, SettingsAction};
 use clap::Parser;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
 #[derive(Parser)]
@@ -37,6 +42,9 @@ struct Args {
     realtime: bool,
 }
 
+type JobEvents = mpsc::UnboundedSender<JobEvent>;
+
+#[cfg_attr(not(unix), allow(dead_code))]
 pub enum Msg {
     Frame(usize, RxFrame),
     PortEnded(usize, Option<std::io::Error>),
@@ -46,9 +54,35 @@ pub enum Msg {
         carpi_proto::Request,
         oneshot::Sender<carpi_proto::Response>,
     ),
-    /// Current readings under these prefixes, for a subscription.
-    Readings(Vec<String>, oneshot::Sender<Vec<carpi_proto::Reading>>),
+    /// Current readings under these prefixes, for a subscription; renews
+    /// its diag leases (`renew`) for another 3x `period`.
+    Readings {
+        prefixes: Vec<String>,
+        renew: Vec<DiagSubId>,
+        period: Duration,
+        reply: oneshot::Sender<Vec<carpi_proto::Reading>>,
+    },
+    /// Diag subscriptions for a new API subscription.
+    DiagSubscribe(Vec<String>, Duration, oneshot::Sender<Vec<DiagSubId>>),
+    DiagUnsubscribe(Vec<DiagSubId>),
+    /// Start a diag job; its events go to the sender.
+    DiagJob(DiagAction, JobEvents, oneshot::Sender<Result<(), String>>),
+    /// Diag status, sent as one job event.
+    DiagStatus(oneshot::Sender<Result<(), String>>, JobEvents),
+    Settings(SettingsAction, oneshot::Sender<Response>),
     ConnClosed(u64),
+}
+
+/// What the main loop owns besides the car model.
+struct Daemon {
+    cfg: config::Config,
+    config_path: PathBuf,
+    /// False when running on the built-in fallback (no file to write).
+    have_file: bool,
+    act: act::Actuators,
+    portal_pin: Option<carpi_portal::PinCell>,
+    diag_jobs: HashMap<DiagJobId, JobEvents>,
+    portal_status: watch::Sender<carpi_portal::Status>,
 }
 
 #[tokio::main]
@@ -59,8 +93,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let args = Args::parse();
+    let started = Instant::now();
 
-    let cfg = if args.config.exists() {
+    let have_file = args.config.exists();
+    let cfg = if have_file {
         config::Config::load(&args.config)
             .with_context(|| format!("loading {}", args.config.display()))?
     } else {
@@ -73,7 +109,8 @@ async fn main() -> anyhow::Result<()> {
     let ifaces = cfg.ifaces();
     let recorder = Recorder::new(Duration::from_secs(cfg.recorder.minutes * 60), 2_000_000);
     let mut car = Car::new(ifaces.clone(), recorder, cfg.recorder.dir.clone());
-    let mut act = act::Actuators::new(
+    car.configure(cfg.core(), Instant::now());
+    let act = act::Actuators::new(
         &cfg,
         ifaces.iter().map(|i| i.name.clone()).collect(),
         args.replay.is_some(),
@@ -108,53 +145,217 @@ async fn main() -> anyhow::Result<()> {
     ));
     api::spawn(&cfg.api.socket, tx.clone(), jobs)?;
 
+    let (portal_status, status_rx) = watch::channel(carpi_portal::Status {
+        version: env!("CARGO_PKG_VERSION").into(),
+        ..Default::default()
+    });
+    let portal_pin = portal::config(&cfg, &args.config)
+        .map(|p| portal::spawn(portal::build(p, status_rx, started)));
+    if portal_pin.is_none() {
+        info!("no [portal] in the config; phone portal off");
+    }
+
+    let socket = cfg.api.socket.clone();
+    let mut d = Daemon {
+        cfg,
+        config_path: args.config.clone(),
+        have_file,
+        act,
+        portal_pin,
+        diag_jobs: HashMap::new(),
+        portal_status,
+    };
+
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        // DIS and diag timers can be finer than the 100 ms tick.
+        let now = Instant::now();
+        let deadline = car
+            .next_deadline(now)
+            .unwrap_or(now + Duration::from_secs(3600));
         tokio::select! {
             msg = rx.recv() => {
                 let Some(msg) = msg else { break };
-                match msg {
-                    Msg::Frame(idx, frame) => {
-                        if let Some(ev) = car.ingest(idx, &frame) {
-                            info!("{}: bus {} -> {}", ev.iface, ev.transition.from, ev.transition.to);
-                        }
-                    }
-                    Msg::PortEnded(idx, err) => {
-                        let name = &ifaces[idx].name;
-                        match err {
-                            Some(e) => warn!("{name}: read failed: {e}"),
-                            None => info!("{name}: replay finished"),
-                        }
-                    }
-                    Msg::Api(conn, req, reply) => {
-                        let _ = reply.send(car.handle(conn, req, Instant::now()));
-                    }
-                    Msg::Readings(prefixes, reply) => {
-                        let _ = reply.send(car.readings(&prefixes, Instant::now()));
-                    }
-                    Msg::ConnClosed(conn) => car.conn_closed(conn, Instant::now()),
-                }
-                for o in car.drain_outputs() {
-                    act.act(o, &car);
-                }
+                d.handle(&mut car, msg, &ifaces);
             }
             _ = tick.tick() => {
                 for ev in car.tick(Instant::now()) {
                     info!("{}: bus {} -> {}", ev.iface, ev.transition.from, ev.transition.to);
                 }
-                for o in car.drain_outputs() {
-                    act.act(o, &car);
-                }
+                d.publish_status(&car);
+            }
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                car.service(Instant::now());
             }
             _ = tokio::signal::ctrl_c() => {
                 info!("stopping");
                 break;
             }
         }
+        d.flush(&mut car);
     }
-    api::cleanup(&cfg.api.socket);
+    api::cleanup(&socket);
     Ok(())
+}
+
+impl Daemon {
+    fn handle(&mut self, car: &mut Car, msg: Msg, ifaces: &[carpi_core::IfaceSpec]) {
+        let now = Instant::now();
+        match msg {
+            Msg::Frame(idx, frame) => {
+                if let Some(ev) = car.ingest(idx, &frame) {
+                    info!(
+                        "{}: bus {} -> {}",
+                        ev.iface, ev.transition.from, ev.transition.to
+                    );
+                }
+            }
+            Msg::PortEnded(idx, err) => {
+                let name = &ifaces[idx].name;
+                match err {
+                    Some(e) => warn!("{name}: read failed: {e}"),
+                    None => info!("{name}: replay finished"),
+                }
+            }
+            Msg::Api(conn, req, reply) => {
+                let _ = reply.send(car.handle(conn, req, now));
+            }
+            Msg::Readings {
+                prefixes,
+                renew,
+                period,
+                reply,
+            } => {
+                car.diag_renew(&renew, period, now);
+                let _ = reply.send(car.readings(&prefixes, now));
+            }
+            Msg::DiagSubscribe(prefixes, period, reply) => {
+                let _ = reply.send(car.diag_subscribe(&prefixes, period, now));
+            }
+            Msg::DiagUnsubscribe(ids) => car.diag_unsubscribe(&ids, now),
+            Msg::DiagJob(action, events, reply) => match car.diag_start(action, now) {
+                Ok(id) => {
+                    self.diag_jobs.insert(id, events);
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e));
+                }
+            },
+            Msg::DiagStatus(reply, events) => match car.diag_status(now) {
+                Some(st) => {
+                    let _ = events.send(JobEvent::DiagStatus(st));
+                    let _ = events.send(JobEvent::Finished {
+                        ok: true,
+                        message: "status".into(),
+                    });
+                    let _ = reply.send(Ok(()));
+                }
+                None => {
+                    let _ = reply.send(Err("no interface has the diag role".into()));
+                }
+            },
+            Msg::Settings(action, reply) => {
+                let _ = reply.send(self.settings(car, action, now));
+            }
+            Msg::ConnClosed(conn) => car.conn_closed(conn, now),
+        }
+    }
+
+    fn settings(&mut self, car: &mut Car, action: SettingsAction, now: Instant) -> Response {
+        let patch = match action {
+            SettingsAction::Get => {
+                return Response::Settings {
+                    settings: settings::get(&self.cfg),
+                    restart_needed: Vec::new(),
+                };
+            }
+            SettingsAction::Set { patch } => patch,
+        };
+        if !self.have_file {
+            return Response::Error {
+                message: format!(
+                    "no config file at {}; settings can't be saved",
+                    self.config_path.display()
+                ),
+            };
+        }
+        let new = match settings::set(&self.config_path, &patch) {
+            Ok(c) => c,
+            Err(message) => return Response::Error { message },
+        };
+        // All live.
+        car.configure(new.core(), now);
+        if new.tx.enabled != self.cfg.tx.enabled {
+            self.act.set_tx_enabled(new.tx.enabled);
+        }
+        self.act.set_shutdown_enabled(new.power.shutdown);
+        if let Some(cell) = &self.portal_pin {
+            *cell.write().unwrap_or_else(|e| e.into_inner()) =
+                new.portal.as_ref().and_then(|p| p.pin.clone());
+        }
+        info!("settings saved to {}", self.config_path.display());
+        // The portal starts and stops with carpid.
+        let mut restart_needed = Vec::new();
+        if new.portal.is_some() != self.portal_pin.is_some() {
+            restart_needed.push("portal".into());
+        }
+        self.cfg = new;
+        Response::Settings {
+            settings: settings::get(&self.cfg),
+            restart_needed,
+        }
+    }
+
+    /// Outputs to the actuators, diag job events to their connections.
+    fn flush(&mut self, car: &mut Car) {
+        for o in car.drain_outputs() {
+            self.act.act(o, car);
+        }
+        for (id, events) in car.drain_diag_jobs() {
+            let done = events
+                .iter()
+                .any(|e| matches!(e, JobEvent::Finished { .. }));
+            if let Some(tx) = self.diag_jobs.get(&id) {
+                for e in events {
+                    let _ = tx.send(e);
+                }
+            }
+            if done {
+                self.diag_jobs.remove(&id);
+            }
+        }
+    }
+
+    fn publish_status(&self, car: &Car) {
+        let bus = car
+            .ican()
+            .map(|m| m.state().to_string())
+            .unwrap_or_else(|| "no ICAN".into());
+        let now = Instant::now();
+        let text = |n: &str| match car.readings(&[n.to_string()], now).pop() {
+            Some(carpi_proto::Reading {
+                value: Some(carpi_proto::Value::Text(t)),
+                ..
+            }) => t,
+            _ => "-".into(),
+        };
+        let extra = vec![
+            (
+                "TX".into(),
+                if self.cfg.tx.enabled { "on" } else { "off" }.into(),
+            ),
+            ("DIS".into(), text("dis.state")),
+            ("Diag".into(), text("diag.mode")),
+        ];
+        self.portal_status.send_if_modified(|s| {
+            let changed = s.bus != bus || s.extra != extra;
+            s.bus = bus;
+            s.extra = extra;
+            changed
+        });
+    }
 }
 
 /// Reads one interface forever. On a read error it waits and reopens the

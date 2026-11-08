@@ -14,6 +14,7 @@ pub struct Actuators {
     /// One sender per interface; `None` when TX is off or in replay.
     tx: Vec<Option<mpsc::Sender<Frame>>>,
     iface_names: Vec<String>,
+    replay: bool,
     shutdown_enabled: bool,
     power: CarPiHat,
     #[cfg(target_os = "linux")]
@@ -24,29 +25,7 @@ impl Actuators {
     pub fn new(cfg: &crate::config::Config, iface_names: Vec<String>, replay: bool) -> Self {
         let tx = iface_names
             .iter()
-            .map(|name| {
-                if !cfg.tx.enabled || replay {
-                    return None;
-                }
-                match TxPort::open(name) {
-                    Ok(port) => {
-                        let (s, mut r) = mpsc::channel::<Frame>(256);
-                        let name = name.clone();
-                        tokio::spawn(async move {
-                            while let Some(f) = r.recv().await {
-                                if let Err(e) = port.send(&f).await {
-                                    warn!("{name}: send {f:?} failed: {e}");
-                                }
-                            }
-                        });
-                        Some(s)
-                    }
-                    Err(e) => {
-                        warn!("{name}: can't open for sending: {e}");
-                        None
-                    }
-                }
-            })
+            .map(|name| (cfg.tx.enabled && !replay).then(|| open_tx(name)).flatten())
             .collect();
         if !cfg.tx.enabled {
             info!("TX disabled ([tx] enabled = false): logging frames instead of sending");
@@ -73,11 +52,29 @@ impl Actuators {
         Actuators {
             tx,
             iface_names,
+            replay,
             shutdown_enabled: cfg.power.shutdown,
             power: CarPiHat::new(),
             #[cfg(target_os = "linux")]
             keyboard,
         }
+    }
+
+    /// `[tx] enabled`, live. Never sends in replay.
+    pub fn set_tx_enabled(&mut self, on: bool) {
+        for (slot, name) in self.tx.iter_mut().zip(&self.iface_names) {
+            match (on && !self.replay, slot.is_some()) {
+                (true, false) => *slot = open_tx(name),
+                (false, true) => *slot = None,
+                _ => {}
+            }
+        }
+        info!("TX {}", if on { "enabled" } else { "disabled" });
+    }
+
+    /// `[power] shutdown`, live.
+    pub fn set_shutdown_enabled(&mut self, on: bool) {
+        self.shutdown_enabled = on;
     }
 
     pub fn act(&mut self, out: Output, car: &Car) {
@@ -95,7 +92,7 @@ impl Actuators {
             },
             Output::Key(k) => self.key(k),
             Output::Car(a) => info!("car action {a:?} (bridge input to LIVI not built yet)"),
-            Output::Dis(k) => debug!("DIS key {k:?} (no DIS controller yet)"),
+            Output::Dis(k) => debug!("DIS key {k:?}"),
             Output::Action(SystemAction::SaveCapture) => {
                 let resp = car.save_default_capture();
                 info!("capture: {resp}");
@@ -144,5 +141,27 @@ impl Actuators {
     #[cfg(not(target_os = "linux"))]
     fn key(&mut self, k: carpi_input::LiviKey) {
         debug!("key {k:?} (no uinput off Linux)");
+    }
+}
+
+/// A sending socket and its writer task. Dropping the sender ends the task.
+fn open_tx(name: &str) -> Option<mpsc::Sender<Frame>> {
+    match TxPort::open(name) {
+        Ok(port) => {
+            let (s, mut r) = mpsc::channel::<Frame>(256);
+            let name = name.to_string();
+            tokio::spawn(async move {
+                while let Some(f) = r.recv().await {
+                    if let Err(e) = port.send(&f).await {
+                        warn!("{name}: send {f:?} failed: {e}");
+                    }
+                }
+            });
+            Some(s)
+        }
+        Err(e) => {
+            warn!("{name}: can't open for sending: {e}");
+            None
+        }
     }
 }

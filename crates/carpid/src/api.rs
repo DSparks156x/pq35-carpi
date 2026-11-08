@@ -3,8 +3,11 @@
 //!
 //! Each connection gets a reader loop, a writer task, and one task per
 //! subscription. Requests go to the core loop; subscriptions poll it for
-//! readings at their period and send only what changed. Commands to LIVI
-//! and update jobs are per connection too (`commands.rs`, `update.rs`).
+//! readings at their period and send only what changed. A subscription
+//! whose prefixes cover diag catalog values also holds diag subscriptions:
+//! leased for 3x the period, renewed on every poll, dropped with it.
+//! Commands to LIVI, update jobs and diag jobs are per connection too
+//! (`commands.rs`, `update.rs`).
 
 use crate::Msg;
 use crate::update::Jobs;
@@ -73,7 +76,7 @@ pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) -> anyhow::Res
 
 #[cfg(unix)]
 async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) {
-    use carpi_proto::{Request, Response};
+    use carpi_proto::{DiagAction, Request, Response};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::oneshot;
 
@@ -138,7 +141,7 @@ async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>,
                 Response::Ok
             }
             Ok(Request::Update { action, and_apply }) => {
-                let (events, mut rx) = mpsc::unbounded_channel();
+                let (events, rx) = mpsc::unbounded_channel();
                 match jobs.start(action, and_apply, events) {
                     Err(message) => Response::Error { message },
                     Ok(job) => {
@@ -146,18 +149,41 @@ async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>,
                         if out_tx.send(Response::JobStarted { job }).await.is_err() {
                             break;
                         }
-                        // Weak: a closed connection mustn't wait for the job.
-                        let out = out_tx.downgrade();
-                        tokio::spawn(async move {
-                            while let Some(event) = rx.recv().await {
-                                if let Some(out) = out.upgrade() {
-                                    let _ = out.send(Response::Job { job, event }).await;
-                                }
-                            }
-                        });
+                        forward_job(job, rx, &out_tx);
                         continue;
                     }
                 }
+            }
+            Ok(Request::Diag { action }) => {
+                let job = jobs.next_job();
+                let (events, rx) = mpsc::unbounded_channel();
+                let (rtx, rrx) = oneshot::channel();
+                let msg = match action {
+                    DiagAction::Status => Msg::DiagStatus(rtx, events),
+                    action => Msg::DiagJob(action, events, rtx),
+                };
+                if tx.send(msg).await.is_err() {
+                    break;
+                }
+                match rrx.await {
+                    Err(_) => break,
+                    Ok(Err(message)) => Response::Error { message },
+                    Ok(Ok(())) => {
+                        if out_tx.send(Response::JobStarted { job }).await.is_err() {
+                            break;
+                        }
+                        forward_job(job, rx, &out_tx);
+                        continue;
+                    }
+                }
+            }
+            Ok(Request::Settings { action }) => {
+                let (rtx, rrx) = oneshot::channel();
+                if tx.send(Msg::Settings(action, rtx)).await.is_err() {
+                    break;
+                }
+                let Ok(resp) = rrx.await else { break };
+                resp
             }
             Ok(req) => {
                 let is_hello = matches!(req, Request::Hello { .. });
@@ -184,6 +210,43 @@ async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>,
     let _ = writer.await;
 }
 
+/// Relays a job's events to the connection until the job ends. Weak: a
+/// closed connection mustn't wait for the job.
+#[cfg(unix)]
+fn forward_job(
+    job: u32,
+    mut rx: mpsc::UnboundedReceiver<carpi_proto::JobEvent>,
+    out: &mpsc::Sender<carpi_proto::Response>,
+) {
+    let out = out.downgrade();
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            if let Some(out) = out.upgrade() {
+                let _ = out.send(carpi_proto::Response::Job { job, event }).await;
+            }
+        }
+    });
+}
+
+/// Drops a subscription's diag subscriptions when its task ends or is
+/// aborted. If the core queue is full the leases run out by themselves.
+#[cfg(unix)]
+struct DiagSubs {
+    ids: Vec<carpi_core::DiagSubId>,
+    tx: mpsc::Sender<Msg>,
+}
+
+#[cfg(unix)]
+impl Drop for DiagSubs {
+    fn drop(&mut self) {
+        if !self.ids.is_empty() {
+            let _ = self
+                .tx
+                .try_send(Msg::DiagUnsubscribe(std::mem::take(&mut self.ids)));
+        }
+    }
+}
+
 #[cfg(unix)]
 async fn run_sub(
     sub: u32,
@@ -192,6 +255,19 @@ async fn run_sub(
     tx: mpsc::Sender<Msg>,
     out: mpsc::Sender<carpi_proto::Response>,
 ) {
+    let (rtx, rrx) = tokio::sync::oneshot::channel();
+    if tx
+        .send(Msg::DiagSubscribe(prefixes.clone(), period, rtx))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let Ok(ids) = rrx.await else { return };
+    let diag = DiagSubs {
+        ids,
+        tx: tx.clone(),
+    };
     let mut seen = HashMap::new();
     let mut tick = tokio::time::interval(period);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -199,7 +275,13 @@ async fn run_sub(
     loop {
         tick.tick().await;
         let (rtx, rrx) = tokio::sync::oneshot::channel();
-        if tx.send(Msg::Readings(prefixes.clone(), rtx)).await.is_err() {
+        let msg = Msg::Readings {
+            prefixes: prefixes.clone(),
+            renew: diag.ids.clone(),
+            period,
+            reply: rtx,
+        };
+        if tx.send(msg).await.is_err() {
             return;
         }
         let Ok(items) = rrx.await else { return };

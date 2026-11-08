@@ -1,3 +1,6 @@
+use carpi_core::{CoreConfig, DisSetup, Reading};
+use carpi_input::{BindingRow, RouteConfig};
+use carpi_proto::{AmbientSource, CurveMode, CurvePoint, LearnedPoint};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,12 +29,26 @@ use std::path::{Path, PathBuf};
 ///
 /// [input]
 /// uinput = true        # keys to LIVI through a virtual keyboard
+/// # bindings = [ { table = "livi", key = "wheel_up", gesture = "short", action = "prev" }, ... ]
+///
+/// [light]
+/// night_after_s = 2.0  # lights on this long -> night
+/// day_after_s = 10.0   # lights off this long -> day
+/// day_panel = 0        # RNS-E panel level: 0 follows the car's dimmer, 1-100 fixed
+/// night_panel = 0
+///
+/// [dis]
+/// enabled = false      # off: nothing is sent to the cluster
+/// # readings = [ { key = "engine.rpm", label = "RPM", decimals = 0, scale = 1.0 }, ... ]
+///
+/// [portal]             # phone portal; absent = off. Keys: carpi_portal::PortalConfig
+/// bind = "0.0.0.0:5003"
 ///
 /// [update]             # read by carpi-update too; see docs/DEPLOY.md
 /// repo = "DSparks156x/pq35-carpi"
 /// channel = "stable"   # or "beta"
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub bus: BTreeMap<String, Bus>,
@@ -47,11 +64,120 @@ pub struct Config {
     pub input: Input,
     #[serde(default)]
     pub update: Update,
+    #[serde(default)]
+    pub light: Light,
+    #[serde(default)]
+    pub dis: Dis,
+    /// Absent: no portal. `config_file` is always the file carpid loaded.
+    pub portal: Option<carpi_portal::PortalConfig>,
+}
+
+/// `[light]`: the light model (PLAN 2.6). Only `auto_brightness` acts yet;
+/// see `carpi_core::LightSetup`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Light {
+    pub auto_brightness: bool,
+    pub scroll_trim: bool,
+    pub ambient_source: AmbientSource,
+    pub curve_mode: CurveMode,
+    pub manual_curve: Vec<CurvePoint>,
+    /// carpid-owned: written by the model, cleared by "reset learned".
+    pub learned: Vec<LearnedPoint>,
+    pub night_threshold: f64,
+    pub night_hysteresis: f64,
+}
+
+impl Default for Light {
+    fn default() -> Self {
+        let d = carpi_core::LightSetup::default();
+        Light {
+            auto_brightness: d.auto_brightness,
+            scroll_trim: d.scroll_trim,
+            ambient_source: to_proto_source(d.ambient_source),
+            curve_mode: match d.curve_mode {
+                carpi_core::CurveMode::Manual => CurveMode::Manual,
+                carpi_core::CurveMode::Learned => CurveMode::Learned,
+            },
+            manual_curve: d
+                .manual_curve
+                .iter()
+                .map(|&(ambient, pct)| CurvePoint { ambient, pct })
+                .collect(),
+            learned: Vec::new(),
+            night_threshold: d.night_threshold,
+            night_hysteresis: d.night_hysteresis,
+        }
+    }
+}
+
+fn to_proto_source(s: carpi_core::AmbientSource) -> AmbientSource {
+    match s {
+        carpi_core::AmbientSource::Cluster => AmbientSource::Cluster,
+        carpi_core::AmbientSource::Climatronic => AmbientSource::Climatronic,
+        carpi_core::AmbientSource::Blend => AmbientSource::Blend,
+    }
+}
+
+fn to_core_source(s: AmbientSource) -> carpi_core::AmbientSource {
+    match s {
+        AmbientSource::Cluster => carpi_core::AmbientSource::Cluster,
+        AmbientSource::Climatronic => carpi_core::AmbientSource::Climatronic,
+        AmbientSource::Blend => carpi_core::AmbientSource::Blend,
+    }
+}
+
+fn check_curve(name: &str, pts: &[(f64, u8)], max: usize) -> Result<(), String> {
+    if pts.len() > max {
+        return Err(format!("[light] {name}: at most {max} points"));
+    }
+    for &(a, p) in pts {
+        if !a.is_finite() || p > 100 {
+            return Err(format!(
+                "[light] {name}: ambient must be a number, pct 0-100"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `[dis]`: the cluster display.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dis {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Absent: the default 2x4 set of ICAN values.
+    pub readings: Option<Vec<ReadingCfg>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadingCfg {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default = "one")]
+    pub scale: f64,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingCfg {
+    pub table: String,
+    pub key: String,
+    pub gesture: String,
+    pub action: String,
 }
 
 /// `[update]`. carpi-update reads the same section; carpid only needs to
 /// know where carpi-update is, but checks every key so typos fail here.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)] // carpi-update's keys: only checked here
 pub struct Update {
@@ -84,7 +210,7 @@ fn default_updater() -> PathBuf {
 }
 
 /// Off by default: the first runs on the car log what they would send.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tx {
     #[serde(default)]
@@ -92,23 +218,28 @@ pub struct Tx {
 }
 
 /// Off by default: the first runs on the car log the shutdown request.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Power {
     #[serde(default)]
     pub shutdown: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     #[serde(default = "yes")]
     pub uinput: bool,
+    /// The whole binding table. Absent: the built-in one.
+    pub bindings: Option<Vec<BindingCfg>>,
 }
 
 impl Default for Input {
     fn default() -> Self {
-        Input { uinput: true }
+        Input {
+            uinput: true,
+            bindings: None,
+        }
     }
 }
 
@@ -116,13 +247,13 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bus {
     pub iface: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Api {
     #[serde(default = "default_socket")]
@@ -137,7 +268,7 @@ impl Default for Api {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecorderCfg {
     #[serde(default = "default_minutes")]
@@ -177,11 +308,116 @@ fn default_capture_dir() -> PathBuf {
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)?;
-        let cfg: Config = toml::from_str(&text)?;
+        Self::parse(&text).map_err(anyhow::Error::msg)
+    }
+
+    /// The loader's rules, on text: the portal's upload check and settings
+    /// writes use this too.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let cfg: Config = toml::from_str(text).map_err(|e| e.to_string())?;
         if !cfg.bus.contains_key("ican") {
-            anyhow::bail!("{}: [bus.ican] is required", path.display());
+            return Err("[bus.ican] is required".into());
         }
+        cfg.check()?;
         Ok(cfg)
+    }
+
+    fn check(&self) -> Result<(), String> {
+        let l = &self.light;
+        let manual: Vec<(f64, u8)> = l.manual_curve.iter().map(|p| (p.ambient, p.pct)).collect();
+        check_curve("manual_curve", &manual, 32)?;
+        if manual.windows(2).any(|w| w[1].0 <= w[0].0) {
+            return Err("[light] manual_curve: ambient must go up point by point".into());
+        }
+        let learned: Vec<(f64, u8)> = l.learned.iter().map(|p| (p.ambient, p.pct)).collect();
+        check_curve("learned", &learned, 256)?;
+        if !l.night_threshold.is_finite() {
+            return Err("[light] night_threshold must be a number".into());
+        }
+        if !(l.night_hysteresis.is_finite() && l.night_hysteresis >= 0.0) {
+            return Err("[light] night_hysteresis must be 0 or more".into());
+        }
+        if let Some(r) = &self.dis.readings {
+            if r.len() > 8 {
+                return Err(format!("[dis] readings: at most 8, got {}", r.len()));
+            }
+            for (i, c) in r.iter().enumerate() {
+                if c.key.is_empty() {
+                    return Err(format!("[dis] readings {}: key is empty", i + 1));
+                }
+                if c.label.chars().count() > 4 {
+                    return Err(format!(
+                        "[dis] readings {}: label '{}' is over 4 characters",
+                        i + 1,
+                        c.label
+                    ));
+                }
+                if c.decimals > 3 {
+                    return Err(format!("[dis] readings {}: decimals must be 0-3", i + 1));
+                }
+                if !c.scale.is_finite() || c.scale == 0.0 {
+                    return Err(format!("[dis] readings {}: bad scale", i + 1));
+                }
+            }
+        }
+        self.routes().map(|_| ())
+    }
+
+    /// The binding table: configured, or the built-in one.
+    pub fn routes(&self) -> Result<RouteConfig, String> {
+        match &self.input.bindings {
+            None => Ok(RouteConfig::default()),
+            Some(b) => RouteConfig::from_rows(
+                &b.iter()
+                    .map(|b| BindingRow {
+                        table: b.table.clone(),
+                        key: b.key.clone(),
+                        gesture: b.gesture.clone(),
+                        action: b.action.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|e| format!("[input] bindings: {e}")),
+        }
+    }
+
+    pub fn readings(&self) -> Vec<Reading> {
+        match &self.dis.readings {
+            None => carpi_core::display::default_readings(),
+            Some(r) => r
+                .iter()
+                .map(|c| Reading::new(&c.key, &c.label, c.decimals, c.scale))
+                .collect(),
+        }
+    }
+
+    /// What the car model takes from this file. `parse` checked it.
+    pub fn core(&self) -> CoreConfig {
+        let l = &self.light;
+        CoreConfig {
+            dis: DisSetup {
+                enabled: self.dis.enabled,
+                readings: self.readings(),
+            },
+            light: carpi_core::LightSetup {
+                auto_brightness: l.auto_brightness,
+                scroll_trim: l.scroll_trim,
+                ambient_source: to_core_source(l.ambient_source),
+                curve_mode: match l.curve_mode {
+                    CurveMode::Manual => carpi_core::CurveMode::Manual,
+                    CurveMode::Learned => carpi_core::CurveMode::Learned,
+                },
+                manual_curve: l.manual_curve.iter().map(|p| (p.ambient, p.pct)).collect(),
+                learned: l
+                    .learned
+                    .iter()
+                    .map(|p| (to_core_source(p.source), p.ambient, p.pct))
+                    .collect(),
+                night_threshold: l.night_threshold,
+                night_hysteresis: l.night_hysteresis,
+            },
+            routes: self.routes().unwrap_or_default(),
+        }
     }
 
     /// Default when no file exists: ICAN and diag both on `can0`.
@@ -207,6 +443,9 @@ impl Config {
             power: Power::default(),
             input: Input::default(),
             update: Update::default(),
+            light: Light::default(),
+            dis: Dis::default(),
+            portal: None,
         }
     }
 
@@ -246,5 +485,52 @@ mod tests {
     #[test]
     fn rejects_typos() {
         assert!(toml::from_str::<Config>("[bus.ican]\nifcae='x'\n").is_err());
+    }
+
+    #[test]
+    fn deploy_file_parses_with_safe_defaults() {
+        let text = include_str!("../../../deploy/carpid.toml");
+        let cfg = Config::parse(text).unwrap();
+        assert!(!cfg.tx.enabled);
+        assert!(!cfg.power.shutdown);
+        assert!(!cfg.dis.enabled);
+        let p = cfg.portal.as_ref().expect("[portal] in the deploy file");
+        assert_eq!(p.bind.port(), 5003);
+        assert!(p.pin.is_none());
+        let core = cfg.core();
+        assert_eq!(core.dis.readings.len(), 8);
+    }
+
+    #[test]
+    fn checks_new_sections() {
+        let base = "[bus.ican]\niface='can0'\n";
+        assert!(Config::parse(&format!("{base}[light]\nnight_hysteresis = -1.0\n")).is_err());
+        assert!(
+            Config::parse(&format!(
+                "{base}[light]\nmanual_curve = [{{ ambient = 2.0, pct = 10 }}, {{ ambient = 1.0, pct = 20 }}]\n"
+            ))
+            .is_err()
+        );
+        assert!(
+            Config::parse(&format!(
+                "{base}[light]\nmanual_curve = [{{ ambient = 1.0, pct = 101 }}]\n"
+            ))
+            .is_err()
+        );
+        let c = Config::parse(&format!("{base}[light]\nambient_source = \"blend\"\n")).unwrap();
+        assert_eq!(c.light.ambient_source, AmbientSource::Blend);
+        assert!(c.light.auto_brightness, "Drew's default");
+        let bad = format!(
+            "{base}[input]\nbindings = [{{ table = 'livi', key = 'x', gesture = 'short', action = 'home' }}]\n"
+        );
+        let e = Config::parse(&bad).unwrap_err();
+        assert!(e.contains("[input] bindings"), "{e}");
+        let nine: Vec<String> = (0..9)
+            .map(|i| format!("{{ key = 'k{i}', label = 'L' }}"))
+            .collect();
+        let e =
+            Config::parse(&format!("{base}[dis]\nreadings = [{}]\n", nine.join(","))).unwrap_err();
+        assert!(e.contains("at most 8"), "{e}");
+        assert!(Config::parse("[bus.diag]\niface='can0'\n").is_err());
     }
 }

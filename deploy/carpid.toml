@@ -25,8 +25,43 @@ enabled = false
 shutdown = false
 
 # Keys to LIVI through a uinput keyboard (needs deploy/99-carpi-uinput.rules).
+# bindings: the whole key table, replacing the built-in one. Set it through
+# the settings API, which writes it here.
 [input]
 uinput = true
+
+# Light model (docs/PLAN.md 2.6). auto_brightness off: BB 00 once, then the
+# RNS-E does its own thing. ambient_source: cluster, climatronic or blend.
+# Ambient is log10 of the source. Curve and night threshold are guesses until
+# a daylight-to-dark capture. learned is written by carpid.
+# Not built yet: the curve, scroll trim, learning and the ambient night
+# threshold. Until then auto follows the car's dimmer and night follows the
+# car's lights.
+[light]
+auto_brightness = true
+scroll_trim = true
+ambient_source = "cluster"
+curve_mode = "learned"
+manual_curve = [
+    { ambient = 0.0, pct = 5 },
+    { ambient = 1.0, pct = 30 },
+    { ambient = 2.0, pct = 70 },
+    { ambient = 3.0, pct = 100 },
+]
+night_threshold = 1.0
+night_hysteresis = 0.2
+
+# Cluster display and the two top lines (top lines only while on TV).
+# Off: nothing is sent to the cluster. Without readings, the page shows
+# speed, rpm, coolant, outside temp, battery, fuel, odometer, dimmer.
+[dis]
+enabled = false
+
+# Phone portal: http://<pi>:5003/files. Uploads need the PIN once one is set
+# (set it through the settings API).
+# Remove this section to turn the portal off.
+[portal]
+bind = "0.0.0.0:5003"
 
 # Updates (carpi-update reads this too). See docs/DEPLOY.md section 3.
 [update]
