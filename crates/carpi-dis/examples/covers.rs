@@ -6,7 +6,7 @@
 //!
 //! Writes `sheet.png` (per cover: source, the grey stage, the 48x48 thumbnail
 //! and the 96x96 full cover, drawn like the white cluster: lit px on black,
-//! 4x, with a pixel gap) and `<name>.thumb.bin` / `<name>.full.bin` (1-bit,
+//! 4x) and `<name>.thumb.bin` / `<name>.full.bin` (1-bit,
 //! MSB-first rows) for `carpi dis-bench` (`CARPI_BENCH_COVERS=<out dir>`), plus
 //! `<name>.thumb.png` / `<name>.centre.png` tiles (48x48 and the full 128x96
 //! centre) for comparisons.
@@ -61,13 +61,13 @@ fn bits(a: &Art) -> Vec<u8> {
     out
 }
 
-/// Draw `a` like the cluster at (x0, y0): each px a (S-1)^2 lit or dim square.
+/// Draw `a` like the cluster at (x0, y0): each px an SxS lit or dark square, no gaps.
 fn put_art(sheet: &mut RgbImage, a: &Art, x0: u32, y0: u32) {
     for y in 0..a.h as u32 {
         for x in 0..a.w as u32 {
-            let c = if a.get(x as usize, y as usize) { Rgb([235, 240, 255]) } else { Rgb([18, 18, 22]) };
-            for dy in 0..S - 1 {
-                for dx in 0..S - 1 {
+            let c = if a.get(x as usize, y as usize) { Rgb([235, 240, 255]) } else { Rgb([0, 0, 0]) };
+            for dy in 0..S {
+                for dx in 0..S {
                     sheet.put_pixel(x0 + x * S + dx, y0 + y * S + dy, c);
                 }
             }
