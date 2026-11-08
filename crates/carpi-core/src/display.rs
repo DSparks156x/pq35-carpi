@@ -18,7 +18,7 @@ use carpi_dis::screens::media::{MediaInput, MediaLayout};
 use carpi_dis::screens::nav::{NavInput, format_distance};
 use carpi_dis::screens::readings::{ReadingSpec, ReadingsInput};
 use carpi_dis::session::{Phase, Window};
-use carpi_dis::top::{self, TopLines};
+use carpi_dis::top::TopLines;
 use carpi_dis::{Dis, DisConfig, ScreenId, SessionEvent};
 use carpi_gate::{BusView, Gate, TxClass};
 use carpi_input::DisKey;
@@ -217,33 +217,82 @@ fn nav_input(store: &Store, now: Instant) -> NavInput {
     }
 }
 
-/// The two 8-cell lines: nav distance and road while navigating, else
-/// media title and artist, else blank.
-pub fn top_lines(store: &Store, now: Instant) -> (String, String) {
-    if store.get_bool("nav.active", now) == Some(true) {
-        let (v, unit) = format_distance(store.get_num("nav.distance_m", now));
-        let dist = if unit.is_empty() {
-            v
-        } else {
-            format!("{v} {unit}")
-        };
-        return (dist, text(store, "nav.road", now).unwrap_or_default());
-    }
-    if store.get_bool("media.active", now) == Some(true) {
-        return (
-            text(store, "media.title", now).unwrap_or_default(),
-            text(store, "media.artist", now).unwrap_or_default(),
-        );
-    }
-    (String::new(), String::new())
+/// What a top-lines source shows: line 1, and line 2 when the cluster's own
+/// line 2 (outside temperature) isn't there.
+struct TopText {
+    alone: String,
+    line1: String,
+    line2: String,
 }
 
-fn cells(l1: &str, l2: &str) -> [u8; 16] {
-    let (a, b) = (top::encode(l1), top::encode(l2));
-    let mut out = [0x20; 16];
-    out[..8].copy_from_slice(&a[..8]);
-    out[8..].copy_from_slice(&b[..8]);
-    out
+/// The top lines (0x363/0x365, 8 cells each, marquee when longer): the old
+/// page's priority phone > nav > media, skipping whatever the centre shows,
+/// so the driver gets that info anyway. One title never splits across both
+/// lines. While the centre is ours the cluster puts the outside temperature
+/// on line 2, so we leave 0x365 alone (`None`); otherwise line 2 carries the
+/// second field. `None` overall: nothing to show.
+pub fn top_lines(
+    store: &Store,
+    now: Instant,
+    centre: Option<ScreenId>,
+    centre_ours: bool,
+) -> Option<(String, Option<String>)> {
+    let phone = || {
+        let state = text(store, "call.state", now)?;
+        let who = text(store, "call.name", now)
+            .or_else(|| text(store, "call.number", now))
+            .unwrap_or_else(|| "Unknown".into());
+        let word = match state.as_str() {
+            "ringing" => "Incoming",
+            "dialing" => "Calling",
+            "held" => "On hold",
+            _ => "On call",
+        };
+        Some(TopText {
+            alone: format!("{word}: {who}"),
+            line1: who,
+            line2: word.into(),
+        })
+    };
+    let nav = || {
+        if store.get_bool("nav.active", now) != Some(true) {
+            return None;
+        }
+        let (v, unit) = format_distance(store.get_num("nav.distance_m", now));
+        let dist = if unit.is_empty() { v } else { format!("{v} {unit}") };
+        let road = text(store, "nav.road", now).unwrap_or_default();
+        Some(TopText {
+            alone: if road.is_empty() { dist.clone() } else { format!("{dist} {road}") },
+            line1: dist,
+            line2: road,
+        })
+    };
+    let media = || {
+        if store.get_bool("media.active", now) != Some(true) {
+            return None;
+        }
+        let title = text(store, "media.title", now)?;
+        let artist = text(store, "media.artist", now).unwrap_or_default();
+        Some(TopText {
+            alone: title.clone(),
+            line1: title,
+            line2: artist,
+        })
+    };
+    let shows = |id: ScreenId| centre == Some(id);
+    let pick = (!shows(ScreenId::Call))
+        .then(phone)
+        .flatten()
+        .or_else(|| (!shows(ScreenId::Nav)).then(nav).flatten())
+        .or_else(|| {
+            let media_up = shows(ScreenId::Media) || shows(ScreenId::Cover) || shows(ScreenId::Egg);
+            (!media_up).then(media).flatten()
+        })?;
+    Some(if centre_ours {
+        (pick.alone, None)
+    } else {
+        (pick.line1, Some(pick.line2))
+    })
 }
 
 fn may_draw(view: &BusView) -> bool {
@@ -473,9 +522,14 @@ impl Display {
         // Top lines.
         let on_tv = store.get_bool("rnse.on_tv", now) == Some(true);
         if self.setup.enabled && on_tv {
-            let (l1, l2) = top_lines(store, now);
-            self.top_text = format!("{l1}|{l2}");
-            self.top.set_cells(now, cells(&l1, &l2));
+            let ours = self.running && self.dis.session().owned();
+            let centre = if ours { self.dis.shown() } else { None };
+            let (l1, l2) = top_lines(store, now, centre, ours).unwrap_or_default();
+            self.top_text = match &l2 {
+                Some(l2) => format!("{l1}|{l2}"),
+                None => l1.clone(),
+            };
+            self.top.set_lines(now, &l1, l2.as_deref());
             self.top.tick(now);
             let mut refused = false;
             while let Some(f) = self.top.poll_transmit() {
