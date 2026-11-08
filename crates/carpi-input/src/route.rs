@@ -60,6 +60,10 @@ pub enum SystemAction {
     Shutdown,
     Reboot,
     SaveCapture,
+    /// RNS-E panel brighter / darker, learned by the light model. Not bound
+    /// by default.
+    BrightnessUp,
+    BrightnessDown,
 }
 
 /// Our pages inside the LIVI fork.

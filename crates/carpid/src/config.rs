@@ -1,6 +1,6 @@
 use carpi_core::{CoreConfig, DisSetup, Reading};
 use carpi_input::{BindingRow, RouteConfig};
-use carpi_proto::{AmbientSource, CurveMode, CurvePoint, LearnedPoint};
+use carpi_proto::{AmbientSource, CurveMode, CurvePoint, DarkModeSource, LearnedPoint};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -31,11 +31,14 @@ use std::path::{Path, PathBuf};
 /// uinput = true        # keys to LIVI through a virtual keyboard
 /// # bindings = [ { table = "livi", key = "wheel_up", gesture = "short", action = "prev" }, ... ]
 ///
-/// [light]
-/// night_after_s = 2.0  # lights on this long -> night
-/// day_after_s = 10.0   # lights off this long -> day
-/// day_panel = 0        # RNS-E panel level: 0 follows the car's dimmer, 1-100 fixed
-/// night_panel = 0
+/// [light]              # see deploy/carpid.toml and docs/PLAN.md 2.6
+/// auto_brightness = true
+/// dark_mode_source = "headlights"   # or "ambient"
+/// # latitude = 52.5    # rough location for sunset with the ignition off
+/// # longitude = 13.4
+/// # utc_offset_hours = 1.0
+/// night_from = "19:00" # without a location
+/// day_from = "07:00"
 ///
 /// [dis]
 /// enabled = false      # off: nothing is sent to the cluster
@@ -72,8 +75,7 @@ pub struct Config {
     pub portal: Option<carpi_portal::PortalConfig>,
 }
 
-/// `[light]`: the light model (PLAN 2.6). Only `auto_brightness` acts yet;
-/// see `carpi_core::LightSetup`.
+/// `[light]`: the light model (PLAN 2.6); see `carpi_light`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Light {
@@ -84,8 +86,27 @@ pub struct Light {
     pub manual_curve: Vec<CurvePoint>,
     /// carpid-owned: written by the model, cleared by "reset learned".
     pub learned: Vec<LearnedPoint>,
+    pub dark_mode_source: DarkModeSource,
     pub night_threshold: f64,
     pub night_hysteresis: f64,
+    pub night_dwell_s: f64,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub utc_offset_hours: Option<f64>,
+    /// "HH:MM", local car clock.
+    pub night_from: String,
+    pub day_from: String,
+}
+
+/// "HH:MM" -> minute of the day.
+pub fn parse_hhmm(s: &str) -> Option<u16> {
+    let (h, m) = s.trim().split_once(':')?;
+    let (h, m): (u16, u16) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+fn hhmm(min: u16) -> String {
+    format!("{:02}:{:02}", min / 60, min % 60)
 }
 
 impl Default for Light {
@@ -105,13 +126,20 @@ impl Default for Light {
                 .map(|&(ambient, pct)| CurvePoint { ambient, pct })
                 .collect(),
             learned: Vec::new(),
-            night_threshold: d.night_threshold,
-            night_hysteresis: d.night_hysteresis,
+            dark_mode_source: DarkModeSource::Headlights,
+            night_threshold: d.dark.threshold,
+            night_hysteresis: d.dark.hysteresis,
+            night_dwell_s: d.dark.dwell.as_secs_f64(),
+            latitude: None,
+            longitude: None,
+            utc_offset_hours: None,
+            night_from: hhmm(d.dark.night_from),
+            day_from: hhmm(d.dark.day_from),
         }
     }
 }
 
-fn to_proto_source(s: carpi_core::AmbientSource) -> AmbientSource {
+pub fn to_proto_source(s: carpi_core::AmbientSource) -> AmbientSource {
     match s {
         carpi_core::AmbientSource::Cluster => AmbientSource::Cluster,
         carpi_core::AmbientSource::Climatronic => AmbientSource::Climatronic,
@@ -337,6 +365,28 @@ impl Config {
         if !(l.night_hysteresis.is_finite() && l.night_hysteresis >= 0.0) {
             return Err("[light] night_hysteresis must be 0 or more".into());
         }
+        if !(l.night_dwell_s.is_finite() && (0.0..=3600.0).contains(&l.night_dwell_s)) {
+            return Err("[light] night_dwell_s must be 0-3600".into());
+        }
+        match (l.latitude, l.longitude) {
+            (None, None) => {}
+            (Some(la), Some(lo))
+                if (-90.0..=90.0).contains(&la) && (-180.0..=180.0).contains(&lo) => {}
+            (Some(_), Some(_)) => {
+                return Err("[light] latitude must be -90 to 90, longitude -180 to 180".into());
+            }
+            _ => return Err("[light] latitude and longitude go together".into()),
+        }
+        if l.utc_offset_hours
+            .is_some_and(|o| !(-14.0..=14.0).contains(&o))
+        {
+            return Err("[light] utc_offset_hours must be -14 to 14".into());
+        }
+        for (name, v) in [("night_from", &l.night_from), ("day_from", &l.day_from)] {
+            if parse_hhmm(v).is_none() {
+                return Err(format!("[light] {name}: \"HH:MM\", got \"{v}\""));
+            }
+        }
         if let Some(r) = &self.dis.readings {
             if r.len() > 8 {
                 return Err(format!("[dis] readings: at most 8, got {}", r.len()));
@@ -413,8 +463,25 @@ impl Config {
                     .iter()
                     .map(|p| (to_core_source(p.source), p.ambient, p.pct))
                     .collect(),
-                night_threshold: l.night_threshold,
-                night_hysteresis: l.night_hysteresis,
+                dark: carpi_core::DarkSetup {
+                    source: match l.dark_mode_source {
+                        DarkModeSource::Headlights => carpi_core::DarkSource::Headlights,
+                        DarkModeSource::Ambient => carpi_core::DarkSource::Ambient,
+                    },
+                    threshold: l.night_threshold,
+                    hysteresis: l.night_hysteresis,
+                    dwell: std::time::Duration::from_secs_f64(l.night_dwell_s),
+                    location: match (l.latitude, l.longitude) {
+                        (Some(latitude), Some(longitude)) => Some(carpi_core::Location {
+                            latitude,
+                            longitude,
+                            utc_offset_hours: l.utc_offset_hours,
+                        }),
+                        _ => None,
+                    },
+                    night_from: parse_hhmm(&l.night_from).unwrap_or(19 * 60),
+                    day_from: parse_hhmm(&l.day_from).unwrap_or(7 * 60),
+                },
             },
             routes: self.routes().unwrap_or_default(),
         }

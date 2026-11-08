@@ -8,7 +8,8 @@
 
 use crate::config::Config;
 use carpi_proto::{
-    AmbientSource, Binding, LightPatch, PinChange, ReadingSetting, Settings, SettingsPatch,
+    AmbientSource, Binding, LearnedPoint, LightPatch, PinChange, ReadingSetting, Settings,
+    SettingsPatch,
 };
 use std::path::Path;
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Value, value};
@@ -24,8 +25,15 @@ pub fn get(cfg: &Config) -> Settings {
             curve_mode: cfg.light.curve_mode,
             manual_curve: cfg.light.manual_curve.clone(),
             learned: cfg.light.learned.clone(),
+            dark_mode_source: cfg.light.dark_mode_source,
             night_threshold: cfg.light.night_threshold,
             night_hysteresis: cfg.light.night_hysteresis,
+            night_dwell_s: cfg.light.night_dwell_s,
+            latitude: cfg.light.latitude,
+            longitude: cfg.light.longitude,
+            utc_offset_hours: cfg.light.utc_offset_hours,
+            night_from: cfg.light.night_from.clone(),
+            day_from: cfg.light.day_from.clone(),
         },
         dis: carpi_proto::DisSettings {
             enabled: cfg.dis.enabled,
@@ -131,6 +139,34 @@ fn light(doc: &mut DocumentMut, l: &LightPatch) -> Result<(), String> {
     if let Some(v) = l.night_hysteresis {
         t["night_hysteresis"] = value(v);
     }
+    if let Some(v) = l.dark_mode_source {
+        t["dark_mode_source"] = value(name(v));
+    }
+    if let Some(v) = l.night_dwell_s {
+        t["night_dwell_s"] = value(v);
+    }
+    if l.clear_location
+        && let Some(tt) = t.as_table_mut()
+    {
+        for k in ["latitude", "longitude", "utc_offset_hours"] {
+            tt.remove(k);
+        }
+    }
+    if let Some(v) = l.latitude {
+        t["latitude"] = value(v);
+    }
+    if let Some(v) = l.longitude {
+        t["longitude"] = value(v);
+    }
+    if let Some(v) = l.utc_offset_hours {
+        t["utc_offset_hours"] = value(v);
+    }
+    if let Some(v) = &l.night_from {
+        t["night_from"] = value(v.as_str());
+    }
+    if let Some(v) = &l.day_from {
+        t["day_from"] = value(v.as_str());
+    }
     if l.reset_learned {
         // The source the points are for: the patch's, else the file's.
         let src = match l.ambient_source {
@@ -151,6 +187,34 @@ fn light(doc: &mut DocumentMut, l: &LightPatch) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn learned_array(points: &[LearnedPoint]) -> Item {
+    array(points.iter().map(|p| {
+        let mut i = InlineTable::new();
+        i.insert("source", name(p.source).into());
+        // Two decimals are plenty on the log scale and keep the file tidy.
+        i.insert("ambient", ((p.ambient * 100.0).round() / 100.0).into());
+        i.insert("pct", i64::from(p.pct).into());
+        i
+    }))
+}
+
+/// Replaces `[light] learned` (carpid-owned: the light model's nudges).
+/// Same checks and backup as [`set`].
+pub fn save_learned(path: &Path, points: &[LearnedPoint]) -> Result<Config, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("current file: {e}"))?;
+    table(&mut doc, "light")?;
+    doc["light"]["learned"] = learned_array(points);
+    let new = doc.to_string();
+    let cfg = Config::parse(&new).map_err(|e| format!("rejected, nothing saved: {e}"))?;
+    if new != text {
+        carpi_portal::replace_with_backup(path, &new)
+            .map_err(|e| format!("saving {}: {e}", path.display()))?;
+    }
+    Ok(cfg)
 }
 
 /// The file's text with `patch` applied. Doesn't check the result.
@@ -233,6 +297,7 @@ pub fn set(path: &Path, patch: &SettingsPatch) -> Result<Config, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use carpi_proto::DarkModeSource;
 
     const FILE: &str = "# my car\n[bus.ican]\niface = \"can0\" # TT\n\n[tx]\nenabled = false\n\n[portal]\nbind = \"0.0.0.0:5003\"\n";
 
@@ -393,6 +458,120 @@ mod tests {
         let l = get(&cfg).light.learned;
         assert_eq!(l.len(), 1);
         assert_eq!(l[0].source, AmbientSource::Climatronic);
+    }
+
+    #[test]
+    fn learned_points_persist() {
+        let (_d, p) = file();
+        let pts = vec![
+            LearnedPoint {
+                source: AmbientSource::Cluster,
+                ambient: 1.556_302,
+                pct: 68,
+            },
+            LearnedPoint {
+                source: AmbientSource::Climatronic,
+                ambient: 2.0,
+                pct: 40,
+            },
+        ];
+        let cfg = save_learned(&p, &pts).unwrap();
+        let got = get(&cfg).light.learned;
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].ambient, 1.56);
+        assert_eq!(got[0].pct, 68);
+        // Into the model: the learned point moves the curve there.
+        let mut m = carpi_light::LightModel::new(cfg.core().light);
+        let at = std::time::Instant::now();
+        let l = m.update(
+            at,
+            &carpi_light::Inputs {
+                cluster_sensor: Some(35.0),
+                ..Default::default()
+            },
+        );
+        assert!((l.target_pct.unwrap() - 68.0).abs() < 1.5, "{l:?}");
+        // Comments kept, a later settings patch keeps them.
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("# my car"));
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                tx_enabled: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(get(&cfg).light.learned.len(), 2);
+    }
+
+    #[test]
+    fn dark_mode_settings() {
+        let (_d, p) = file();
+        let before = get(&Config::parse(FILE).unwrap()).light;
+        assert_eq!(before.dark_mode_source, DarkModeSource::Headlights);
+        assert_eq!(
+            (before.night_from.as_str(), before.day_from.as_str()),
+            ("19:00", "07:00")
+        );
+        assert_eq!(before.latitude, None);
+        let patch = |l: LightPatch| SettingsPatch {
+            light: Some(l),
+            ..Default::default()
+        };
+        let cfg = set(
+            &p,
+            &patch(LightPatch {
+                dark_mode_source: Some(DarkModeSource::Ambient),
+                night_dwell_s: Some(20.0),
+                latitude: Some(51.5),
+                longitude: Some(-0.13),
+                utc_offset_hours: Some(0.0),
+                night_from: Some("18:30".into()),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        let l = get(&cfg).light;
+        assert_eq!(l.dark_mode_source, DarkModeSource::Ambient);
+        assert_eq!(l.night_dwell_s, 20.0);
+        assert_eq!((l.latitude, l.longitude), (Some(51.5), Some(-0.13)));
+        assert_eq!(l.night_from, "18:30");
+        // Half a location, or a bad time, is refused.
+        assert!(
+            set(
+                &p,
+                &patch(LightPatch {
+                    clear_location: true,
+                    latitude: Some(10.0),
+                    ..Default::default()
+                })
+            )
+            .is_err()
+        );
+        assert!(
+            set(
+                &p,
+                &patch(LightPatch {
+                    day_from: Some("7am".into()),
+                    ..Default::default()
+                })
+            )
+            .is_err()
+        );
+        let cfg = set(
+            &p,
+            &patch(LightPatch {
+                clear_location: true,
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        let l = get(&cfg).light;
+        assert_eq!(
+            (l.latitude, l.longitude, l.utc_offset_hours),
+            (None, None, None)
+        );
     }
 
     #[test]

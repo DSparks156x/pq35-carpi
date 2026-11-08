@@ -1,6 +1,6 @@
 [package]
 name = "carpi-light"
-description = "Light model: night, panel level, ambient (sans-IO)"
+description = "Light model: ambient, brightness curve, learning, dark mode (sans-IO)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

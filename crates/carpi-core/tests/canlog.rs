@@ -129,9 +129,34 @@ fn sends_only_label_and_brightness_to_the_rnse() {
         assert_eq!(f.id, ids::RNSE_CMD);
         assert!(matches!(f.data()[0], 0xBA | 0xBB), "{f:?}");
     }
-    // Daytime in this log, nothing projecting: LIVI label, follow-car brightness.
+    // Daytime in this log, nothing projecting: LIVI label, and auto
+    // brightness from the default curve at the parked baseline (cluster 35,
+    // display dimming 37 %).
     assert!(sent.iter().any(|f| f.data()[..2] == [0xBA, 0x00]));
-    assert!(sent.iter().any(|f| f.data()[..2] == [0xBB, 0x00]));
+    let bb: Vec<u8> = sent
+        .iter()
+        .filter(|f| f.data()[0] == 0xBB)
+        .map(|f| f.data()[1])
+        .collect();
+    assert!(!bb.is_empty());
+    assert!(bb.iter().all(|&l| (45..=62).contains(&l)), "{bb:?}");
     // Settle + one resend: a handful of frames, not a stream.
     assert!(sent.len() <= 6, "{} frames", sent.len());
+    let s = car.store();
+    let end = next_tick - Duration::from_millis(100);
+    assert_eq!(s.get_bool("light.night", end), Some(false));
+    assert_eq!(
+        s.get("light.night_source", end),
+        Some(&carpi_state::Value::Text("headlights".into()))
+    );
+    let a = s.get_num("light.ambient", end).unwrap();
+    assert!((a - 36f64.log10()).abs() < 0.06, "ambient {a}");
+    assert_eq!(
+        s.get_num("light.panel_pct", end),
+        bb.last().map(|&l| l as f64)
+    );
+    assert!(matches!(
+        s.get("light.curve", end),
+        Some(carpi_state::Value::Text(t)) if t.starts_with("{\"source\":\"cluster\"")
+    ));
 }

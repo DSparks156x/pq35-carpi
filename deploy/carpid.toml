@@ -32,24 +32,26 @@ uinput = true
 
 # Light model (docs/PLAN.md 2.6). auto_brightness off: BB 00 once, then the
 # RNS-E does its own thing. ambient_source: cluster, climatronic or blend.
-# Ambient is log10 of the source. Curve and night threshold are guesses until
-# a daylight-to-dark capture. learned is written by carpid.
-# Not built yet: the curve, scroll trim, learning and the ambient night
-# threshold. Until then auto follows the car's dimmer and night follows the
-# car's lights.
+# Ambient is log10(1 + raw) of the source. Learned mode bends the default
+# curve towards your nudges; learned is written by carpid. The default curve,
+# scroll trim and night threshold are guesses until a daylight-to-dark capture.
+# dark_mode_source: headlights (Kl15 on) with the car clock when Kl15 is off,
+# or ambient (night_threshold / night_hysteresis / night_dwell_s). The clock
+# uses sunset/sunrise at latitude/longitude if set, else night_from-day_from.
 [light]
 auto_brightness = true
 scroll_trim = true
 ambient_source = "cluster"
 curve_mode = "learned"
-manual_curve = [
-    { ambient = 0.0, pct = 5 },
-    { ambient = 1.0, pct = 30 },
-    { ambient = 2.0, pct = 70 },
-    { ambient = 3.0, pct = 100 },
-]
+dark_mode_source = "headlights"
 night_threshold = 1.0
 night_hysteresis = 0.2
+night_dwell_s = 10.0
+# latitude = 52.5
+# longitude = 13.4
+# utc_offset_hours = 1.0
+night_from = "19:00"
+day_from = "07:00"
 
 # Cluster display and the two top lines (top lines only while on TV).
 # Off: nothing is sent to the cluster. Without readings, the page shows

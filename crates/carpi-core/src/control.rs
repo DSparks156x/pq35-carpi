@@ -11,7 +11,7 @@ use carpi_input::{
     Call, CarAction, Context, Decoder, DecoderConfig, DisKey, Focus, GestureConfig, LiviKey,
     Recogniser, Route, RouteConfig, SystemAction,
 };
-use carpi_light::{LightModel, PanelLevel};
+use carpi_light::{KEY_STEP, LightModel};
 use carpi_nm::BusMonitor;
 use carpi_power::{PowerEvent, ShutdownPolicy};
 use carpi_rnse::{Brightness, SourceLabel};
@@ -19,7 +19,7 @@ use carpi_signals::ids;
 use carpi_state::{Store, Value};
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Output {
     /// A frame the gate passed, for interface `iface`.
     Send {
@@ -35,91 +35,14 @@ pub enum Output {
     /// Shutdown, reboot, save capture.
     Action(SystemAction),
     Power(PowerEvent),
+    /// The light model's learned points changed (a nudge or a reset): every
+    /// source's, for the daemon to persist.
+    LightLearned(carpi_light::Learned),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum CurveMode {
-    Manual,
-    #[default]
-    Learned,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum AmbientSource {
-    /// 0x621 `KO1_Lichtsensor` (else 0x635 `DI1_Sensor`). Drew's default.
-    #[default]
-    Cluster,
-    /// 0x3E3 sun load.
-    Climatronic,
-    /// Cluster, sun load filling in the bright end.
-    Blend,
-}
-
-/// Light settings (PLAN 2.6). Only `auto_brightness` acts yet.
-///
-/// TODO(light model): ambient fusion (sun sensor by day, cluster sensor in
-/// the dark), the curve, scroll trim, learning and the ambient night
-/// threshold replace carpi-light's lights-on rule and fixed panel levels.
-/// Until then the rest is stored and shown, and night still follows the
-/// car's lights.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LightSetup {
-    /// Off: `BB 00` once, then the RNS-E is left alone.
-    pub auto_brightness: bool,
-    pub scroll_trim: bool,
-    pub ambient_source: AmbientSource,
-    pub curve_mode: CurveMode,
-    /// (ambient, panel %), ascending ambient.
-    pub manual_curve: Vec<(f64, u8)>,
-    /// Learned points, keyed by the source they were learned on.
-    pub learned: Vec<(AmbientSource, f64, u8)>,
-    pub night_threshold: f64,
-    pub night_hysteresis: f64,
-}
-
-impl Default for LightSetup {
-    /// Drew's defaults (PLAN 2.6). Curve and threshold are guesses until a
-    /// daylight-to-dark capture seeds them (PLAN 2.6 open item).
-    fn default() -> Self {
-        LightSetup {
-            auto_brightness: true,
-            scroll_trim: true,
-            ambient_source: AmbientSource::Cluster,
-            curve_mode: CurveMode::Learned,
-            manual_curve: vec![(0.0, 5), (1.0, 30), (2.0, 70), (3.0, 100)],
-            learned: Vec::new(),
-            night_threshold: 1.0,
-            night_hysteresis: 0.2,
-        }
-    }
-}
-
-/// Interim `light.ambient`, log10 of the raw source (floor 1): cluster
-/// sensor counts or mean sun load in W/m2. Blend takes the cluster and
-/// falls back to the sun load.
-/// TODO(light model): scaled, smoothed, deadbanded; Blend filling in only
-/// where the cluster sensor saturates (scale and saturation not known yet).
-pub fn interim_ambient(src: AmbientSource, store: &Store, now: Instant) -> Option<f64> {
-    let cluster = || {
-        store
-            .get_num("light.cluster_sensor", now)
-            .or_else(|| store.get_num("light.dim_sensor", now))
-    };
-    let sun = || {
-        let l = store.get_num("light.sun_left_wm2", now);
-        let r = store.get_num("light.sun_right_wm2", now);
-        match (l, r) {
-            (Some(a), Some(b)) => Some((a + b) / 2.0),
-            (a, b) => a.or(b),
-        }
-    };
-    let raw = match src {
-        AmbientSource::Cluster => cluster(),
-        AmbientSource::Climatronic => sun(),
-        AmbientSource::Blend => cluster().or_else(sun),
-    }?;
-    Some(raw.max(1.0).log10())
-}
+/// Light settings (PLAN 2.6); see `carpi_light`.
+pub use carpi_light::Setup as LightSetup;
+pub use carpi_light::{AmbientSource, CurveMode, DarkSetup, DarkSource, Location};
 
 /// Light values are recomputed every tick; let them lapse if ticks stop.
 const DERIVED: Duration = Duration::from_secs(1);
@@ -128,7 +51,6 @@ pub(crate) struct Controls {
     pub gates: Vec<Gate>,
     rnse: carpi_rnse::Client,
     light: LightModel,
-    light_setup: LightSetup,
     /// Auto off: `BB 00` went out; send nothing more until auto comes on.
     handed_back: bool,
     power: ShutdownPolicy,
@@ -147,7 +69,6 @@ impl Controls {
                 .collect(),
             rnse: carpi_rnse::Client::new(Default::default()),
             light: LightModel::new(Default::default()),
-            light_setup: LightSetup::default(),
             handed_back: false,
             power: ShutdownPolicy::new(Default::default()),
             decoder: Decoder::new(DecoderConfig::default()),
@@ -158,10 +79,32 @@ impl Controls {
     }
 
     pub fn set_light(&mut self, s: LightSetup) {
-        if s.auto_brightness != self.light_setup.auto_brightness {
+        if s.auto_brightness != self.light.setup().auto_brightness {
             self.handed_back = false;
         }
-        self.light_setup = s;
+        self.light.set_setup(s);
+    }
+
+    /// A `Request::Light`. Learned changes go out as `Output::LightLearned`.
+    pub fn light_action(
+        &mut self,
+        action: carpi_proto::LightAction,
+        out: &mut Vec<Output>,
+    ) -> Result<(), String> {
+        match action {
+            carpi_proto::LightAction::Nudge { delta_pct } => {
+                self.light.nudge(delta_pct.into())?;
+            }
+            carpi_proto::LightAction::ResetLearned { source } => {
+                self.light.reset_learned(source.map(|s| match s {
+                    carpi_proto::AmbientSource::Cluster => AmbientSource::Cluster,
+                    carpi_proto::AmbientSource::Climatronic => AmbientSource::Climatronic,
+                    carpi_proto::AmbientSource::Blend => AmbientSource::Blend,
+                }));
+            }
+        }
+        out.push(Output::LightLearned(self.light.learned().clone()));
+        Ok(())
     }
 
     /// A frame from the ICAN interface: keys go through the input pipeline.
@@ -206,40 +149,49 @@ impl Controls {
         let light = self
             .light
             .update(now, &carpi_light::Inputs::from_store(store, now));
+        let auto = self.light.setup().auto_brightness;
+        let num = |v: Option<f64>| v.map(Value::Num);
         store.set("light.night", Some(Value::Bool(light.night)), now, DERIVED);
+        store.set(
+            "light.night_source",
+            light.night_source.map(|s| Value::Text(s.as_str().into())),
+            now,
+            DERIVED,
+        );
         store.set(
             "light.lights_on",
             light.lights_on.map(Value::Bool),
             now,
             DERIVED,
         );
-        let panel = match light.panel_level {
-            PanelLevel::FollowCar => Brightness::FollowCar,
-            PanelLevel::Level(n) => Brightness::Level(n),
-        };
+        store.set("light.ambient", num(light.ambient), now, DERIVED);
+        store.set("light.target_pct", num(light.target_pct), now, DERIVED);
+        store.set(
+            "light.trim_pct",
+            Some(Value::Num(light.trim_pct)),
+            now,
+            DERIVED,
+        );
+        store.set(
+            "light.curve",
+            Some(Value::Text(self.light.curve_json().into())),
+            now,
+            DERIVED,
+        );
+        // What the panel shows: our level, else the car's display dimming
+        // (the RNS-E follows it).
+        let ours = light.panel_pct.filter(|_| auto);
+        let pct = ours
+            .map(f64::from)
+            .or_else(|| store.get_num("light.dim_display_pct", now));
+        store.set("light.panel_pct", num(pct), now, DERIVED);
+        // `BB` argument: 0 = follows the car.
         store.set(
             "light.panel_level",
-            Some(Value::Num(match panel {
-                Brightness::FollowCar => 0.0,
-                Brightness::Level(n) => n as f64,
-            })),
+            Some(Value::Num(ours.map_or(0.0, f64::from))),
             now,
             DERIVED,
         );
-        // For the light page's plot.
-        let auto = self.light_setup.auto_brightness;
-        store.set(
-            "light.ambient",
-            interim_ambient(self.light_setup.ambient_source, store, now).map(Value::Num),
-            now,
-            DERIVED,
-        );
-        let pct = match panel {
-            Brightness::Level(n) if auto => Some(n as f64),
-            // The RNS-E follows the car's display dimming.
-            _ => store.get_num("light.dim_display_pct", now),
-        };
-        store.set("light.panel_pct", pct.map(Value::Num), now, DERIVED);
 
         let Some((ican_idx, monitor)) = ican else {
             return;
@@ -253,9 +205,10 @@ impl Controls {
             _ => SourceLabel::Livi,
         };
         self.rnse.set_label(Some(label));
-        // TODO(light model): with auto on, the curve's level instead.
+        // Auto on: the curve's level once there is one (until then the
+        // RNS-E is left as it is).
         self.rnse.set_brightness(match (auto, self.handed_back) {
-            (true, _) => Some(panel),
+            (true, _) => light.panel_pct.map(Brightness::Level),
             (false, false) => Some(Brightness::FollowCar),
             (false, true) => None,
         });
@@ -310,6 +263,17 @@ impl Controls {
                         Focus::Dis => Focus::Livi,
                         _ => Focus::Dis,
                     };
+                }
+                Route::Action(a @ (SystemAction::BrightnessUp | SystemAction::BrightnessDown)) => {
+                    let step = if a == SystemAction::BrightnessUp {
+                        KEY_STEP
+                    } else {
+                        -KEY_STEP
+                    };
+                    match self.light.nudge(step) {
+                        Ok(_) => out.push(Output::LightLearned(self.light.learned().clone())),
+                        Err(e) => tracing::debug!("{a:?}: {e}"),
+                    }
                 }
                 Route::Action(a) => out.push(Output::Action(a)),
                 Route::Drop => {}

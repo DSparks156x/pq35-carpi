@@ -9,7 +9,7 @@ pub mod diagnostics;
 pub mod display;
 
 pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
-pub use control::{AmbientSource, CurveMode, LightSetup, Output};
+pub use control::{AmbientSource, CurveMode, DarkSetup, DarkSource, LightSetup, Location, Output};
 pub use display::{DisSetup, Reading};
 
 use carpi_can::RxFrame;
@@ -414,6 +414,12 @@ impl Car {
                             proto::PROTOCOL_VERSION
                         ),
                     }
+                }
+            }
+            Request::Light { action } => {
+                match self.controls.light_action(action, &mut self.outputs) {
+                    Ok(()) => Response::Ok,
+                    Err(message) => Response::Error { message },
                 }
             }
             Request::Values { prefix } => Response::Values {

@@ -83,7 +83,13 @@ struct Daemon {
     portal_pin: Option<carpi_portal::PinCell>,
     diag_jobs: HashMap<DiagJobId, JobEvents>,
     portal_status: watch::Sender<carpi_portal::Status>,
+    /// Learned light points not yet in the file, and when they changed.
+    learned_dirty: Option<Instant>,
 }
+
+/// Nudges are saved this long after the last one, so a run of key presses
+/// is one write.
+const LEARNED_SAVE_DELAY: Duration = Duration::from_secs(3);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -164,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
         portal_pin,
         diag_jobs: HashMap::new(),
         portal_status,
+        learned_dirty: None,
     };
 
     let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -184,6 +191,7 @@ async fn main() -> anyhow::Result<()> {
                     info!("{}: bus {} -> {}", ev.iface, ev.transition.from, ev.transition.to);
                 }
                 d.publish_status(&car);
+                d.save_learned(false);
             }
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
                 car.service(Instant::now());
@@ -271,8 +279,10 @@ impl Daemon {
                     restart_needed: Vec::new(),
                 };
             }
-            SettingsAction::Set { patch } => patch,
+            SettingsAction::Set { patch } => *patch,
         };
+        // The file must have the latest learned points before it's patched.
+        self.save_learned(true);
         if !self.have_file {
             return Response::Error {
                 message: format!(
@@ -308,9 +318,43 @@ impl Daemon {
         }
     }
 
+    /// Writes learned light points once they've settled (`now`: at once).
+    fn save_learned(&mut self, now: bool) {
+        let Some(at) = self.learned_dirty else {
+            return;
+        };
+        if !now && at.elapsed() < LEARNED_SAVE_DELAY {
+            return;
+        }
+        self.learned_dirty = None;
+        if !self.have_file {
+            warn!("no config file; learned brightness points are kept until restart only");
+            return;
+        }
+        match settings::save_learned(&self.config_path, &self.cfg.light.learned) {
+            Ok(c) => {
+                self.cfg = c;
+                info!("learned brightness points saved");
+            }
+            Err(e) => warn!("saving learned brightness points: {e}"),
+        }
+    }
+
     /// Outputs to the actuators, diag job events to their connections.
     fn flush(&mut self, car: &mut Car) {
         for o in car.drain_outputs() {
+            if let carpi_core::Output::LightLearned(points) = &o {
+                self.cfg.light.learned = points
+                    .iter()
+                    .map(|&(s, ambient, pct)| carpi_proto::LearnedPoint {
+                        source: config::to_proto_source(s),
+                        ambient,
+                        pct,
+                    })
+                    .collect();
+                self.learned_dirty = Some(Instant::now());
+                continue;
+            }
             self.act.act(o, car);
         }
         for (id, events) in car.drain_diag_jobs() {

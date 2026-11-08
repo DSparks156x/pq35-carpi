@@ -27,6 +27,8 @@ struct Rig {
     on_tv: bool,
     ring: bool,
     sent: Vec<Frame>,
+    /// Everything else the car model put out.
+    other: Vec<Output>,
 }
 
 impl Rig {
@@ -57,6 +59,7 @@ impl Rig {
             on_tv: false,
             ring: true,
             sent: Vec::new(),
+            other: Vec::new(),
         }
     }
 
@@ -84,8 +87,9 @@ impl Rig {
             }
             self.car.tick(self.now);
             for o in self.car.drain_outputs() {
-                if let Output::Send { frame, .. } = o {
-                    self.sent.push(frame);
+                match o {
+                    Output::Send { frame, .. } => self.sent.push(frame),
+                    o => self.other.push(o),
                 }
             }
         }
@@ -334,4 +338,96 @@ fn auto_brightness_off_hands_back_once() {
         r.take(&[0x7B0]).iter().all(|f| f.data()[0] != 0xBB),
         "no BB after the hand-back"
     );
+}
+
+/// Cluster light sensor (0x621 byte 6) on every step, so the light model
+/// has an ambient.
+fn bb_levels(r: &mut Rig) -> Vec<u8> {
+    r.take(&[0x7B0])
+        .into_iter()
+        .filter(|f| f.data()[0] == 0xBB)
+        .map(|f| f.data()[1])
+        .collect()
+}
+
+fn run_lit(r: &mut Rig, n: u32) -> Vec<Output> {
+    for _ in 0..n {
+        r.feed(0x621, &[0, 0, 0, 0, 0, 0, 35]);
+        r.run(1);
+    }
+    std::mem::take(&mut r.other)
+}
+
+#[test]
+fn nudge_over_the_api_and_by_key() {
+    let mut r = Rig::new(false);
+    let mut routes = carpi_input::RouteConfig::default().to_rows();
+    routes.push(carpi_input::BindingRow {
+        table: "system".into(),
+        key: "wheel_up".into(),
+        gesture: "short".into(),
+        action: "brightness_up".into(),
+    });
+    r.car.configure(
+        CoreConfig {
+            routes: carpi_input::RouteConfig::from_rows(&routes).unwrap(),
+            ..Default::default()
+        },
+        r.now,
+    );
+    r.kl15 = true;
+    run_lit(&mut r, 30);
+    let first = bb_levels(&mut r);
+    let base = *first.last().expect("a curve level");
+    assert!((45..=65).contains(&base), "{first:?}");
+
+    let resp = r.car.handle(
+        1,
+        Request::Light {
+            action: carpi_proto::LightAction::Nudge { delta_pct: 10 },
+        },
+        r.now,
+    );
+    assert_eq!(resp, carpi_proto::Response::Ok);
+    let learned: Vec<_> = r
+        .car
+        .drain_outputs()
+        .into_iter()
+        .filter_map(|o| match o {
+            Output::LightLearned(l) => Some(l),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].len(), 1);
+    run_lit(&mut r, 10);
+    let after = bb_levels(&mut r);
+    assert!(after.iter().any(|&l| l >= base + 9), "{base} -> {after:?}");
+
+    // Wheel up, bound to brightness_up: another 5 % (keys route on TV).
+    r.on_tv = true;
+    run_lit(&mut r, 1);
+    bb_levels(&mut r);
+    r.feed(0x5C3, &[0x39, 0x0B]);
+    let mut out = run_lit(&mut r, 1);
+    r.feed(0x5C3, &[0x39, 0x00]);
+    out.extend(run_lit(&mut r, 10));
+    assert!(
+        out.iter().any(|o| matches!(o, Output::LightLearned(_))),
+        "{out:?}"
+    );
+    let keyed = bb_levels(&mut r);
+    assert!(keyed.iter().any(|&l| l >= base + 14), "{keyed:?}");
+
+    // Reset: back to the default curve.
+    let resp = r.car.handle(
+        1,
+        Request::Light {
+            action: carpi_proto::LightAction::ResetLearned { source: None },
+        },
+        r.now,
+    );
+    assert_eq!(resp, carpi_proto::Response::Ok);
+    run_lit(&mut r, 10);
+    assert_eq!(bb_levels(&mut r).last(), Some(&base));
 }

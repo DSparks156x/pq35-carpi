@@ -88,6 +88,24 @@ pub enum Request {
     Settings {
         action: SettingsAction,
     },
+    /// The light model: brightness nudges and "reset learned". Replies `Ok`;
+    /// the learned points land in `carpid.toml` a few seconds later.
+    Light {
+        action: LightAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LightAction {
+    /// Brighter (+) or darker (-) by this many panel % at the current
+    /// ambient. Learned mode stores it as a learned point.
+    Nudge { delta_pct: i8 },
+    /// Forget the learned points of `source` (`None`: the current one).
+    ResetLearned {
+        #[serde(default)]
+        source: Option<AmbientSource>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,7 +130,10 @@ pub enum DiagAction {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SettingsAction {
     Get,
-    Set { patch: SettingsPatch },
+    /// Boxed: a patch is large and rare.
+    Set {
+        patch: Box<SettingsPatch>,
+    },
 }
 
 /// Everything settable through [`Request::Settings`]. The portal PIN is
@@ -148,10 +169,41 @@ pub struct LightSettings {
     /// learns afresh; the old points stay). carpid owns these; only
     /// [`LightPatch::reset_learned`] changes them over the API.
     pub learned: Vec<LearnedPoint>,
-    /// Night (dark theme) below this ambient...
+    /// What decides night (dark theme).
+    #[serde(default)]
+    pub dark_mode_source: DarkModeSource,
+    /// Ambient dark mode: night below this ambient...
     pub night_threshold: f64,
-    /// ...and day again above threshold + hysteresis.
+    /// ...and day again above threshold + hysteresis...
     pub night_hysteresis: f64,
+    /// ...each after holding this long, seconds.
+    #[serde(default)]
+    pub night_dwell_s: f64,
+    /// Rough location for sunset/sunrise while the ignition is off. Both or
+    /// neither.
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
+    /// The car clock's offset from UTC. `None`: from the longitude.
+    #[serde(default)]
+    pub utc_offset_hours: Option<f64>,
+    /// Without a location: night from this local time ("19:00")...
+    #[serde(default)]
+    pub night_from: String,
+    /// ...until this one ("07:00").
+    #[serde(default)]
+    pub day_from: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DarkModeSource {
+    /// The car's lights while Kl15 is on, the car clock while it's off.
+    #[default]
+    Headlights,
+    /// The brightness model's ambient estimate; the clock while it's stale.
+    Ambient,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,6 +256,24 @@ pub struct LightPatch {
     pub night_threshold: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub night_hysteresis: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dark_mode_source: Option<DarkModeSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub night_dwell_s: Option<f64>,
+    /// Sets the location; `clear_location` removes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub longitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_offset_hours: Option<f64>,
+    /// Removes latitude, longitude and UTC offset.
+    #[serde(default)]
+    pub clear_location: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub night_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_from: Option<String>,
     /// Forget the learned points of the (new) ambient source.
     #[serde(default)]
     pub reset_learned: bool,
@@ -331,9 +401,13 @@ pub enum InputAction {
     Left,
     Right,
     /// Rotary step; positive is clockwise.
-    Rotate { steps: i32 },
+    Rotate {
+        steps: i32,
+    },
     /// Select press/release.
-    Select { down: bool },
+    Select {
+        down: bool,
+    },
     Back,
     Home,
     PlayPause,
@@ -342,7 +416,9 @@ pub enum InputAction {
     CallAccept,
     CallEnd,
     /// Voice assistant hold (PTT): down starts, up releases.
-    Voice { down: bool },
+    Voice {
+        down: bool,
+    },
     /// AA Navigation keycode / CarPlay `maps:`.
     OpenNav,
     /// AA Tel / CarPlay `mobilephone:`.
@@ -350,7 +426,9 @@ pub enum InputAction {
     /// AA Media / CarPlay `nowplaying:`.
     OpenMedia,
     /// One of our pages in the fork (`data`, `diagnostics`, `car`, `light`).
-    OpenPage { page: String },
+    OpenPage {
+        page: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -679,6 +757,27 @@ mod tests {
         let n = body_len(bytes[..4].try_into().unwrap()).unwrap();
         assert_eq!(n, bytes.len() - 4);
         assert_eq!(decode::<Request>(&bytes[4..]).unwrap(), r);
+    }
+
+    #[test]
+    fn light_request_shape() {
+        let r: Request =
+            serde_json::from_str(r#"{"type":"light","action":{"kind":"nudge","delta_pct":-5}}"#)
+                .unwrap();
+        assert_eq!(
+            r,
+            Request::Light {
+                action: LightAction::Nudge { delta_pct: -5 }
+            }
+        );
+        let r: Request =
+            serde_json::from_str(r#"{"type":"light","action":{"kind":"reset_learned"}}"#).unwrap();
+        assert_eq!(
+            r,
+            Request::Light {
+                action: LightAction::ResetLearned { source: None }
+            }
+        );
     }
 
     #[test]

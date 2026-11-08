@@ -60,11 +60,13 @@ const GESTURES: [(GestureKind, &str); 5] = [
     (GestureKind::Detent, "detent"),
 ];
 
-const SYSTEM: [(SystemAction, &str); 4] = [
+const SYSTEM: [(SystemAction, &str); 6] = [
     (SystemAction::ToggleDisFocus, "toggle_dis_focus"),
     (SystemAction::Shutdown, "shutdown"),
     (SystemAction::Reboot, "reboot"),
     (SystemAction::SaveCapture, "save_capture"),
+    (SystemAction::BrightnessUp, "brightness_up"),
+    (SystemAction::BrightnessDown, "brightness_down"),
 ];
 
 const CAR: [(CarAction, &str); 7] = [
@@ -327,5 +329,28 @@ mod tests {
             c.livi.get(&(Key::Setup, GestureKind::Short)),
             Some(&LiviKey::Code(59))
         );
+    }
+
+    #[test]
+    fn brightness_actions_bind_but_not_by_default() {
+        let d = RouteConfig::default();
+        assert!(
+            d.system
+                .values()
+                .all(|a| !matches!(a, SystemAction::BrightnessUp | SystemAction::BrightnessDown))
+        );
+        let mut rows = d.to_rows();
+        rows.push(BindingRow {
+            table: "system".into(),
+            key: "wheel_up".into(),
+            gesture: "long".into(),
+            action: "brightness_up".into(),
+        });
+        let c = RouteConfig::from_rows(&rows).unwrap();
+        assert_eq!(
+            c.system.get(&(Key::WheelUp, GestureKind::Long)),
+            Some(&SystemAction::BrightnessUp)
+        );
+        assert!(c.to_rows().iter().any(|r| r.action == "brightness_up"));
     }
 }
