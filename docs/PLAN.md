@@ -404,7 +404,7 @@ Drew's decisions (2026-11-07):
   - Screens: everything except openpilot. Media, nav (improved, plus stock lookalike), phone, accel test, readings (could be better), eggs and cover art. All of them get rebuilt, mildly better.
   - The stock RNS-E nav is barely used, so the 0x7B2 mirror comes late.
   - Clearing tricks: blank characters appended to text and region clears. Mind what a blank overwrites. Real proportional-font widths are already worked out in the old code.
-- **`B7`**: Drew is checking it on the current firmware. Until then it's never sent.
+- **`B7`**: it is the flashing command on the current firmware (Drew). Never sent; brightness uses the `BB` override, which bypasses the dial.
 
 Still open:
 
