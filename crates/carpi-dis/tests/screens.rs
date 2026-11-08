@@ -328,3 +328,41 @@ fn media_layouts_enter_tick_and_seek() {
         assert_eq!(u.messages.len(), 1, "{name}");
     }
 }
+
+#[test]
+fn call_ringing_inverts_then_active_ticks() {
+    use carpi_dis::screens::call::{CallInput, CallScreen};
+    let cx = Ctx::new(Profile::WHITE);
+    let t0 = Instant::now();
+    let mut s = CallScreen::new();
+    let call = |st: &str| CallInput {
+        state: Some(st.into()),
+        name: Some("Mum".into()),
+        number: Some("07700 900123".into()),
+        signal_pct: Some(60),
+        battery_pct: Some(80),
+    };
+    s.set(t0, call("ringing"));
+    let f = build_frame(&mut s, t0, &cx, Registers::default(), true).unwrap();
+    let mut fb = Fb::new(cx.metrics);
+    apply(&mut fb, &f);
+    golden("call_ringing_screen", &fb.ascii());
+    // Answered: status and the action row change, one message.
+    s.set(t0, call("active"));
+    let u = update_only(&mut s, t0, &cx, f.regs);
+    assert_eq!(u.messages.len(), 1);
+    apply(&mut fb, &u);
+    golden("call_active_screen", &fb.ascii());
+    // A second later: just the status run (plus the clip restore after the
+    // pills' clipped text), no clears.
+    let t1 = s.next_deadline(&cx).unwrap();
+    assert_eq!(t1 - t0, Duration::from_secs(1));
+    let u = update_only(&mut s, t1, &cx, u.regs);
+    let recs: Vec<Vec<u8>> = u
+        .messages
+        .iter()
+        .flat_map(|m| records(&m.bytes).unwrap().into_iter().map(<[u8]>::to_vec))
+        .collect();
+    assert_eq!(recs.iter().filter(|r| r[0] == 0x57).count(), 1);
+    assert!(!recs.iter().any(|r| r[0] == 0x52 && r[2] & 3 == 2), "{recs:02X?}");
+}

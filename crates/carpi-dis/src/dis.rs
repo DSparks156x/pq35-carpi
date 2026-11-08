@@ -6,6 +6,7 @@ use crate::arbiter::{Arbiter, ArbiterConfig, Class, Surface};
 use crate::fb::Fb;
 use crate::helpers::Ctx;
 use crate::pack::{PackError, Packed, Registers};
+use crate::screens::call::{CallInput, CallScreen};
 use crate::screens::media::{MediaInput, MediaLayout, MediaScreen};
 use crate::screens::nav::{NavConfig, NavInput, NavScreen};
 use crate::screens::readings::{ReadingSpec, ReadingsInput, ReadingsPage, ReadingsScreen};
@@ -19,6 +20,7 @@ pub enum ScreenId {
     Nav,
     Readings,
     Media,
+    Call,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -39,6 +41,7 @@ pub struct Dis {
     nav: NavScreen,
     readings: ReadingsScreen,
     media: MediaScreen,
+    call: CallScreen,
     user_page: Option<ScreenId>,
     /// Screen entered, and the generation it was entered in.
     shown: Option<(ScreenId, u32)>,
@@ -63,6 +66,7 @@ impl Dis {
                 ReadingsScreen::with_pages(cfg.readings_pages)
             },
             media: MediaScreen::new(cfg.media_layout),
+            call: CallScreen::new(),
             user_page: None,
             shown: None,
             reenter: false,
@@ -125,9 +129,11 @@ impl Dis {
         self.probe && self.session.frame_idle() && self.session.submit(now, p).is_ok()
     }
 
-    /// DIS focus (the wheel drives the DIS): the readings page name inverts.
+    /// DIS focus (the wheel drives the DIS): the readings page name and the
+/// call actions invert. Nothing else is ever inverted.
     pub fn set_focus(&mut self, now: Instant, on: bool) {
         self.readings.set_focus(on);
+        self.call.set_focus(on);
         self.step(now);
     }
 
@@ -151,6 +157,13 @@ impl Dis {
         let on = m.title.is_some() || m.duration_ms.is_some_and(|d| d > 0);
         self.arbiter.set(Class::Media, on);
         self.media.set(now, m);
+        self.step(now);
+    }
+
+    /// Call state. Any call outranks media and user pages (not nav maneuvers).
+    pub fn set_call(&mut self, now: Instant, c: CallInput) {
+        self.arbiter.set(Class::Call, c.state.is_some());
+        self.call.set(now, c);
         self.step(now);
     }
 
@@ -195,6 +208,7 @@ impl Dis {
                     ScreenId::Nav => self.nav.next_deadline(&cx),
                     ScreenId::Readings => self.readings.next_deadline(&cx),
                     ScreenId::Media => self.media.next_deadline(&cx),
+                    ScreenId::Call => self.call.next_deadline(&cx),
                 }
             }
             _ => None,
@@ -214,7 +228,8 @@ impl Dis {
             Class::NavManeuver => Some(ScreenId::Nav),
             Class::UserPage => self.user_page,
             Class::Media => Some(ScreenId::Media),
-            // No screens yet for alerts, calls or the stock radio.
+            Class::Call => Some(ScreenId::Call),
+            // No screens yet for alerts or the stock radio.
             _ => None,
         }
     }
@@ -241,6 +256,7 @@ impl Dis {
             ScreenId::Nav => &mut self.nav,
             ScreenId::Readings => &mut self.readings,
             ScreenId::Media => &mut self.media,
+            ScreenId::Call => &mut self.call,
         };
         match build_frame(screen, now, &cx, self.session.registers(), enter) {
             Ok(packed) => {

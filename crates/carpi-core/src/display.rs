@@ -394,6 +394,7 @@ impl Display {
                 (true, ScreenId::Readings) => "readings".into(),
                 (true, ScreenId::Nav) => "nav".into(),
                 (true, ScreenId::Media) => "media".into(),
+                (true, ScreenId::Call) => "call".into(),
             })),
         );
         set(
@@ -403,6 +404,7 @@ impl Display {
                     ScreenId::Readings => "readings".into(),
                     ScreenId::Nav => "nav".into(),
                     ScreenId::Media => "media".into(),
+                    ScreenId::Call => "call".into(),
                 })
             }),
         );

@@ -11,6 +11,7 @@ use carpi_can::Frame;
 use carpi_dis::screens::nav::NavInput;
 use carpi_dis::icons::Art;
 use carpi_dis::image::dither;
+use carpi_dis::screens::call::CallInput;
 use carpi_dis::screens::media::{ART, MediaInput, MediaLayout};
 use carpi_dis::screens::readings::{ReadingCell, ReadingsInput, ReadingsPage};
 use carpi_dis::session::{Phase, Window};
@@ -39,6 +40,35 @@ pub enum Screens {
     MediaStack,
     /// Media, cover thumbnail + text.
     MediaArt,
+    /// A scripted call cycle.
+    Call,
+}
+
+/// Call script, 45 s cycle: ringing 0-6 s, active 6-30, held 30-34, dialing
+/// an unnamed long number 34-40, no call 40-45. Signal and battery wander.
+pub fn call_at(t: Duration) -> CallInput {
+    let s = t.as_secs() % 45;
+    let named = |st: &str| CallInput {
+        state: Some(st.into()),
+        name: Some("Mum".into()),
+        number: Some("+44 7700 900123".into()),
+        // Signal wanders through all four bars; battery drains.
+        signal_pct: Some(((t.as_secs() * 7) % 101) as u8),
+        battery_pct: Some(100 - ((t.as_secs() / 3) % 101) as u8),
+    };
+    match s {
+        0..6 => named("ringing"),
+        6..30 => named("active"),
+        30..34 => named("held"),
+        34..40 => CallInput {
+            state: Some("dialing".into()),
+            name: None,
+            number: Some("+44 20 7946 0958 ext 4471 9902".into()),
+            signal_pct: Some(20),
+            battery_pct: Some(10),
+        },
+        _ => CallInput::default(),
+    }
 }
 
 /// Scripted tracks: title, artist, album, length in s.
@@ -509,6 +539,10 @@ impl Bench {
             self.probe_step(now);
             return;
         }
+        if self.screens == Screens::Call {
+            self.dis.set_call(now, call_at(now - self.t0));
+            return;
+        }
         if matches!(self.screens, Screens::MediaStack | Screens::MediaArt) {
             // No user page: media wins the centre through the arbiter.
             self.dis.set_media(now, media_at(now - self.t0));
@@ -521,7 +555,7 @@ impl Bench {
             Screens::Both if (t.as_secs() / FLIP_EVERY.as_secs()).is_multiple_of(2) => {
                 ScreenId::Nav
             }
-            Screens::Both | Screens::Probe | Screens::MediaStack | Screens::MediaArt => {
+            Screens::Both | Screens::Probe | Screens::MediaStack | Screens::MediaArt | Screens::Call => {
                 ScreenId::Readings
             }
         };
