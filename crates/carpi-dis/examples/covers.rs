@@ -7,7 +7,9 @@
 //! Writes `sheet.png` (per cover: source, the grey stage, the 48x48 thumbnail
 //! and the 96x96 full cover, drawn like the white cluster: lit px on black,
 //! 4x, with a pixel gap) and `<name>.thumb.bin` / `<name>.full.bin` (1-bit,
-//! MSB-first rows) for `carpi dis-bench` (`CARPI_BENCH_COVERS=<out dir>`).
+//! MSB-first rows) for `carpi dis-bench` (`CARPI_BENCH_COVERS=<out dir>`), plus
+//! `<name>.thumb.png` / `<name>.centre.png` tiles (48x48 and the full 128x96
+//! centre) for comparisons.
 
 use carpi_dis::icons::Art;
 use carpi_dis::image::{CoverParams, Dither, cover, cover_grey, dither_grey};
@@ -119,6 +121,13 @@ fn main() {
         let full = dither_grey(&g, p.dither);
         put_art(&mut sheet, &full, cell * 3 + 4, y0);
         let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("cover");
+        // Tiles for side-by-side comparisons: thumbnail and the full 128x96 centre.
+        let centre = cover(raw, w, h, 128, 96, &p);
+        for (kind, a) in [("thumb", &thumb), ("centre", &centre)] {
+            let mut t = RgbImage::from_pixel(a.w as u32 * S, a.h as u32 * S, Rgb([0, 0, 0]));
+            put_art(&mut t, a, 0, 0);
+            t.save(out.join(format!("{stem}.{kind}.png"))).expect("tile");
+        }
         let write = |kind: &str, a: &Art| std::fs::write(out.join(format!("{stem}.{kind}.bin")), bits(a)).expect("write");
         write("thumb", &thumb);
         write("full", &full);
