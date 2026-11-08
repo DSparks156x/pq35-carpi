@@ -59,27 +59,23 @@ impl GestureConfig {
 }
 
 impl Default for GestureConfig {
-    /// The old code's numbers. Wheel: long = 3 press frames at the assumed
-    /// 500 ms repeat (1 s); double 250 ms. Faceplate: long = frame 5 and
-    /// extended = frame 30 at 110 ms (440 ms, 3.19 s).
+    /// Wheel: long = 3 press frames at the assumed 500 ms repeat (1 s). No
+    /// key uses a double, so none waits for one. Faceplate: long = frame 5 at
+    /// 110 ms (440 ms); extended 5.5 s (Drew: "quite long, 5 s+").
     fn default() -> Self {
         let ms = Duration::from_millis;
         let wheel_long = Timing {
             long: Some(ms(1000)),
             ..Default::default()
         };
-        let wheel_double = Timing {
-            double: Some(ms(250)),
-            ..wheel_long
-        };
         let panel = Timing {
             long: Some(ms(440)),
-            extended: Some(ms(3190)),
+            extended: Some(ms(5500)),
             double: None,
         };
         let mut timings = HashMap::new();
-        timings.insert(Key::WheelClick, wheel_double);
-        timings.insert(Key::Mode, wheel_double);
+        timings.insert(Key::WheelClick, wheel_long);
+        timings.insert(Key::Mode, wheel_long);
         timings.insert(Key::Ptt, wheel_long);
         timings.insert(Key::VolClick, wheel_long);
         for k in [
@@ -287,6 +283,33 @@ mod tests {
         Duration::from_millis(n)
     }
 
+    /// Fixed timings for testing the mechanism (doubles, extended), so these
+    /// tests don't move when the shipped defaults change.
+    fn mechanism_config() -> GestureConfig {
+        let mut c = GestureConfig::default();
+        let wheel = Timing {
+            long: Some(ms(1000)),
+            extended: None,
+            double: Some(ms(250)),
+        };
+        c.timings.insert(Key::WheelClick, wheel);
+        c.timings.insert(Key::Mode, wheel);
+        for t in c.timings.values_mut() {
+            if t.extended.is_some() {
+                t.extended = Some(ms(3190));
+            }
+        }
+        c
+    }
+
+    #[test]
+    fn shipped_defaults() {
+        let c = GestureConfig::default();
+        assert_eq!(c.timing(Key::Next).extended, Some(ms(5500)));
+        assert_eq!(c.timing(Key::WheelClick).double, None);
+        assert_eq!(c.timing(Key::Mode).double, None);
+    }
+
     struct T {
         r: Recogniser,
         t0: Instant,
@@ -296,7 +319,7 @@ mod tests {
     impl T {
         fn new() -> Self {
             T {
-                r: Recogniser::new(GestureConfig::default()),
+                r: Recogniser::new(mechanism_config()),
                 t0: Instant::now(),
                 got: Vec::new(),
             }

@@ -94,6 +94,7 @@ impl Actuators {
                 None => info!("{}: would send {frame:?}", self.iface_names[iface]),
             },
             Output::Key(k) => self.key(k),
+            Output::Car(a) => info!("car action {a:?} (bridge input to LIVI not built yet)"),
             Output::Dis(k) => debug!("DIS key {k:?} (no DIS controller yet)"),
             Output::Action(SystemAction::SaveCapture) => {
                 let resp = car.save_default_capture();

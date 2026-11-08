@@ -19,7 +19,9 @@ pub use decode::{Decoder, DecoderConfig};
 pub use gesture::{Gesture, GestureConfig, GestureKind, Recogniser, Timing};
 pub use key::{Edge, Key, KeyEvent};
 pub use livi::LiviKey;
-pub use route::{Context, DisKey, Focus, Route, RouteConfig, SystemAction, Trigger, route};
+pub use route::{
+    Call, CarAction, Context, DisKey, Focus, Page, Route, RouteConfig, SystemAction, Trigger, route,
+};
 #[cfg(target_os = "linux")]
 pub use sink::LiviKeyboard;
 
@@ -54,10 +56,11 @@ mod tests {
         rnse_on_tv: true,
         livi_connected: true,
         focus: Focus::Livi,
+        call: Call::None,
     };
 
     #[test]
-    fn captured_mode_double_goes_to_livi_back() {
+    fn captured_mode_double_is_two_presses() {
         let w = ids::MFL_CMD;
         let got = pipeline(
             TV,
@@ -69,7 +72,8 @@ mod tests {
             ],
             3000,
         );
-        assert_eq!(got, vec![Route::Livi(LiviKey::Back)]);
+        // MODE short is unbound (Drew, 2026-11-07); no key waits for doubles.
+        assert_eq!(got, vec![Route::Drop, Route::Drop]);
     }
 
     #[test]
@@ -77,20 +81,30 @@ mod tests {
         let p = ids::RNSE_KEYS;
         let on: &[u8] = &[0x37, 0x30, 1, 0x02, 0x00, 0];
         let off: &[u8] = &[0x37, 0x30, 4, 0x02, 0x00, 0];
+        // 55 frames = 6 s, past the 5.5 s extended threshold.
+        let mut frames: Vec<(u64, u32, &[u8])> = (0..55).map(|i| (i * 110, p, on)).collect();
+        for i in 0..5 {
+            frames.push((55 * 110 + i * 110, p, off));
+        }
+        let got = pipeline(TV, &frames, 8000);
+        assert_eq!(got, vec![Route::Action(SystemAction::Shutdown)]);
+
+        // Released at ~3.9 s: a long press, which is D-pad right.
         let mut frames: Vec<(u64, u32, &[u8])> = (0..35).map(|i| (i * 110, p, on)).collect();
         for i in 0..5 {
             frames.push((35 * 110 + i * 110, p, off));
         }
         let got = pipeline(TV, &frames, 6000);
-        assert_eq!(got, vec![Route::Action(SystemAction::Shutdown)]);
+        assert_eq!(got, vec![Route::Livi(LiviKey::Right)]);
     }
 
     #[test]
     fn missing_wheel_release_still_ends_press() {
         let w = ids::MFL_CMD;
         // PTT tapped, release lost: the 1.5 s timeout ends it, but the 1 s long
-        // threshold fires first. Known cost of an unknown repeat rate.
+        // threshold fires first (PTT long is unbound). Known cost of an
+        // unknown repeat rate.
         let got = pipeline(TV, &[(0, w, &[0x39, 0x2A])], 5000);
-        assert_eq!(got, vec![Route::Livi(LiviKey::Home)]);
+        assert_eq!(got, vec![Route::Drop]);
     }
 }

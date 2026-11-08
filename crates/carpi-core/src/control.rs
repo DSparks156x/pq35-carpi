@@ -8,8 +8,8 @@
 use carpi_can::Frame;
 use carpi_gate::{BusView, Gate};
 use carpi_input::{
-    Context, Decoder, DecoderConfig, DisKey, Focus, GestureConfig, LiviKey, Recogniser, Route,
-    RouteConfig, SystemAction,
+    Call, CarAction, Context, Decoder, DecoderConfig, DisKey, Focus, GestureConfig, LiviKey,
+    Recogniser, Route, RouteConfig, SystemAction,
 };
 use carpi_light::{LightModel, PanelLevel};
 use carpi_nm::BusMonitor;
@@ -28,6 +28,8 @@ pub enum Output {
     },
     /// A key for LIVI (uinput).
     Key(LiviKey),
+    /// A projection-neutral action for LIVI over the bridge.
+    Car(CarAction),
     /// A key for the DIS controller (not built yet; logged).
     Dis(DisKey),
     /// Shutdown, reboot, save capture.
@@ -173,9 +175,15 @@ impl Controls {
                 rnse_on_tv: store.get_bool("rnse.on_tv", now) == Some(true),
                 livi_connected: livi_up,
                 focus: self.focus,
+                call: match store.get("call.state", now) {
+                    Some(Value::Text(s)) if s == "ringing" => Call::Ringing,
+                    Some(Value::Text(_)) => Call::Active,
+                    _ => Call::None,
+                },
             };
             match carpi_input::route(&self.routes, &ctx, &g) {
                 Route::Livi(k) => out.push(Output::Key(k)),
+                Route::Car(a) => out.push(Output::Car(a)),
                 Route::Dis(k) => out.push(Output::Dis(k)),
                 Route::Action(SystemAction::ToggleDisFocus) => {
                     self.focus = match self.focus {
