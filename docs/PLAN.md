@@ -420,3 +420,4 @@ Still open:
 22. DIS: is the RNS-E's own nav used? That decides how early the 0x7B2 mirror is built.
 23. DIS: on TV, should the top lines show the radio's text or our media/nav text?
 24. DIS: long text: marquee, page-flip or truncate, and at what speed? Is a brief blank on a page switch OK?
+25. DIS: how big is the cluster command buffer, and what else triggers an auto-commit (timeout, particular commands)? Plus your clearing tricks, for the helpers.
