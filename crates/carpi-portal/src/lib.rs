@@ -39,18 +39,22 @@ use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Semaphore;
 
-pub use files::check_ihex;
+pub use files::{check_ihex, replace_with_backup};
+
+/// The upload PIN, shared so the daemon can change it while the portal runs.
+/// `None` or empty: no PIN.
+pub type PinCell = Arc<RwLock<Option<String>>>;
 
 /// Portal settings. Deserializes from a `[portal]` table; every key is optional.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PortalConfig {
-    /// Listen address.
+    /// Listen address. Default `0.0.0.0:5003`, the old portal's port.
     pub bind: SocketAddr,
     /// CAN captures (`Car::save_capture` output).
     pub captures: PathBuf,
@@ -86,7 +90,7 @@ impl Default for PortalConfig {
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
         PortalConfig {
-            bind: SocketAddr::from(([0, 0, 0, 0], 8080)),
+            bind: SocketAddr::from(([0, 0, 0, 0], 5003)),
             captures: home.join("captures"),
             sdlink_logs: home.join("avsd/logs"),
             config_file: home.join(".config/carpi/carpid.toml"),
@@ -131,6 +135,7 @@ type ValidateFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 /// Builder. `Portal::new(cfg).status(..).validate_config(..).serve(..)`.
 pub struct Portal {
     cfg: PortalConfig,
+    pin: PinCell,
     status: Option<StatusFn>,
     validate: Option<ValidateFn>,
 }
@@ -138,10 +143,16 @@ pub struct Portal {
 impl Portal {
     pub fn new(cfg: PortalConfig) -> Self {
         Portal {
+            pin: Arc::new(RwLock::new(cfg.pin.clone())),
             cfg,
             status: None,
             validate: None,
         }
+    }
+
+    /// The live PIN. Writes take effect on the next request.
+    pub fn pin_cell(&self) -> PinCell {
+        self.pin.clone()
     }
 
     /// Called on every page load, status request and bug report.
@@ -170,6 +181,7 @@ impl Portal {
         let cfg_limit = self.cfg.config_max as usize + (64 << 10);
         let shared = Arc::new(Shared {
             cfg: self.cfg,
+            pin: self.pin,
             status: self.status,
             validate: self.validate,
             fails: Mutex::new(Fails::default()),
@@ -211,6 +223,7 @@ impl Portal {
 
 struct Shared {
     cfg: PortalConfig,
+    pin: PinCell,
     status: Option<StatusFn>,
     validate: Option<ValidateFn>,
     fails: Mutex<Fails>,
@@ -249,8 +262,12 @@ impl IntoResponse for Reject {
 type Reply = Result<Response, Reject>;
 
 impl Shared {
-    fn pin(&self) -> Option<&str> {
-        self.cfg.pin.as_deref().filter(|p| !p.is_empty())
+    fn pin(&self) -> Option<String> {
+        self.pin
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .filter(|p| !p.is_empty())
     }
 
     fn check_pin(&self, headers: &HeaderMap) -> Result<(), Reject> {
@@ -260,7 +277,7 @@ impl Shared {
         let Some(given) = supplied_pin(headers) else {
             return Err(Reject::new(StatusCode::UNAUTHORIZED, "PIN required."));
         };
-        self.try_pin(pin, &given)
+        self.try_pin(&pin, &given)
     }
 
     fn try_pin(&self, pin: &str, given: &str) -> Result<(), Reject> {
@@ -389,7 +406,13 @@ fn host_ok(host: &str, allowed: &[String]) -> bool {
 async fn page_handler(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     let status = s.status().await;
     let can_read = s.check_read(&headers).is_ok();
-    let html = page::render(&s.cfg, status.as_ref(), can_read, s.validate.is_some());
+    let html = page::render(
+        &s.cfg,
+        s.pin().is_some(),
+        status.as_ref(),
+        can_read,
+        s.validate.is_some(),
+    );
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
         [(header::CACHE_CONTROL, "no-store")],
@@ -413,7 +436,7 @@ async fn pin_handler(State(s): State<Arc<Shared>>, Form(f): Form<PinForm>) -> Re
     let Some(pin) = s.pin() else {
         return Ok(Redirect::to("/files").into_response());
     };
-    s.try_pin(pin, &f.pin)?;
+    s.try_pin(&pin, &f.pin)?;
     let cookie = format!(
         "{PIN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000",
         files::hex(f.pin.as_bytes())

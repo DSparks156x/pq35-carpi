@@ -503,3 +503,29 @@ async fn bug_report_bundle() {
     assert!(found["skipped.txt"].contains("capture-big.log"));
     assert_eq!(found["carpid.toml"], GOOD_TOML);
 }
+
+#[tokio::test]
+async fn pin_changes_live() {
+    let (_t, cfg) = setup();
+    let portal = Portal::new(cfg.clone()).validate_config(|_| Ok(()));
+    let pin = portal.pin_cell();
+    let app = portal.router();
+    assert_eq!(
+        up(&app, "/up/firmware", "a.hex", HEX, None).await,
+        StatusCode::CREATED
+    );
+    *pin.write().unwrap() = Some("4711".into());
+    assert_eq!(
+        up(&app, "/up/firmware", "b.hex", HEX, None).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        up(&app, "/up/firmware", "b.hex", HEX, Some("4711")).await,
+        StatusCode::CREATED
+    );
+    *pin.write().unwrap() = None;
+    assert_eq!(
+        up(&app, "/up/firmware", "c.hex", HEX, None).await,
+        StatusCode::CREATED
+    );
+}

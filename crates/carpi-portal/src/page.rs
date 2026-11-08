@@ -99,6 +99,7 @@ fn upload_form(o: &mut String, action: &str, accept: &str, label: &str) {
 
 pub fn render(
     cfg: &PortalConfig,
+    pin_set: bool,
     status: Option<&Status>,
     can_read: bool,
     can_config: bool,
@@ -106,7 +107,7 @@ pub fn render(
     let mut o = String::from(HEAD);
     o.push_str("<h1>Car files</h1>");
 
-    if cfg.pin.as_deref().is_some_and(|p| !p.is_empty()) {
+    if pin_set {
         let what = if cfg.protect_downloads {
             "everything"
         } else {
