@@ -258,13 +258,11 @@ The tool uses its own SocketCAN socket. The daemon keeps reading and recording. 
 
 ### 2.11 LIVI bridge and fork points
 
-Decision: the fork connects to `carpid`. Drew leaned towards the daemon being a LIVI client; this recommends the reverse, for three reasons:
+Decision (Drew, 2026-11-07): the fork connects to `carpid`. The daemon never speaks LIVI's own socket protocol. Reasons:
 
 - His license goal: the daemon must not link GPL crates.
 - The pages need the daemon API anyway.
 - The fork's bridge sees typed internal state that LIVI's socket protocol doesn't expose (calls, lanes).
-
-To confirm, see Q2.
 
 Fork changes, kept in separate crates or files with one-line hooks so rebases stay cheap:
 
@@ -358,7 +356,7 @@ Answered so far (2026-11-07):
 - **Hat**: plan for it; it only changes how 5 V is switched plus a status link. Sleep and TX rules are the same.
 - **Pages**: Slint, inside the LIVI fork, kept rational for rebases. No webviews.
 - **LIVI fork**: separate repo, submodule here, kept in lockstep.
-- **Bridge direction**: Drew unsure; leaned towards the daemon as a LIVI client. This plan recommends the fork connecting to the daemon (2.11). Confirm: **Q2**.
+- **Bridge direction**: the fork connects to the daemon's API (2.11).
 - **Licensing**: Drew wants "mildly commercially restrictive". See **Q1**.
 - **Flashing**: Drew's flash drivers stay separate (bus lease). Haldex mode and exhaust are his extras, design freely. sdlink is a separate repo submoduled here; this repo pushes Pi-side updates and matching Teensy/RNS-E sectors.
 - **Stock DIS**: yes, the stock radio's centre screen is an arbiter source.
@@ -368,7 +366,7 @@ Answered so far (2026-11-07):
 Still open:
 
 1. **License for pq35-carpi.** Proposal: PolyForm Noncommercial 1.0.0 (free for personal use, commercial use needs Drew's permission). `carpi-proto` is MIT/Apache, because the GPL fork links it. Code in the fork is GPL whatever we want, so keep page logic thin there. OK?
-2. **Bridge direction**: fork connects to the daemon (recommended), or the daemon is a client of LIVI's socket?
+2. *(answered: fork connects to the daemon)*
 3. Does 0x602 TV presence keep the RNS-E from sleeping? Needs the capture in step 0.
 4. Knob: frames per detent and which direction is clockwise? Hold behaviour of MODE and PTT? Capture.
 5. Which transceiver does the CarPiHat use on ICAN? Is it fault-tolerant low-speed?
