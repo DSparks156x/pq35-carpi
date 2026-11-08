@@ -104,6 +104,23 @@ A rewrite of the page. Built for a phone first, served by the existing axum serv
   - Later: flashing jobs, which log into a # like everything else.
 - Bug report stays: today's tar.gz, rebuilt as "zip of the latest capture plus status".
 
+## 5a. Settings redesign (Drew, 2026-11-08)
+
+What's there grew one feature at a time and is clunky. Redo it after the next car test, plan first.
+
+- **Where**: a "Car Integration" tab at the bottom of LIVI's own settings, not a bolt-on settings page of ours.
+- **DIS readings**: its own section, as rich as the old one.
+  - Several named pages.
+  - The full value list, more than today's catalog has. Check the old `dis_client` readings app for both.
+- **DIS behaviour, in plain words**:
+  - Claim on nav, claim on phone, claim on media.
+  - Release on no nav, release on no phone, release on no media.
+  - Auto claim.
+  - Nav style: stock vs fancy.
+  - Cover art flash: seconds, with 0 = off. Today it can't actually be turned off.
+- **Names**: say what the setting does. No internal terms.
+- **UI**: fast with the knob and D-pad. Fewer levels, values changed in place, no dead-end screens.
+
 ## 6. Order
 
 1. Captures (3) and the portal's day/zip view (5). This is what Drew asked for first.
