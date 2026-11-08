@@ -39,7 +39,8 @@ impl EntryId {
     /// `2026-11-08/03`, `2026-11-08-03` or `2026-11-08 #03`.
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
-        if s.len() < 12 {
+        // ASCII only, so split_at can't land inside a character.
+        if s.len() < 12 || !s.is_ascii() {
             return None;
         }
         let (date, rest) = s.split_at(10);
