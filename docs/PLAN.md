@@ -187,7 +187,12 @@ Drew's design (2026-11-07). The stock pattern is bad: with the scroll at minimum
 - Baseline from the parked log (indoors, daytime): sun 100/68 W/m², cluster sensor 35, display 37 %, 58t 58 %.
 
 **Model**
-- **Ambient**: one estimate on a log scale. It comes from the sun sensor in daylight and the cluster sensor in the dark, blended across dusk. It's smoothed over about 2–3 s with a deadband, so tree shadows don't flicker the screen but tunnels still react.
+- **Ambient**: one estimate on a log scale, smoothed over about 2–3 s with a deadband, so tree shadows don't flicker the screen but tunnels still react. The source is a setting:
+  - **Cluster** (default). Its sensor sits in one of the dials, so it sees light most like the RNS-E does; it's a bit more shielded than the RNS-E.
+  - **Climatronic**: the dash-top sun sensor. Open sky, so it reads brighter than what reaches the screens. It exists, but don't lean on it heavily.
+  - **Blend**: cluster first, climatronic only filling in the bright end if the cluster sensor saturates.
+
+  The learned curve is keyed to the chosen source; changing it starts learning afresh, with the old points kept.
 - **Curve**: ambient → RNS-E panel %. Two modes:
   - **manual**: editable points;
   - **learned**: manual nudges are stored at the current ambient and blended into the curve, like phone auto-brightness.
