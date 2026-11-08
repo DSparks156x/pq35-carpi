@@ -24,7 +24,7 @@ Flashing drivers (Haldex, EPS, etc.) stay their own separately maintained thing.
 
 Processes on the Pi:
 
-- **`carpid`**: the car daemon. One process, one owner of `can0`, async (tokio) with one task per subsystem. Must run fine with LIVI stopped.
+- **`carpid`**: the car daemon. One process, sole owner of every CAN interface, async (tokio) with one task per subsystem. Must run fine with LIVI stopped.
 - **LIVI fork**: `livi-core`, `livi-ui`, compositor, helpers, as upstream. Our additions: a `carpi` bridge in core and our pages in the UI. Both talk to `carpid` over its local API.
 - **sdlink chain**: wlcap, encoder, avlink, as today. LIVI runs nested in labwc on NOOP-1 so the chain works unchanged.
 - **`carpi`**: a CLI for debugging and bench work (dump values, watch frames, inject keys, drive the DIS, take a bus lease).
@@ -64,8 +64,24 @@ sdlink/            submodule
 
 ## 2. Core abstractions
 
-### 2.1 CAN port and TX gate
+### 2.1 Buses, CAN port and TX gate
 
+**Buses are named by role, not by interface number.** Config maps roles to whatever the interfaces are called. Name them with udev/systemd-networkd `.link` files (e.g. `ican`, `obd`); that's easier than getting `can0`/`can1` numbering stable.
+
+```toml
+[bus.ican]
+iface = "ican"        # any netdev name
+bitrate = 100000      # informational; the link is set up outside the daemon
+
+[bus.diag]
+iface = "obd"         # or "ican" on cars whose gateway routes diag from infotainment
+```
+
+- **Roles:**
+  - `ican` is required. It carries NM, inputs, the RNS-E and the cluster.
+  - `diag` is where TP2 runs. On the TT it's the same interface as `ican`. On cars whose gateway won't route diagnostics from infotainment, it's a second interface on the OBD port (high-speed CAN, 500 kbit/s).
+  - More roles can be added later.
+- Each subsystem asks for a role, never an interface. When two roles share one interface, they share one socket, one gate and one budget.
 - `CanPort` trait: `recv() -> (Frame, Instant)`, `send(Frame)`. Implementations: SocketCAN, file replay (candump format), in-process sim bus.
 - **Nothing sends a frame except through the gate.** Every send carries a `TxClass`:
   - `Keepalive` (0x602 TV presence)
@@ -74,8 +90,8 @@ sdlink/            submodule
   - `Diag` (TP2 0x200, 0x300+)
   - `Extra` (0x67A exhaust, Haldex mode, Drew's own add-ons)
   - `Lease` (an external tool holds the bus)
-- The gate asks the bus-state machine (2.3) whether the class may send now. Refused frames are dropped and counted, never queued across a sleep.
-- **Bus budget**: the gate tracks bus load per class over a sliding window. At 100 kbit/s, DDP and TP2 fight for the same ~1000 frames/s ceiling, so the DIS renderer and the diag scheduler both ask the budget before planning work. Budget shares are config, not code.
+- There's one gate per interface. Each gate asks the bus-state machine (2.3) whether the class may send now. A separate diag bus has no NM ring the Pi can see, so its gate uses Kl15 from ICAN. Refused frames are dropped and counted, never queued across a sleep.
+- **Bus budget**: each interface tracks its load per class over a sliding window. On the TT, DDP and TP2 share one 100 kbit/s bus, roughly 1000 frames/s, so the DIS and the diag scheduler both ask the budget before planning work. With diag on its own OBD interface, they stop competing. Budget shares are config, not code.
 - Kernel listen-only is a backstop only. The old code toggled it by taking `can0` down and up, which blinded RX for ~5 s each time. We don't do that.
 - A rolling raw-frame recorder (last N minutes in RAM, dump on request or on fault) is part of the CAN layer, not a later tool. Most open questions below are answered by captures.
 
@@ -92,20 +108,13 @@ sdlink/            submodule
 
 The generated table is checked in, so builds don't need the tool. Car-family differences are an overlay file per car, not code.
 
-**Sample.** Every value in the system is
+**Values.** Kept simple (Drew: validity, age and source aren't that critical). A value is `Option<T>` plus the time it was last updated:
+- A raw error or init value decodes to `None`.
+- A value that's older than its timeout reads as `None`.
 
-```rust
-struct Sample<T> {
-    value: Option<T>,
-    status: Status,   // Valid | Init | Error | Stale | NotPresent
-    at: Instant,      // when it was received/computed
-    source: Source,   // Ican(id) | Diag(module, group, field) | Derived | Bridge
-}
-```
+That's all the validity handling there is. No status enum or per-sample source tag. A page that wants to show "stale" can compare the timestamp itself.
 
-Staleness is computed at read time from the signal's timeout, so a value can't look fresh because nobody updated it. Consumers get `Sample`, never a bare number.
-
-**Store.** One value store keyed by catalog names (dotted, e.g. `vehicle.speed`, `engine.boost.actual`). ICAN signals, diag values, derived values and bridge values (AA nav, media, calls) all live there. Subscribers get a `watch` per value or a batched stream at a requested rate. Derived values (light model, context) are small pure functions registered against their inputs.
+**Store.** One value store, keyed by catalog names (dotted, e.g. `vehicle.speed`, `engine.boost.actual`). ICAN signals, diag values, derived values and bridge values (AA nav, media, calls) all live there. Subscribers get a `watch` per value or a batched stream at a requested rate. Derived values (light model, context) are small pure functions registered against their inputs.
 
 ### 2.3 Bus-state machine and power
 
@@ -180,6 +189,8 @@ Output `{ambient, lights_on, night (with hysteresis), panel_level}`. Three consu
 
 ### 2.7 DIS
 
+**Provisional.** A dedicated design pass is under way and will replace this section. The cluster is not a framebuffer: text, graphics-font text and lines are quick, bitmaps are slow, and full-res bitmaps are very slow. Content has to be built from the cheap primitives, with bitmaps used sparingly.
+
 The old DIS was three processes and a pile of if-chains, touched by 237 commits. The rebuild has five layers, each testable alone.
 
 1. **Transport.** `carpi-tp2` data link on the fixed 0x6C0/0x6C1 channel: data frames 2n/0n/1n, ACK Bn, receiver-not-ready 9n (wait, resend), keepalive A3 ~2 s, close A8.
@@ -216,6 +227,8 @@ The old DIS was three processes and a pile of if-chains, touched by 237 commits.
 
 ### 2.8 Diagnostics
 
+Runs on the `diag` bus role (2.1): the same interface as ICAN on the TT, where the gateway routes diagnostics, or a separate OBD interface on cars where it doesn't. Nothing in the diag stack assumes ICAN. Timings come from the module's TP2 parameters, not from a fixed bitrate.
+
 Facts: there's very little on-car evidence, and only the engine is measured. TP2 setup on 0x200 `01 C0 00 10 00 03 01` → 0x201 `D0`. Parameters BS 15, T1 100 ms, T3 5–10 ms. Opening a channel plus `10 89` costs ~70 ms of bus time. One `21 xx` is ~48 ms, mostly ECU latency. The estimated ceiling is ~18–20 group reads/s per channel. Parallel channels across modules are untested.
 
 - **Channel manager**: one state machine per module (Closed, Opening, Open, Grace, Failed with backoff), timer-driven, interleaving requests across open channels so one slow module never stalls the rest. Max concurrent channels is config, starting at 2 until measured.
@@ -236,7 +249,7 @@ Facts: there's very little on-car evidence, and only the engine is measured. TP2
 
 `carpi-api`, types in `carpi-proto`. One Unix socket, length-prefixed messages (JSON while the shape settles; the framing allows a switch to CBOR later). LIVI fork and daemon move in lockstep through the submodule, so no cross-version compatibility is needed (Drew), but the protocol carries a version and refuses mismatches.
 
-- `values.subscribe` / `values.batch`: rate, priority, lease; replies carry `Sample`s and granted rates.
+- `values.subscribe` / `values.batch`: rate, priority, lease; replies carry values with timestamps and granted rates.
 - `bridge.push`: from LIVI. AA nav state, media, calls, phone status, connection, focus.
 - `input.event`: semantic events in either direction (pages can ask for raw knob, etc.).
 - `rnse.*`, `dis.*`, `light.*`: commands and state.
@@ -249,7 +262,7 @@ Same-user peer check on the socket. No TCP listener by default (see Q11 for the 
 
 ### 2.10 Bus lease for external tools
 
-A flashing tool asks for `bus.lease(reason, max_duration)`. The daemon then:
+A flashing tool asks for `bus.lease(role, reason, max_duration)`, where the role is usually `diag`. The lease covers the whole interface behind that role. The daemon then:
 1. drains DIS and diag, closing channels and the DDP session cleanly
 2. stops every TX class
 3. replies with a token
@@ -323,7 +336,7 @@ Contingency, only if latency or CPU says so: the fork's compositor renders offsc
 - **Replay**: candump files through the full daemon with TX captured; assert on decoded state and on what would have been sent. `references/canlog.txt` is the first fixture. Every capture Drew makes becomes one.
 - **DIS golden renders**: scene → PNG and scene → byte stream, both snapshot-tested.
 - **Property tests**: the gate never sends in `SleepPending`/`Silent`; the renderer never emits a message over the limit; the scheduler never polls a denied module.
-- **Bench**: Drew's A3 cluster bench (500 kbit/s) for DIS, then the car at 100 kbit/s. Bench numbers are labelled as bench.
+- **Bench**: Drew's A3 cluster bench for the DIS. The A3 and TT white clusters are basically identical, and the old driver runs on both. The bench runs at 500 kbit/s and the car at 100, so throughput numbers are confirmed in the car.
 - **CI**: `cargo test` and clippy on x86-64, cross-build for aarch64. Pi-only bits (SocketCAN, GPIO, uinput) sit behind traits so CI never needs hardware.
 
 ## 5. Build order
@@ -362,6 +375,10 @@ Answered so far (2026-11-07):
 - **Stock DIS**: yes, the stock radio's centre screen is an arbiter source.
 - **Wheel keys**: ignore when the RNS-E isn't on TV.
 - **Keep awake**: the Pi never holds the bus awake after ignition off.
+- **Buses**: diagnostics must work on a separate OBD interface; many gateways won't route diagnostics from ICAN (the TT's does). Interfaces are named, not numbered.
+- **Values**: keep validity simple. A value is the value or nothing, plus a timestamp.
+- **Cluster**: the A3 and TT white clusters are basically identical. The cluster isn't a framebuffer: text, graphics-font text and lines are fast, bitmaps are slow, and full-res bitmaps are very slow. It needs its own design pass (in progress).
+- **`B7`**: Drew is checking it on the current firmware.
 
 Still open:
 
