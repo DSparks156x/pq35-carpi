@@ -7,6 +7,10 @@
 //! Floyd-Steinberg or Atkinson-pattern dither. Parameters are [`CoverParams`];
 //! iterate on them with `cargo run -p carpi-dis --example covers`.
 //!
+//! Bench 2026-11-08: Drew compared the old preset with a lower-gamma variant
+//! plus auto-invert and an edge boost on 41 covers, at 48 px and 128x96. The
+//! old preset looked better on nearly all of them; the extras were dropped.
+//!
 //! On the cluster a set pixel is lit, so light source pixels come out set.
 
 use crate::icons::Art;
@@ -31,12 +35,6 @@ pub struct CoverParams {
     pub dither: Dither,
     /// Share of the max-channel excess added to luma (0 = plain Rec.709).
     pub saturation_boost: f32,
-    /// Invert covers whose mean grey (after autocontrast) is above this share
-    /// of white: a mostly-white cover would light a solid block. Ours; `None` = off.
-    pub auto_invert: Option<f32>,
-    /// Light outlines: final grey is at least `edges` x the Sobel edge
-    /// strength of the autocontrasted grey. Ours; 0 = off.
-    pub edges: f32,
 }
 
 impl Default for CoverParams {
@@ -50,8 +48,6 @@ impl Default for CoverParams {
             black_floor: 45,
             dither: Dither::FloydSteinberg,
             saturation_boost: 0.25,
-            auto_invert: None,
-            edges: 0.0,
         }
     }
 }
@@ -155,12 +151,6 @@ pub fn cover_grey(rgb: &[u8], w: usize, h: usize, ow: usize, oh: usize, p: &Cove
     let px = fit_rgb(rgb, w, h, ow, oh);
     let mut v = smart_grey(&px, p.saturation_boost);
     autocontrast(&mut v);
-    if let Some(t) = p.auto_invert
-        && v.iter().sum::<f32>() / v.len() as f32 > t * 255.0
-    {
-        v.iter_mut().for_each(|x| *x = 255.0 - *x);
-    }
-    let edge = (p.edges > 0.0).then(|| sobel(&v, ow, oh));
     for x in v.iter_mut() {
         *x = (*x / 255.0).powf(p.gamma) * 255.0 * p.brightness;
     }
@@ -177,32 +167,7 @@ pub fn cover_grey(rgb: &[u8], w: usize, h: usize, ow: usize, oh: usize, p: &Cove
             *x = 0.0;
         }
     }
-    if let Some(e) = edge {
-        for (x, e) in g.v.iter_mut().zip(e) {
-            *x = x.max((e * p.edges).min(255.0));
-        }
-    }
     g
-}
-
-/// Sobel gradient magnitude, 0..~255 for a full black/white step.
-fn sobel(v: &[f32], w: usize, h: usize) -> Vec<f32> {
-    let at = |x: isize, y: isize| v[y.clamp(0, h as isize - 1) as usize * w + x.clamp(0, w as isize - 1) as usize];
-    let mut out = vec![0f32; w * h];
-    for y in 0..h as isize {
-        for x in 0..w as isize {
-            let gx = at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1)
-                - at(x - 1, y - 1)
-                - 2.0 * at(x - 1, y)
-                - at(x - 1, y + 1);
-            let gy = at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1)
-                - at(x - 1, y - 1)
-                - 2.0 * at(x, y - 1)
-                - at(x + 1, y - 1);
-            out[y as usize * w + x as usize] = (gx * gx + gy * gy).sqrt() / 4.0;
-        }
-    }
-    out
 }
 
 /// 1-bit, one pixel per output pixel.

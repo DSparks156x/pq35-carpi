@@ -2,7 +2,7 @@
 //!
 //! `cargo run -p carpi-dis --example covers -- <covers dir> <out dir> [--contrast 1.4]
 //!  [--sharpen 1.5] [--gamma 2.2] [--brightness 1] [--floor 45] [--boost 0.25]
-//!  [--dither fs|atkinson:0.85|threshold] [--invert-above 0.55] [--edges 1.5]`
+//!  [--dither fs|atkinson:0.85|threshold]`
 //!
 //! Writes `sheet.png` (per cover: source, the grey stage, the 48x48 thumbnail
 //! and the 96x96 full cover, drawn like the white cluster: lit px on black,
@@ -31,8 +31,6 @@ fn params(args: &[String]) -> CoverParams {
             "--brightness" => p.brightness = f(),
             "--floor" => p.black_floor = v.parse().expect("0..255"),
             "--boost" => p.saturation_boost = f(),
-            "--invert-above" => p.auto_invert = Some(f()),
-            "--edges" => p.edges = f(),
             "--dither" => {
                 p.dither = match v.split_once(':') {
                     Some(("atkinson", d)) => Dither::Atkinson { diffusion: d.parse().expect("diffusion") },
