@@ -189,7 +189,7 @@ Output `{ambient, lights_on, night (with hysteresis), panel_level}`. Three consu
 
 ### 2.7 DIS
 
-**Provisional.** A dedicated design pass is under way and will replace this section. The cluster is not a framebuffer: text, graphics-font text and lines are quick, bitmaps are slow, and full-res bitmaps are very slow. Content has to be built from the cheap primitives, with bitmaps used sparingly.
+**Provisional.** A dedicated design pass is under way and will replace this section. The cluster is not a framebuffer: text, graphics-font text and lines are quick, bitmaps are slow, and full-res bitmaps are very slow. Content has to be built from the cheap primitives, with bitmaps used sparingly. There is no generic render toolkit. Each screen is designed by hand around the cluster's text and bitmap commands, including the order things are drawn in and what gets resent when a value changes. Shared code covers only the transport, the session, command encoding, message packing and text metrics. The "scene diff renderer" below is out.
 
 The old DIS was three processes and a pile of if-chains, touched by 237 commits. The rebuild has five layers, each testable alone.
 
