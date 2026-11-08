@@ -4,10 +4,10 @@
 //! Layout (logical, centre-relative), the old driver's, which Drew saw work
 //! (`dc/apps/nav.py`, `dc/nav_icons.py`):
 //! - icon rect (0,1) 40x36 = 80x72 px, the 72x72 mask at px x=6; opaque `55` base;
-//! - distance value y=8, unit y=17, each centred in x 40..56;
+//! - distance value y=8, unit y=18, each centred in x 40..56;
 //! - approach bar: stock graphics cells at x=57, y=3/10/17/24/31
 //!   (`dc/stock_mono_catalog.json` "bar", bench);
-//! - pocket y=27: trip info (ETA, time left, distance left), cycling,
+//! - pocket y=28: trip info (ETA, time left, distance left), cycling,
 //!   right-aligned against the bar and as wide as the icon's empty corner
 //!   allows;
 //! - bottom row y=39: the road, centred or marquee; near a turn with lanes,
@@ -34,7 +34,11 @@ pub const LANES: Rect = Rect::new(0, 38, 64, 9);
 /// Lane cell pitch in the strip, px (18-px arrows + 3): 6 lanes across.
 pub const LANE_PITCH: usize = 21;
 /// Pocket text row, and its right edge (one unit clear of the bar at x=57).
-pub const POCKET_Y: u8 = 27;
+pub const POCKET_Y: u8 = 28;
+/// Distance value and unit rows. Rows 8 / 18 / 28 / road 39: even 10-row
+/// steps (Drew: 8 / 17 / 27 / 39 read unevenly).
+pub const DIST_Y: u8 = 8;
+pub const UNIT_Y: u8 = 18;
 pub const POCKET_RIGHT: u8 = 56;
 /// Pocket page time.
 const POCKET_PAGE: Duration = Duration::from_secs(3);
@@ -98,6 +102,18 @@ pub struct NavConfig {
     pub pocket: bool,
     pub units: Units,
     pub clock: Clock,
+    pub style: NavStyle,
+}
+
+/// `Fancy`: the Maps icons, lanes and pocket. `Stock`: a lookalike of the
+/// RNS-E's own nav screen, ROM graphics-glyph arrows (`dc/stock_mono_catalog.json`).
+/// Stock needs the maneuver -> ROM object mapping first; until then it
+/// renders like Fancy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NavStyle {
+    #[default]
+    Fancy,
+    Stock,
 }
 
 /// Distance units. `Auto`: whatever the phone shows (Drew's phone: imperial).
@@ -130,6 +146,7 @@ impl Default for NavConfig {
             pocket: true,
             units: Units::Auto,
             clock: Clock::Auto,
+            style: NavStyle::Fancy,
         }
     }
 }
@@ -299,8 +316,8 @@ impl NavScreen {
             lane_strip: QuickThenRefineIcon::new(LANES),
             strip_shown: false,
             lanes_since: None,
-            dist: CentredField::new(8, 40, 56, Font::Prop),
-            unit: CentredField::new(17, 40, 56, Font::Prop),
+            dist: CentredField::new(DIST_Y, 40, 56, Font::Prop),
+            unit: CentredField::new(UNIT_Y, 40, 56, Font::Prop),
             road: {
                 let mut r = ScrollText::new(39, 1, 63, Font::Prop);
                 r.centred = true;
