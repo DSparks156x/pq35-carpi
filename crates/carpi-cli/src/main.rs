@@ -1,6 +1,8 @@
 //! `carpi`: talk to carpid, or run a candump file through the car model
 //! offline.
 
+mod bench;
+
 use anyhow::{Context, bail};
 use carpi_can::ReplayPort;
 use carpi_can::recorder::Recorder;
@@ -48,6 +50,28 @@ enum Cmd {
         #[arg(long, default_value_t = 200)]
         period_ms: u32,
     },
+    /// Drive the bench cluster's DIS with no daemon: wake + Kl15 frames,
+    /// scripted nav and readings, a session log.
+    DisBench {
+        #[arg(long, value_enum, default_value = "both")]
+        screen: bench::Screens,
+        #[arg(long, default_value_t = 60.0)]
+        secs: f64,
+        /// Write the driver's believed centre as ASCII here at the end.
+        #[arg(long)]
+        save_fb: Option<PathBuf>,
+        /// SocketCAN interface (Linux).
+        #[arg(long)]
+        iface: Option<String>,
+        /// J2534 DLL; default: from the registry.
+        #[arg(long)]
+        j2534_dll: Option<PathBuf>,
+        /// Registry entry name to pick (substring), e.g. "SM2".
+        #[arg(long)]
+        j2534_device: Option<String>,
+        #[arg(long, default_value_t = 500_000)]
+        bitrate: u32,
+    },
     /// Run an update job in carpid and follow it: check, fetch, apply, status.
     Update {
         #[arg(value_enum)]
@@ -90,6 +114,18 @@ fn main() -> anyhow::Result<()> {
         Cmd::Capture { path } => print(call(args.socket, Request::SaveCapture { path })?),
         Cmd::Watch { prefix, period_ms } => watch(args.socket, prefix, period_ms),
         Cmd::Update { action, apply } => update(args.socket, action.into(), apply),
+        Cmd::DisBench {
+            screen,
+            secs,
+            save_fb,
+            iface,
+            j2534_dll,
+            j2534_device,
+            bitrate,
+        } => {
+            let ports = open_ports(iface, j2534_dll, j2534_device, bitrate)?;
+            dis_bench(ports, screen, secs, save_fb)
+        }
     }
 }
 
@@ -286,4 +322,111 @@ fn call(_socket: Option<PathBuf>, _req: Request) -> anyhow::Result<Response> {
 #[cfg(not(unix))]
 fn watch(_socket: Option<PathBuf>, _prefixes: Vec<String>, _period_ms: u32) -> anyhow::Result<()> {
     bail!("talking to carpid needs a Unix socket; use `carpi replay` here")
+}
+
+#[cfg(windows)]
+fn open_ports(
+    iface: Option<String>,
+    dll: Option<PathBuf>,
+    device: Option<String>,
+    bitrate: u32,
+) -> anyhow::Result<(carpi_can::Port, carpi_can::TxPort)> {
+    if iface.is_some() {
+        bail!("--iface is SocketCAN (Linux); use --j2534-dll or --j2534-device here");
+    }
+    let (rx, tx) = carpi_can::j2534::open(&carpi_can::j2534::Options {
+        dll,
+        device,
+        bitrate,
+        filter: carpi_can::j2534::Filter::PassAll,
+    })
+    .context("opening J2534")?;
+    if let carpi_can::Port::J2534(p) = &rx {
+        println!("J2534 {} at {bitrate} bit/s", p.device().dll.display());
+    }
+    Ok((rx, tx))
+}
+
+#[cfg(not(windows))]
+fn open_ports(
+    iface: Option<String>,
+    _dll: Option<PathBuf>,
+    _device: Option<String>,
+    _bitrate: u32,
+) -> anyhow::Result<(carpi_can::Port, carpi_can::TxPort)> {
+    // The interface's bitrate is set with `ip link`.
+    let iface = iface.context("--iface needed (e.g. can0 at 500k)")?;
+    Ok((
+        carpi_can::Port::open(&iface).with_context(|| format!("opening {iface}"))?,
+        carpi_can::TxPort::open(&iface).with_context(|| format!("opening {iface}"))?,
+    ))
+}
+
+/// Runs the bench until `secs` or Ctrl-C, then releases and closes the link.
+fn dis_bench(
+    (mut rx, tx): (carpi_can::Port, carpi_can::TxPort),
+    screen: bench::Screens,
+    secs: f64,
+    save_fb: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async move {
+        let mut b = bench::Bench::new(Instant::now(), screen, secs);
+        let mut tx_errors = 0u32;
+        let ctrl_c = tokio::signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+        loop {
+            while let Some(f) = b.poll_transmit() {
+                if let Err(e) = tx.send(&f).await {
+                    tx_errors += 1;
+                    if tx_errors <= 5 || tx_errors.is_power_of_two() {
+                        println!("tx error #{tx_errors}: {e}");
+                    }
+                }
+            }
+            while let Some(l) = b.poll_log() {
+                println!("{l}");
+            }
+            let now = Instant::now();
+            if b.done(now) {
+                break;
+            }
+            let at = b.next_deadline(now);
+            tokio::select! {
+                r = rx.recv() => match r? {
+                    Some(f) => b.on_frame(f.at, &f.frame),
+                    None => break,
+                },
+                _ = tokio::time::sleep_until(at.into()) => {}
+                _ = &mut ctrl_c => break,
+            }
+            b.tick(Instant::now());
+        }
+        // Release (33) and A8, give them time to go out, then close the port.
+        b.stop(Instant::now());
+        let until = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < until {
+            while let Some(f) = b.poll_transmit() {
+                let _ = tx.send(&f).await;
+            }
+            tokio::select! {
+                r = rx.recv() => if let Ok(Some(f)) = r { b.on_frame(f.at, &f.frame) },
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+            b.tick(Instant::now());
+        }
+        while let Some(l) = b.poll_log() {
+            println!("{l}");
+        }
+        if let Some(path) = save_fb {
+            let text = b
+                .belief_ascii()
+                .unwrap_or_else(|| "(nothing drawn)\n".into());
+            std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+            println!("belief -> {}", path.display());
+        }
+        Ok(())
+    })
 }

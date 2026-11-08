@@ -5,6 +5,8 @@
 
 pub mod candump;
 mod frame;
+#[cfg(windows)]
+pub mod j2534;
 mod port;
 pub mod recorder;
 mod tx;

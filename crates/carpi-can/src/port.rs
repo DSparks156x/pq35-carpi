@@ -3,11 +3,14 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// A receive-only CAN source. Sending is added with the TX gate.
+/// A receive-only CAN source. Sending is [`crate::TxPort`].
 pub enum Port {
     #[cfg(target_os = "linux")]
     Socket(socket::SocketPort),
     Replay(ReplayPort),
+    /// A J2534 PassThru device (bench), from `j2534::open`.
+    #[cfg(windows)]
+    J2534(crate::j2534::J2534Port),
 }
 
 impl Port {
@@ -31,6 +34,8 @@ impl Port {
             #[cfg(target_os = "linux")]
             Port::Socket(s) => s.recv().await.map(Some),
             Port::Replay(r) => Ok(r.recv().await),
+            #[cfg(windows)]
+            Port::J2534(j) => j.recv().await,
         }
     }
 }
