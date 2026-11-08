@@ -104,6 +104,11 @@ pub struct BusMonitor {
     state: BusState,
     last_frame: Option<Instant>,
     members: BTreeMap<u8, Member>,
+    /// Frames since the last transition, for the log.
+    frames: u64,
+    /// Ring members as they were just before the last change (silence clears
+    /// them), for the log.
+    seen: String,
 }
 
 impl BusMonitor {
@@ -113,6 +118,8 @@ impl BusMonitor {
             state: BusState::Silent,
             last_frame: None,
             members: BTreeMap::new(),
+            frames: 0,
+            seen: String::new(),
         }
     }
 
@@ -123,6 +130,7 @@ impl BusMonitor {
     /// Feed every frame received on the bus.
     pub fn on_frame(&mut self, now: Instant, id: u32, data: &[u8]) -> Option<Transition> {
         self.last_frame = Some(now);
+        self.frames += 1;
         if let Some(msg) = NmMessage::decode(id, data) {
             self.members.insert(msg.node, Member { last: msg, at: now });
         }
@@ -153,6 +161,44 @@ impl BusMonitor {
             .is_some_and(|m| !m.last.sleep_ind && !m.last.sleep_ack)
     }
 
+    /// For the log at a transition: each ring member's last flags as they
+    /// stood just before it, frames since the previous transition, and how
+    /// long since the last frame. Resets the frame count.
+    pub fn take_detail(&mut self, now: Instant) -> String {
+        let quiet = self.last_frame.map_or("never".into(), |t| {
+            format!("{} ms", now.saturating_duration_since(t).as_millis())
+        });
+        let s = format!(
+            "ring [{}], {} frames since last change, last frame {quiet} ago",
+            self.seen, self.frames
+        );
+        self.frames = 0;
+        s
+    }
+
+    fn ring_text(&self) -> String {
+        self.members
+            .values()
+            .map(|m| {
+                let l = m.last;
+                let mut f = Vec::new();
+                for (on, n) in [
+                    (l.ring, "ring"),
+                    (l.alive, "alive"),
+                    (l.limp_home, "limp"),
+                    (l.sleep_ind, "sleep-ind"),
+                    (l.sleep_ack, "sleep-ack"),
+                ] {
+                    if on {
+                        f.push(n);
+                    }
+                }
+                format!("{:02X}:{}", l.node, f.join("+"))
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn evaluate(&mut self, now: Instant) -> Option<Transition> {
         let silent = match self.last_frame {
             None => true,
@@ -180,6 +226,9 @@ impl BusMonitor {
                 BusState::Awake
             }
         };
+        if next != self.state {
+            self.seen = self.ring_text();
+        }
         if silent {
             self.members.clear();
         }
@@ -250,6 +299,25 @@ mod tests {
         let t = b.tick(t0 + ms(2400)).unwrap();
         assert_eq!(t.to, BusState::Silent);
         assert_eq!(b.members(t0 + ms(2400)).count(), 0);
+    }
+
+    #[test]
+    fn detail_names_who_asked_to_sleep() {
+        let t0 = Instant::now();
+        let mut b = BusMonitor::new(Config::default());
+        b.on_frame(t0, GW, &[0x16, 0x01]);
+        b.on_frame(t0 + ms(10), RNSE, &[0x0B, 0x11]);
+        b.take_detail(t0 + ms(10));
+        let t = b.on_frame(t0 + ms(100), GW, &[0x16, 0x31]).unwrap();
+        assert_eq!(t.to, BusState::SleepPending);
+        let d = b.take_detail(t0 + ms(100));
+        assert!(d.contains("0B:ring+sleep-ind+sleep-ack"), "{d}");
+        assert!(d.contains("16:ring+sleep-ind"), "{d}");
+        assert!(d.contains("1 frames"), "{d}");
+        b.tick(t0 + ms(2200)).unwrap();
+        let d = b.take_detail(t0 + ms(2200));
+        assert!(d.contains("0B:"), "silence keeps who was there: {d}");
+        assert!(d.contains("2100 ms"), "{d}");
     }
 
     #[test]

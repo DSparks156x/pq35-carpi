@@ -278,7 +278,10 @@ async fn main() -> anyhow::Result<()> {
             }
             _ = tick.tick() => {
                 for ev in car.tick(Instant::now()) {
-                    info!("{}: bus {} -> {}", ev.iface, ev.transition.from, ev.transition.to);
+                    info!(
+                        "{}: bus {} -> {} ({})",
+                        ev.iface, ev.transition.from, ev.transition.to, ev.detail
+                    );
                 }
                 d.publish_status(&car);
                 d.save_learned(false);
@@ -324,8 +327,8 @@ impl Daemon {
             Msg::Frame(idx, frame) => {
                 if let Some(ev) = car.ingest(idx, &frame) {
                     info!(
-                        "{}: bus {} -> {}",
-                        ev.iface, ev.transition.from, ev.transition.to
+                        "{}: bus {} -> {} ({})",
+                        ev.iface, ev.transition.from, ev.transition.to, ev.detail
                     );
                 }
             }

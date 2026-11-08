@@ -63,6 +63,8 @@ pub struct CoreConfig {
 pub struct BusEvent {
     pub iface: String,
     pub transition: Transition,
+    /// Ring members and their flags, frames since the last change.
+    pub detail: String,
 }
 
 pub struct Car {
@@ -275,6 +277,7 @@ impl Car {
             event = Some(BusEvent {
                 iface: iface.spec.name.clone(),
                 transition: t,
+                detail: mon.take_detail(rx.at),
             });
         }
         if iface.spec.has_role(ROLE_ICAN)
@@ -326,10 +329,13 @@ impl Car {
     pub fn tick(&mut self, now: Instant) -> Vec<BusEvent> {
         let mut out = Vec::new();
         for iface in &mut self.ifaces {
-            if let Some(t) = iface.monitor.as_mut().and_then(|m| m.tick(now)) {
+            if let Some(mon) = iface.monitor.as_mut()
+                && let Some(t) = mon.tick(now)
+            {
                 out.push(BusEvent {
                     iface: iface.spec.name.clone(),
                     transition: t,
+                    detail: mon.take_detail(now),
                 });
             }
         }
