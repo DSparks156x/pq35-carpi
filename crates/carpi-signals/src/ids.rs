@@ -56,6 +56,12 @@ pub const DDP_RX: u32 = 0x6C1;
 
 // --- Diagnostics (TP2.0) -----------------------------------------------------
 pub const TP2_SETUP: u32 = 0x200;
+/// Module replies to a setup on `TP2_SETUP_REPLY_BASE + module`.
+pub const TP2_SETUP_REPLY_BASE: u32 = 0x200;
+/// Gateway's TP2 address (answers `1A 9F`, the installation list).
+pub const TP2_GATEWAY: u8 = 0x1F;
+/// Our tester RX IDs. Never 0x300, which VCDS uses.
+pub const TP2_TESTER_RX: std::ops::RangeInclusive<u32> = 0x308..=0x30F;
 /// VCDS uses 0x300 as its tester RX ID. We never do.
 pub const TP2_VCDS_TESTER_RX: u32 = 0x300;
 

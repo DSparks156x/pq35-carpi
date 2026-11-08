@@ -4,6 +4,9 @@
 //! the clock; tests and `carpi replay` drive this directly.
 
 pub mod bridge;
+mod control;
+
+pub use control::Output;
 
 use carpi_can::RxFrame;
 use carpi_can::recorder::Recorder;
@@ -54,10 +57,13 @@ pub struct Car {
     capture_dir: PathBuf,
     /// API connection that last pushed bridge state (LIVI).
     bridge_conn: Option<u64>,
+    controls: control::Controls,
+    outputs: Vec<Output>,
 }
 
 impl Car {
     pub fn new(ifaces: Vec<IfaceSpec>, mut recorder: Recorder, capture_dir: PathBuf) -> Self {
+        let names: Vec<String> = ifaces.iter().map(|i| i.name.clone()).collect();
         let ifaces = ifaces
             .into_iter()
             .map(|spec| Iface {
@@ -75,6 +81,8 @@ impl Car {
             recorder,
             capture_dir,
             bridge_conn: None,
+            controls: control::Controls::new(&names),
+            outputs: Vec::new(),
         }
     }
 
@@ -111,7 +119,22 @@ impl Car {
                 store.set(name, value, rx.at, timeout)
             });
         }
+        if iface.spec.has_role(ROLE_ICAN) && !rx.frame.extended {
+            self.controls.on_ican_frame(
+                rx.at,
+                rx.frame.id,
+                rx.frame.data(),
+                &self.store,
+                self.bridge_conn.is_some(),
+                &mut self.outputs,
+            );
+        }
         event
+    }
+
+    /// Takes what the car model decided to do since the last call.
+    pub fn drain_outputs(&mut self) -> Vec<Output> {
+        std::mem::take(&mut self.outputs)
     }
 
     /// Call every ~100 ms.
@@ -125,6 +148,18 @@ impl Car {
                 });
             }
         }
+        let ican = self
+            .ifaces
+            .iter()
+            .enumerate()
+            .find_map(|(i, f)| f.monitor.as_ref().map(|m| (i, m)));
+        self.controls.tick(
+            now,
+            ican,
+            &mut self.store,
+            self.bridge_conn.is_some(),
+            &mut self.outputs,
+        );
         out
     }
 

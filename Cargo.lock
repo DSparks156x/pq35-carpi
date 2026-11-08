@@ -121,11 +121,17 @@ name = "carpi-core"
 version = "0.1.0"
 dependencies = [
  "carpi-can",
+ "carpi-gate",
+ "carpi-input",
+ "carpi-light",
  "carpi-nm",
+ "carpi-power",
  "carpi-proto",
+ "carpi-rnse",
  "carpi-signals",
  "carpi-state",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

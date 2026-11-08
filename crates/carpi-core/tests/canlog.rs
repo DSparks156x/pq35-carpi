@@ -94,3 +94,41 @@ fn capture_roundtrips() {
     assert_eq!(back.len(), n);
     std::fs::remove_file(path).ok();
 }
+
+#[test]
+fn sends_only_label_and_brightness_to_the_rnse() {
+    let port = ReplayPort::load(&log_path(), None, Duration::from_micros(3500), false).unwrap();
+    let mut car = Car::new(
+        vec![IfaceSpec {
+            name: "can0".into(),
+            roles: vec!["ican".into()],
+        }],
+        Recorder::new(Duration::from_secs(1), 10),
+        std::env::temp_dir(),
+    );
+    let base = Instant::now();
+    let mut next_tick = base;
+    let mut sent = Vec::new();
+    for rx in port.iter_from(base) {
+        car.ingest(0, &rx);
+        while next_tick <= rx.at {
+            car.tick(next_tick);
+            next_tick += Duration::from_millis(100);
+        }
+        for o in car.drain_outputs() {
+            if let carpi_core::Output::Send { frame, .. } = o {
+                sent.push(frame);
+            }
+        }
+    }
+    assert!(!sent.is_empty(), "expected the RNS-E label/brightness");
+    for f in &sent {
+        assert_eq!(f.id, ids::RNSE_CMD);
+        assert!(matches!(f.data()[0], 0xBA | 0xBB), "{f:?}");
+    }
+    // Daytime in this log, nothing projecting: LIVI label, follow-car brightness.
+    assert!(sent.iter().any(|f| f.data()[..2] == [0xBA, 0x00]));
+    assert!(sent.iter().any(|f| f.data()[..2] == [0xBB, 0x00]));
+    // Settle + one resend: a handful of frames, not a stream.
+    assert!(sent.len() <= 6, "{} frames", sent.len());
+}

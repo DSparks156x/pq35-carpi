@@ -1,0 +1,12 @@
+[package]
+name = "carpi-tp2"
+description = "VW TP2.0 data link (sans-IO): dynamic diagnostic channels and fixed channels such as DDP"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-can.workspace = true

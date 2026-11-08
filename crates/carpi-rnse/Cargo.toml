@@ -10,7 +10,7 @@ publish.workspace = true
 
 [dependencies]
 carpi-can.workspace = true
-carpi-gate = { path = "../carpi-gate" }
+carpi-gate.workspace = true
 carpi-signals.workspace = true
 
 [dev-dependencies]

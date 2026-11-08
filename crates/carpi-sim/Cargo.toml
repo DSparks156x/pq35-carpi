@@ -1,0 +1,17 @@
+[package]
+name = "carpi-sim"
+description = "Wire-level simulators: virtual CAN bus, TP2 gateway and KWP modules"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-can.workspace = true
+
+[dev-dependencies]
+# Not in [workspace.dependencies] yet; switch to `.workspace = true` when wired in.
+carpi-tp2.workspace = true
+carpi-kwp.workspace = true

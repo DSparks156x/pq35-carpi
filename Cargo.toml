@@ -17,6 +17,14 @@ carpi-signals = { path = "crates/carpi-signals" }
 carpi-nm = { path = "crates/carpi-nm" }
 carpi-proto = { path = "crates/carpi-proto" }
 carpi-core = { path = "crates/carpi-core" }
+carpi-gate = { path = "crates/carpi-gate" }
+carpi-power = { path = "crates/carpi-power" }
+carpi-rnse = { path = "crates/carpi-rnse" }
+carpi-light = { path = "crates/carpi-light" }
+carpi-input = { path = "crates/carpi-input" }
+carpi-tp2 = { path = "crates/carpi-tp2" }
+carpi-kwp = { path = "crates/carpi-kwp" }
+carpi-sim = { path = "crates/carpi-sim" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
