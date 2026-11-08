@@ -5,10 +5,10 @@ mod common;
 use carpi_dis::cmd::{Op, records};
 use carpi_dis::fb::Fb;
 use carpi_dis::helpers::Ctx;
-use carpi_dis::icons::{self, Maneuver, Side};
+use carpi_dis::icons::{Maneuver, Side};
 use carpi_dis::pack::{Packed, Packer, Registers};
 use carpi_dis::proto::Profile;
-use carpi_dis::screens::nav::{ICON, NavConfig, NavInput, NavScreen};
+use carpi_dis::screens::nav::{ICON, NavConfig, NavInput, NavScreen, icon_art};
 use carpi_dis::screens::readings::{ReadingSpec, ReadingsInput, ReadingsScreen};
 use carpi_dis::screens::{REFINE_MSGS, Screen, build_frame};
 use common::{apply, dump, golden};
@@ -111,7 +111,7 @@ fn nav_refine_completes_to_native_art() {
         frames += 1;
         assert!(frames < 500);
     }
-    let art = icons::draw(Maneuver::Roundabout(90), 64, 76);
+    let art = icon_art(Maneuver::Roundabout(None), false);
     assert_eq!(fb.region(ICON), art.px, "refined icon != native art");
     golden("nav_refined_screen", &fb.ascii());
 }
@@ -156,7 +156,7 @@ fn nav_refine_cancels_on_maneuver_change() {
         apply(&mut fb, &f);
         regs = f.regs;
     }
-    let art = icons::draw(Maneuver::Turn(Side::Right), 64, 76);
+    let art = icon_art(Maneuver::Turn(Side::Right), false);
     assert_eq!(fb.region(ICON), art.px, "leftovers from job A");
 }
 

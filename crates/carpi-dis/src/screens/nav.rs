@@ -1,23 +1,26 @@
 //! Nav screen, in Drew's order: fast icon, text, bar, commit; then the refine
 //! lane (native strokes, white only), cancelled when the maneuver changes.
 //!
-//! Layout (logical, centre-relative):
-//! - icon (0,1) 32x38, opaque `55` base;
-//! - distance value at y=10, x 33..56, right-aligned; unit at y=20;
+//! Layout (logical, centre-relative), the old driver's, which Drew saw work
+//! (`dc/apps/nav.py`, `dc/nav_icons.py`):
+//! - icon rect (0,1) 40x36 = 80x72 px, the 72x72 mask at px x=6; opaque `55` base;
+//! - distance value y=8, unit y=17, each centred in x 40..56;
 //! - approach bar: stock graphics cells at x=57, y=3/10/17/24/31
 //!   (`dc/stock_mono_catalog.json` "bar", bench);
-//! - road at y=39, full width, marquee.
+//! - road y=39 in x 1..63: centred if it fits, else marquee.
 
 use super::Screen;
-use crate::font::{Font, audscii};
+use crate::font::Font;
 use crate::font_data::STOCK_BAR;
-use crate::helpers::{Ctx, GlyphCells, NumberField, QuickThenRefineIcon, ScrollText, TextSlot};
+use crate::helpers::{CentredField, Ctx, GlyphCells, QuickThenRefineIcon, ScrollText};
 use crate::icons::{self, Maneuver};
 use crate::pack::{Group, PackError, Packer};
 use crate::proto::Rect;
 use std::time::Instant;
 
-pub const ICON: Rect = Rect::new(0, 1, 32, 38);
+pub const ICON: Rect = Rect::new(0, 1, 40, 36);
+/// Mask offset inside [`ICON`], physical px.
+pub const ICON_MASK_X: usize = 6;
 pub const BAR_X: u8 = 57;
 pub const BAR_Y: [u8; 5] = [3, 10, 17, 24, 31];
 
@@ -47,11 +50,16 @@ pub struct NavConfig {
     /// bar's progress source isn't decoded (raw 0..255 → 21 levels,
     /// `dc/stock_mono_frame.py:78`).
     pub bar_range_m: f64,
+    /// Roundabouts and U-turns go clockwise.
+    pub left_hand_traffic: bool,
 }
 
 impl Default for NavConfig {
     fn default() -> Self {
-        NavConfig { bar_range_m: 500.0 }
+        NavConfig {
+            bar_range_m: 500.0,
+            left_hand_traffic: false,
+        }
     }
 }
 
@@ -73,12 +81,18 @@ pub fn bar_level(d: Option<f64>, range: f64) -> usize {
     }
 }
 
+/// The icon as it fills [`ICON`].
+pub fn icon_art(m: Maneuver, left_hand_traffic: bool) -> icons::Art {
+    let (w, h) = (usize::from(ICON.w) * 2, usize::from(ICON.h) * 2);
+    icons::draw(m, left_hand_traffic, w, h, ICON_MASK_X, 0)
+}
+
 pub struct NavScreen {
     pub cfg: NavConfig,
     input: NavInput,
     icon: QuickThenRefineIcon<Maneuver>,
-    dist: NumberField,
-    unit: TextSlot,
+    dist: CentredField,
+    unit: CentredField,
     road: ScrollText,
     bar: GlyphCells,
 }
@@ -89,9 +103,13 @@ impl NavScreen {
             cfg,
             input: NavInput::default(),
             icon: QuickThenRefineIcon::new(ICON),
-            dist: NumberField::new(10, 33, 56, Font::Prop),
-            unit: TextSlot::new(20, 33, 56, Font::Prop),
-            road: ScrollText::new(39, 0, 64, Font::Prop),
+            dist: CentredField::new(8, 40, 56, Font::Prop),
+            unit: CentredField::new(17, 40, 56, Font::Prop),
+            road: {
+                let mut r = ScrollText::new(39, 1, 63, Font::Prop);
+                r.centred = true;
+                r
+            },
             bar: GlyphCells::new(BAR_Y.iter().map(|y| (BAR_X, *y)).collect()),
         }
     }
@@ -117,15 +135,14 @@ impl NavScreen {
 
     fn icon_groups(&mut self, cx: &Ctx) -> Vec<Group> {
         let m = self.input.maneuver();
-        let art = icons::draw(m, usize::from(ICON.w) * 2, usize::from(ICON.h) * 2);
+        let art = icon_art(m, self.cfg.left_hand_traffic);
         self.icon.set(cx, m, &art)
     }
 
     fn distance_groups(&mut self, cx: &Ctx) -> Vec<Group> {
         let (v, u) = format_distance(self.input.distance_m);
         let mut out: Vec<Group> = self.dist.set(cx, "dist", &v).into_iter().collect();
-        let x = self.unit.left;
-        out.extend(self.unit.draw(&cx.metrics, "unit", x, audscii(u)));
+        out.extend(self.unit.set(cx, "unit", u));
         out
     }
 

@@ -127,6 +127,49 @@ impl TextSlot {
         self.prev = Some((x, bytes, ink));
         (!ops.is_empty()).then(|| Group::new(tag, ops))
     }
+
+    /// Logical x that centres `bytes` in the slot (measured widths), rounded
+    /// left. Text wider than the slot starts at `left`.
+    pub fn centre_x(&self, m: &Metrics, bytes: &[u8]) -> u8 {
+        let spare = self.width_px().saturating_sub(m.width(self.font, bytes));
+        self.left + (spare / 4) as u8
+    }
+
+    /// Draw `bytes` centred. Old ink outside the new run is cleared in the same
+    /// group.
+    pub fn draw_centred(&mut self, m: &Metrics, tag: &'static str, bytes: Vec<u8>) -> Option<Group> {
+        let x = self.centre_x(m, &bytes);
+        self.draw(m, tag, x, bytes)
+    }
+}
+
+/// Centred value in a fixed slot (nav distance and unit). Shifting the run
+/// leaves ink the new run doesn't cover; that tail clear rides in the same
+/// group as the run, so the cluster never shows the gap. Too wide shows `--`.
+#[derive(Clone, Debug)]
+pub struct CentredField {
+    pub slot: TextSlot,
+}
+
+impl CentredField {
+    pub fn new(y: u8, left: u8, right: u8, font: Font) -> Self {
+        CentredField {
+            slot: TextSlot::new(y, left, right, font),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.slot.reset();
+    }
+
+    pub fn set(&mut self, cx: &Ctx, tag: &'static str, text: &str) -> Option<Group> {
+        let m = &cx.metrics;
+        let mut bytes = audscii(text);
+        if m.width(self.slot.font, &bytes) > self.slot.width_px() || bytes.len() > cx.text_cap() {
+            bytes = audscii("--");
+        }
+        self.slot.draw_centred(m, tag, bytes)
+    }
 }
 
 /// Right-aligned value in a fixed slot. Left-padded with blanks so the run
@@ -186,6 +229,9 @@ pub struct ScrollText {
     pub step: Duration,
     /// Hold at offset 0 before scrolling (Drew: 0).
     pub pause: Duration,
+    /// Centre text that fits (Drew: road line). Text that doesn't fit scrolls
+    /// from `left`.
+    pub centred: bool,
     text: Vec<u8>,
     offset: usize,
     next_at: Option<Instant>,
@@ -197,6 +243,7 @@ impl ScrollText {
             slot: TextSlot::new(y, left, right, font),
             step: Duration::from_millis(400),
             pause: Duration::ZERO,
+            centred: false,
             text: Vec::new(),
             offset: 0,
             next_at: None,
@@ -230,6 +277,10 @@ impl ScrollText {
         let m = &cx.metrics;
         let font = self.slot.font;
         let field = self.slot.width_px();
+        if self.centred && self.fits(m) {
+            let run = self.text.clone();
+            return self.slot.draw_centred(m, tag, run);
+        }
         let window: Vec<u8> = if self.fits(m) {
             self.text.clone()
         } else {

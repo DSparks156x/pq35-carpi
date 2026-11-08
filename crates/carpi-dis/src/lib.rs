@@ -29,6 +29,7 @@ pub mod font;
 mod font_data;
 pub mod helpers;
 pub mod icons;
+mod nav_icon_data;
 pub mod pack;
 pub mod proto;
 pub mod screens;

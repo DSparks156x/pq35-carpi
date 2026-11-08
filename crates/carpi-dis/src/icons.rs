@@ -1,10 +1,12 @@
-//! Maneuver icons, drawn in code at native resolution (physical px).
+//! Maneuver icons: the old driver's 72x72 Google Maps masks (`nav_icon_data`),
+//! the set Drew approved on the cluster. Placed at physical (6,2) in a
+//! 128x96 canvas, like the old code (`dc/nav_icons.py`), which leaves distance
+//! text from x84, the road from y78 and the bar from x114 clear.
 //!
-//! Our own art, not the old Google-derived set. The fast base is the bottom-right
-//! pixel of each 2x2 cell, because the proven native refine (base + XOR V/H/dot
-//! planes) can't change that pixel (`dc/native_bitmap.py:353-360`, bench).
-//! Stock ROM-glyph arrows (`dc/stock_mono_catalog.json`) are a later option: the
-//! catalog has no maneuver names yet.
+//! Maneuver → icon follows the old mapping (`dc/apps/nav.py` `_get_icon_name`),
+//! including the roundabout angle buckets. Unknown → STRAIGHT.
+
+use crate::nav_icon_data::{BLOB, BYTES, NAMES, SIZE};
 
 /// A 1-bit image, physical px, row-major.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,7 +21,9 @@ impl Art {
         self.px[y * self.w + x]
     }
 
-    /// Logical base: bottom-right pixel of each cell, MSB-first rows.
+    /// Logical base: bottom-right pixel of each cell, MSB-first rows. The native
+    /// refine (base + XOR V/H/dot planes) can't change that pixel
+    /// (`dc/native_bitmap.py:353-360`, bench).
     pub fn base_rows(&self) -> Vec<Vec<u8>> {
         let (lw, lh) = (self.w / 2, self.h / 2);
         (0..lh)
@@ -42,174 +46,133 @@ pub enum Side {
     Right,
 }
 
-/// What we can draw. Mapped from AA's maneuver vocabulary.
+/// What we can show. Mapped from AA's maneuver vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Maneuver {
+    Depart,
     Straight,
     Slight(Side),
     Turn(Side),
     Sharp(Side),
-    UTurn(Side),
-    /// Exit direction in degrees clockwise from straight ahead.
-    Roundabout(i32),
-    Destination,
+    UTurn,
+    RampOn(Side),
+    RampOff(Side),
+    Fork(Side),
+    Merge(Option<Side>),
+    /// Entering; no exit known.
+    RoundaboutEnter,
+    RoundaboutExit,
+    /// AA's exit angle in degrees (180 = straight on), if it sent one.
+    Roundabout(Option<i32>),
+    FerryBoat,
+    FerryTrain,
+    Destination(Option<Side>),
     Unknown,
 }
 
 impl Maneuver {
     /// From `nav.maneuver` / `side` / `roundabout_angle` as carpi-core publishes
-    /// them (`carpi-proto` `NavState`). Unknown words map to `Unknown`.
+    /// them (`carpi-proto` `NavState`).
     pub fn from_aa(maneuver: &str, side: Option<&str>, angle: Option<i32>) -> Maneuver {
-        let s = if side == Some("left") {
-            Side::Left
-        } else {
-            Side::Right
+        let opt = match side {
+            Some("left") => Some(Side::Left),
+            Some("right") => Some(Side::Right),
+            _ => None,
         };
-        let sign = if s == Side::Left { -1 } else { 1 };
+        let s = opt.unwrap_or(Side::Right);
         match maneuver {
-            "depart" | "straight" | "continue" | "name_change" => Maneuver::Straight,
-            "slight_turn" | "on_ramp" | "off_ramp" | "fork" | "merge" | "keep" => {
-                Maneuver::Slight(s)
-            }
+            "depart" => Maneuver::Depart,
+            "straight" | "continue" | "name_change" => Maneuver::Straight,
+            "slight_turn" | "keep" => Maneuver::Slight(s),
             "turn" => Maneuver::Turn(s),
             "sharp_turn" => Maneuver::Sharp(s),
-            "u_turn" => Maneuver::UTurn(s),
-            "roundabout_enter_and_exit" | "roundabout_exit" | "roundabout_enter" => {
-                Maneuver::Roundabout(angle.unwrap_or(90 * sign))
-            }
-            "destination" => Maneuver::Destination,
+            "u_turn" => Maneuver::UTurn,
+            "on_ramp" => Maneuver::RampOn(s),
+            "off_ramp" => Maneuver::RampOff(s),
+            "fork" => Maneuver::Fork(s),
+            "merge" => Maneuver::Merge(opt),
+            "roundabout_enter" => Maneuver::RoundaboutEnter,
+            "roundabout_exit" => Maneuver::RoundaboutExit,
+            "roundabout_enter_and_exit" => Maneuver::Roundabout(angle),
+            "ferry_boat" | "ferry" => Maneuver::FerryBoat,
+            "ferry_train" => Maneuver::FerryTrain,
+            "destination" => Maneuver::Destination(opt),
             _ => Maneuver::Unknown,
         }
     }
-}
 
-type P = (f32, f32);
-
-fn seg_dist(p: P, a: P, b: P) -> f32 {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let l2 = dx * dx + dy * dy;
-    let t = if l2 == 0.0 {
-        0.0
-    } else {
-        (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / l2).clamp(0.0, 1.0)
-    };
-    let (qx, qy) = (a.0 + t * dx - p.0, a.1 + t * dy - p.1);
-    (qx * qx + qy * qy).sqrt()
-}
-
-fn in_tri(p: P, a: P, b: P, c: P) -> bool {
-    let s = |p1: P, p2: P, p3: P| (p1.0 - p3.0) * (p2.1 - p3.1) - (p2.0 - p3.0) * (p1.1 - p3.1);
-    let (d1, d2, d3) = (s(p, a, b), s(p, b, c), s(p, c, a));
-    let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-    let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-    !(neg && pos)
-}
-
-struct Shape {
-    strokes: Vec<(P, P)>,
-    heads: Vec<(P, P)>, // (tip, unit direction)
-    ring: Option<(P, f32)>,
-    dot: Option<(P, f32)>,
-}
-
-fn dir(deg: f32) -> P {
-    let r = deg.to_radians();
-    (r.sin(), -r.cos())
-}
-
-/// Draw `m` into a `w` x `h` px box. Unit = box width.
-pub fn draw(m: Maneuver, w: usize, h: usize) -> Art {
-    let u = w as f32;
-    let cx = u * 0.5;
-    let bottom = h as f32 - 2.0;
-    let joint = (cx, h as f32 * 0.55);
-    let stem = (joint, (cx, bottom));
-    let mut s = Shape {
-        strokes: vec![],
-        heads: vec![],
-        ring: None,
-        dot: None,
-    };
-    let turn = |s: &mut Shape, deg: f32, len: f32| {
-        let d = dir(deg);
-        let tip = (joint.0 + d.0 * len, joint.1 + d.1 * len);
-        s.strokes.push(stem);
-        s.strokes.push((joint, tip));
-        s.heads.push((tip, d));
-    };
-    let side = |sd: Side| if sd == Side::Left { -1.0 } else { 1.0 };
-    match m {
-        Maneuver::Straight | Maneuver::Unknown => {
-            let tip = (cx, h as f32 * 0.08);
-            s.strokes.push(((cx, bottom), tip));
-            s.heads.push((tip, (0.0, -1.0)));
-            if m == Maneuver::Unknown {
-                s.dot = Some(((cx, h as f32 * 0.55), u * 0.12));
+    /// Icon name in the old set. `left_hand_traffic` makes roundabouts and
+    /// U-turns clockwise.
+    pub fn icon_name(self, left_hand_traffic: bool) -> String {
+        let lr = |s: Side| if s == Side::Left { "LEFT" } else { "RIGHT" };
+        let rot = if left_hand_traffic {
+            "CLOCKWISE"
+        } else {
+            "COUNTERCLOCKWISE"
+        };
+        match self {
+            Maneuver::Depart => "DEPART".into(),
+            Maneuver::Straight | Maneuver::Unknown => "STRAIGHT".into(),
+            Maneuver::Slight(s) => format!("TURN_SLIGHT_{}", lr(s)),
+            Maneuver::Turn(s) => format!("TURN_{}", lr(s)),
+            Maneuver::Sharp(s) => format!("TURN_SHARP_{}", lr(s)),
+            Maneuver::UTurn => format!("TURN_U_TURN_{rot}"),
+            Maneuver::RampOn(s) => format!("RAMP_ON_{}", lr(s)),
+            Maneuver::RampOff(s) => format!("RAMP_OFF_{}", lr(s)),
+            Maneuver::Fork(s) => format!("FORK_{}", lr(s)),
+            Maneuver::Merge(None) => "MERGE".into(),
+            Maneuver::Merge(Some(s)) => format!("MERGE_{}", lr(s)),
+            Maneuver::RoundaboutEnter | Maneuver::Roundabout(None) => format!("ROUNDABOUT_{rot}"),
+            Maneuver::RoundaboutExit => format!("ROUNDABOUT_EXIT_{rot}"),
+            Maneuver::Roundabout(Some(a)) => {
+                let a = a.rem_euclid(360);
+                // Old rule: the side comes from the angle, not AA's side field.
+                let side = if (a < 180) != left_hand_traffic {
+                    "RIGHT"
+                } else {
+                    "LEFT"
+                };
+                let shape = match a {
+                    23..=67 | 293..=337 => "SHARP",
+                    68..=112 | 248..=292 => "NORMAL",
+                    113..=157 | 203..=247 => "SLIGHT",
+                    158..=202 => "STRAIGHT",
+                    _ => "U_TURN",
+                };
+                match shape {
+                    "STRAIGHT" | "U_TURN" => format!("ROUNDABOUT_{shape}_{rot}"),
+                    "NORMAL" => format!("ROUNDABOUT_{side}_{rot}"),
+                    _ => format!("ROUNDABOUT_{shape}_{side}_{rot}"),
+                }
             }
-        }
-        Maneuver::Slight(sd) => turn(&mut s, 35.0 * side(sd), u * 0.42),
-        Maneuver::Turn(sd) => turn(&mut s, 90.0 * side(sd), u * 0.30),
-        Maneuver::Sharp(sd) => turn(&mut s, 140.0 * side(sd), u * 0.34),
-        Maneuver::UTurn(sd) => {
-            let k = side(sd);
-            let top = h as f32 * 0.22;
-            let r = u * 0.18;
-            let a = (cx - k * r, bottom);
-            let b = (cx - k * r, top + r);
-            s.strokes.push((a, b));
-            let mut prev = b;
-            for i in 1..=8 {
-                let t = std::f32::consts::PI * i as f32 / 8.0;
-                let p = (cx - k * r * t.cos(), top + r - r * t.sin());
-                s.strokes.push((prev, p));
-                prev = p;
-            }
-            let tip = (cx + k * r, h as f32 * 0.62);
-            s.strokes.push((prev, tip));
-            s.heads.push((tip, (0.0, 1.0)));
-        }
-        Maneuver::Roundabout(deg) => {
-            let c = (cx, h as f32 * 0.48);
-            let r = u * 0.2;
-            s.ring = Some((c, r));
-            s.strokes.push(((cx, c.1 + r), (cx, bottom)));
-            let d = dir(deg as f32);
-            let from = (c.0 + d.0 * r, c.1 + d.1 * r);
-            let tip = (c.0 + d.0 * u * 0.44, c.1 + d.1 * u * 0.44);
-            s.strokes.push((from, tip));
-            s.heads.push((tip, d));
-        }
-        Maneuver::Destination => {
-            let c = (cx, h as f32 * 0.35);
-            s.ring = Some((c, u * 0.24));
-            s.dot = Some((c, u * 0.09));
-            s.strokes.push(((cx, c.1 + u * 0.24), (cx, bottom)));
+            Maneuver::FerryBoat => "FERRY_BOAT".into(),
+            Maneuver::FerryTrain => "FERRY_TRAIN".into(),
+            Maneuver::Destination(None) => "DESTINATION".into(),
+            Maneuver::Destination(Some(s)) => format!("DESTINATION_{}", lr(s)),
         }
     }
-    let half = u * 0.075;
-    let head_len = u * 0.24;
-    let head_half = u * 0.21;
+}
+
+/// The 72x72 mask for `name`, or STRAIGHT if there's no such icon.
+pub fn mask(name: &str) -> &'static [u8] {
+    let i = NAMES
+        .iter()
+        .position(|n| *n == name)
+        .or_else(|| NAMES.iter().position(|n| *n == "STRAIGHT"))
+        .expect("STRAIGHT is in the set");
+    &BLOB[i * BYTES..(i + 1) * BYTES]
+}
+
+/// Icon `m` in a `w` x `h` px box with the 72x72 mask at (`x0`, `y0`).
+pub fn draw(m: Maneuver, left_hand_traffic: bool, w: usize, h: usize, x0: usize, y0: usize) -> Art {
+    assert!(x0 + SIZE <= w && y0 + SIZE <= h, "icon box too small");
+    let bits = mask(&m.icon_name(left_hand_traffic));
     let mut px = vec![false; w * h];
-    for y in 0..h {
-        for x in 0..w {
-            let p = (x as f32 + 0.5, y as f32 + 0.5);
-            let mut on = s.strokes.iter().any(|(a, b)| seg_dist(p, *a, *b) <= half);
-            for (tip, d) in &s.heads {
-                let base = (tip.0 - d.0 * head_len, tip.1 - d.1 * head_len);
-                let n = (-d.1, d.0);
-                let l = (base.0 + n.0 * head_half, base.1 + n.1 * head_half);
-                let r = (base.0 - n.0 * head_half, base.1 - n.1 * head_half);
-                let tip2 = (tip.0 + d.0 * 2.0, tip.1 + d.1 * 2.0);
-                on |= in_tri(p, tip2, l, r);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            if bits[y * SIZE / 8 + x / 8] & (0x80 >> (x % 8)) != 0 {
+                px[(y0 + y) * w + x0 + x] = true;
             }
-            if let Some((c, r)) = s.ring {
-                let dd = ((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt();
-                on |= (dd - r).abs() <= half;
-            }
-            if let Some((c, r)) = s.dot {
-                on |= ((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt() <= r;
-            }
-            px[y * w + x] = on;
         }
     }
     Art { w, h, px }
@@ -227,15 +190,51 @@ mod tests {
         );
         assert_eq!(
             Maneuver::from_aa("roundabout_enter_and_exit", Some("right"), Some(45)),
-            Maneuver::Roundabout(45)
+            Maneuver::Roundabout(Some(45))
         );
-        assert_eq!(Maneuver::from_aa("ferry", None, None), Maneuver::Unknown);
+        assert_eq!(Maneuver::from_aa("warp", None, None), Maneuver::Unknown);
+    }
+
+    #[test]
+    fn every_name_is_in_the_set() {
+        let all = [
+            Maneuver::Depart,
+            Maneuver::Slight(Side::Left),
+            Maneuver::Turn(Side::Right),
+            Maneuver::Sharp(Side::Left),
+            Maneuver::UTurn,
+            Maneuver::RampOn(Side::Left),
+            Maneuver::RampOff(Side::Right),
+            Maneuver::Fork(Side::Left),
+            Maneuver::Merge(None),
+            Maneuver::Merge(Some(Side::Right)),
+            Maneuver::RoundaboutEnter,
+            Maneuver::RoundaboutExit,
+            Maneuver::FerryBoat,
+            Maneuver::FerryTrain,
+            Maneuver::Destination(None),
+            Maneuver::Destination(Some(Side::Left)),
+        ];
+        for lht in [false, true] {
+            for m in all {
+                let n = m.icon_name(lht);
+                assert!(NAMES.contains(&n.as_str()), "{n}");
+            }
+            for a in (0..360).step_by(5) {
+                let n = Maneuver::Roundabout(Some(a)).icon_name(lht);
+                assert!(NAMES.contains(&n.as_str()), "{a}: {n}");
+            }
+        }
+        assert_eq!(
+            Maneuver::Roundabout(Some(90)).icon_name(false),
+            "ROUNDABOUT_RIGHT_COUNTERCLOCKWISE"
+        );
     }
 
     #[test]
     fn arrows_differ_and_have_ink() {
-        let a = draw(Maneuver::Turn(Side::Left), 64, 76);
-        let b = draw(Maneuver::Turn(Side::Right), 64, 76);
+        let a = draw(Maneuver::Turn(Side::Left), false, 80, 72, 6, 0);
+        let b = draw(Maneuver::Turn(Side::Right), false, 80, 72, 6, 0);
         assert_ne!(a, b);
         assert!(a.px.iter().filter(|p| **p).count() > 300);
     }
