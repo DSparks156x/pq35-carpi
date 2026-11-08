@@ -72,6 +72,16 @@ day_from = "07:00"
 # speed, rpm, coolant, outside temp, battery, fuel, odometer, dimmer.
 [dis]
 enabled = false
+# "always": our default page holds the centre whenever nothing else wants it.
+# "tab": idle as a tab in the cluster menu until it's picked there.
+claim = "always"
+default_page = "readings"   # or "accel"
+# Each takes the centre while it has content and gives it back after.
+auto_nav = true
+auto_phone = true
+auto_media = true
+media_layout = "stack"      # or "art"
+cover_flash_s = 4           # full cover on a new track once drawn; 0 = off
 
 # Phone portal: http://<pi>:5003/files. Uploads need the PIN once one is set
 # (set it through the settings API).

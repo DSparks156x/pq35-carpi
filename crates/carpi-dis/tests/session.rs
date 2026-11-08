@@ -75,10 +75,14 @@ fn values(v: f64) -> ReadingsInput {
 
 impl World {
     fn new(spec: ClusterSpec) -> Self {
+        Self::with(spec, DisConfig::default())
+    }
+
+    fn with(spec: ClusterSpec, cfg: DisConfig) -> Self {
         let t0 = Instant::now();
         let mut dis = Dis::new(DisConfig {
             readings: specs(),
-            ..DisConfig::default()
+            ..cfg
         });
         dis.set_user_page(t0, Some(ScreenId::Readings));
         dis.set_readings(t0, values(90.0));
@@ -282,6 +286,7 @@ fn nav_with_refine_paces_strokes() {
             distance_m: Some(420.0),
             road: Some("Very long road name for the marquee".into()),
             lanes: Vec::new(),
+            ..Default::default()
         },
     );
     w.run(ms(100));
@@ -405,4 +410,59 @@ fn egg_plays_over_media_then_hands_back() {
     assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
     w.settle();
     w.check_screen();
+}
+
+fn song() -> carpi_dis::screens::media::MediaInput {
+    carpi_dis::screens::media::MediaInput {
+        title: Some("Song".into()),
+        duration_ms: Some(180_000),
+        playing: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn claim_always_shows_the_default_page_and_yields_to_media() {
+    let mut w = World::new(ClusterSpec::default());
+    w.hu.dis.set_user_page(w.now(), None);
+    w.run(Duration::from_secs(5));
+    assert_eq!(w.hu.dis.wanted(), Some(ScreenId::Readings));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Readings));
+    let now = w.now();
+    w.hu.dis.set_media(now, song());
+    w.run(Duration::from_secs(3));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Media));
+    // Media ends: back to the default page, not to the cluster.
+    let now = w.now();
+    w.hu.dis.set_media(now, Default::default());
+    w.run(Duration::from_secs(3));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Readings));
+    w.settle();
+    w.check_screen();
+}
+
+#[test]
+fn tab_mode_idles_until_the_cluster_menu_picks_us() {
+    let mut w = World::with(
+        ClusterSpec::default(),
+        DisConfig {
+            claim_always: false,
+            auto_media: false,
+            ..DisConfig::default()
+        },
+    );
+    w.hu.dis.set_user_page(w.now(), None);
+    let now = w.now();
+    w.hu.dis.set_media(now, song());
+    w.run(Duration::from_secs(5));
+    // auto_media off and no page: we hold nothing.
+    assert_eq!(w.hu.dis.wanted(), None);
+    assert!(!w.cl.owner);
+    // The driver picks our tab in the cluster menu (2E while we're idle).
+    let now = w.now();
+    w.cl.reinit(now);
+    w.run(Duration::from_secs(3));
+    assert_eq!(w.hu.dis.user_page(), Some(ScreenId::Readings));
+    assert_eq!(w.hu.dis.shown(), Some(ScreenId::Readings));
+    assert!(w.cl.owner);
 }

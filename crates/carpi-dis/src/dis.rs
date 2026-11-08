@@ -48,6 +48,16 @@ pub struct DisConfig {
     /// `None` = off.
     pub cover_flash: Option<Duration>,
     pub accel: AccelConfig,
+    /// `true`: our default page holds the centre whenever nothing else wants
+    /// it. `false`: we idle as a tab in the cluster's menu until the driver
+    /// picks it there (or with the wheel keys).
+    pub claim_always: bool,
+    /// The page "always" shows, and the cluster menu tab opens to.
+    pub default_page: ScreenId,
+    /// Each takes the centre while it has content and gives it back after.
+    pub auto_nav: bool,
+    pub auto_call: bool,
+    pub auto_media: bool,
 }
 
 /// A flash never holds the centre longer than this, drawn or not.
@@ -71,6 +81,11 @@ impl Default for DisConfig {
             media_layout: MediaLayout::default(),
             cover_flash: Some(Duration::from_secs(4)),
             accel: AccelConfig::default(),
+            claim_always: true,
+            default_page: ScreenId::Readings,
+            auto_nav: true,
+            auto_call: true,
+            auto_media: true,
         }
     }
 }
@@ -94,6 +109,11 @@ pub struct Dis {
     reenter: bool,
     /// What the arbiter last picked for the centre.
     want: Option<ScreenId>,
+    claim_always: bool,
+    default_page: ScreenId,
+    auto: (bool, bool, bool),
+    /// The cluster menu picked our tab; applied on the next tick.
+    tab_picked: bool,
     /// Bench probes: hold the centre, draw nothing; the probe sends raw frames.
     probe: bool,
     belief: Option<Fb>,
@@ -123,6 +143,10 @@ impl Dis {
             shown: None,
             reenter: false,
             want: None,
+            claim_always: cfg.claim_always,
+            default_page: cfg.default_page,
+            auto: (cfg.auto_nav, cfg.auto_call, cfg.auto_media),
+            tab_picked: false,
             probe: false,
             belief: None,
             last_error: None,
@@ -205,7 +229,9 @@ impl Dis {
     }
 
     pub fn set_nav(&mut self, now: Instant, n: NavInput) {
-        self.arbiter.nav(now, n.maneuver.as_deref(), n.distance_m);
+        if self.auto.0 {
+            self.arbiter.nav(now, n.maneuver.as_deref(), n.distance_m);
+        }
         self.nav.set(now, n);
         self.step(now);
     }
@@ -214,7 +240,7 @@ impl Dis {
     /// candidate for the centre (below nav, calls and user pages).
     pub fn set_media(&mut self, now: Instant, m: MediaInput) {
         let on = m.title.is_some() || m.duration_ms.is_some_and(|d| d > 0);
-        self.arbiter.set(Class::Media, on);
+        self.arbiter.set(Class::Media, on && self.auto.2);
         let new_cover = m.cover.as_ref().map(|(id, _)| *id);
         if new_cover.is_some() && new_cover != self.cover.id() {
             // Flash only if media has the centre right now (not on a cold start
@@ -267,7 +293,7 @@ impl Dis {
 
     /// Call state. Any call outranks media and user pages (not nav maneuvers).
     pub fn set_call(&mut self, now: Instant, c: CallInput) {
-        self.arbiter.set(Class::Call, c.state.is_some());
+        self.arbiter.set(Class::Call, c.state.is_some() && self.auto.1);
         self.call.set(now, c);
         self.step(now);
     }
@@ -294,7 +320,21 @@ impl Dis {
 
     pub fn tick(&mut self, now: Instant) {
         self.session.tick(now);
+        if std::mem::take(&mut self.tab_picked) && self.user_page.is_none() {
+            let page = self.default_page;
+            self.set_user_page(now, Some(page));
+            return;
+        }
         self.step(now);
+    }
+
+    /// The page shown when nothing is picked and we claim always.
+    pub fn default_page(&self) -> ScreenId {
+        self.default_page
+    }
+
+    pub fn user_page(&self) -> Option<ScreenId> {
+        self.user_page
     }
 
     pub fn poll_transmit(&mut self) -> Option<Frame> {
@@ -302,7 +342,12 @@ impl Dis {
     }
 
     pub fn poll_event(&mut self) -> Option<SessionEvent> {
-        self.session.poll_event()
+        let e = self.session.poll_event();
+        if e == Some(SessionEvent::ClusterSelected) {
+            // The driver picked our tab in the cluster menu: open our page.
+            self.tab_picked = true;
+        }
+        e
     }
 
     pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
@@ -350,6 +395,8 @@ impl Dis {
         match c {
             Class::NavManeuver => Some(ScreenId::Nav),
             Class::UserPage => self.user_page,
+            // Nothing else wants the centre: our default page, if we claim always.
+            Class::Idle if self.claim_always => Some(self.default_page),
             Class::Media if self.egg.is_some() => Some(ScreenId::Egg),
             Class::Media if self.flash.is_some() => Some(ScreenId::Cover),
             Class::Media => Some(ScreenId::Media),

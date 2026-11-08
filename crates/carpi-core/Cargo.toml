@@ -24,3 +24,6 @@ tracing.workspace = true
 carpi-dis.workspace = true
 carpi-diag.workspace = true
 carpi-kwp.workspace = true
+
+[dev-dependencies]
+carpi-sim.workspace = true

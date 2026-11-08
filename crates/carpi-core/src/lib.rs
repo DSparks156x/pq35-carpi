@@ -10,6 +10,8 @@ pub mod display;
 
 pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
 pub use control::{AmbientSource, CurveMode, DarkSetup, DarkSource, LightSetup, Location, Output};
+pub use carpi_dis::ScreenId as DisScreen;
+pub use carpi_dis::screens::media::MediaLayout as DisMediaLayout;
 pub use display::{DisSetup, Reading};
 
 use carpi_can::RxFrame;
@@ -158,6 +160,8 @@ impl Car {
     pub fn service(&mut self, now: Instant) {
         let view = self.view(now);
         let ican = self.ican_idx();
+        let focus = self.controls.focus == carpi_input::Focus::Dis;
+        self.display.set_focus(now, focus);
         let gate = ican.map(|i| (i, &mut self.controls.gates[i]));
         self.display
             .service(now, &mut self.store, view, gate, &mut self.outputs);

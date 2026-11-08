@@ -13,6 +13,8 @@
 //! - Session state and errors land in the store as `dis.*` for the pages.
 
 use carpi_can::Frame;
+use carpi_dis::screens::call::CallInput;
+use carpi_dis::screens::media::{MediaInput, MediaLayout};
 use carpi_dis::screens::nav::{NavInput, format_distance};
 use carpi_dis::screens::readings::{ReadingSpec, ReadingsInput};
 use carpi_dis::session::{Phase, Window};
@@ -54,6 +56,18 @@ pub struct DisSetup {
     pub enabled: bool,
     /// Up to 8; left column top to bottom, then right.
     pub readings: Vec<Reading>,
+    /// Our default page holds the centre whenever nothing else wants it;
+    /// off: we idle as a tab in the cluster menu until it's picked.
+    pub claim_always: bool,
+    /// What "always" shows and the menu tab opens to: readings or accel.
+    pub default_page: ScreenId,
+    /// Each takes the centre while it has content, and gives it back.
+    pub auto_nav: bool,
+    pub auto_phone: bool,
+    pub auto_media: bool,
+    pub media_layout: MediaLayout,
+    /// Hold for the full cover on a new track, after it's drawn. `None` = off.
+    pub cover_flash: Option<Duration>,
 }
 
 impl Default for DisSetup {
@@ -61,6 +75,13 @@ impl Default for DisSetup {
         DisSetup {
             enabled: false,
             readings: default_readings(),
+            claim_always: true,
+            default_page: ScreenId::Readings,
+            auto_nav: true,
+            auto_phone: true,
+            auto_media: true,
+            media_layout: MediaLayout::Stack,
+            cover_flash: Some(Duration::from_secs(4)),
         }
     }
 }
@@ -80,8 +101,9 @@ pub fn default_readings() -> Vec<Reading> {
     ]
 }
 
-/// Pages the DIS keys step through.
-const PAGES: [ScreenId; 2] = [ScreenId::Readings, ScreenId::Nav];
+/// Pages the DIS keys step through; always available (Drew). Nav, phone and
+/// media come and go with their content instead.
+const PAGES: [ScreenId; 2] = [ScreenId::Readings, ScreenId::Accel];
 
 /// `dis.*` values are rewritten every tick; let them lapse if ticks stop.
 const DERIVED: Duration = Duration::from_secs(1);
@@ -98,6 +120,9 @@ pub(crate) struct Display {
     readings: Option<ReadingsInput>,
     top_text: String,
     last_error: Option<String>,
+    focus: bool,
+    media: Option<MediaInput>,
+    call: Option<CallInput>,
     /// Logged state, so the journal shows each change once (car test
     /// 2026-11-08: the DIS did nothing and logged nothing).
     log: LogState,
@@ -126,8 +151,49 @@ fn new_dis(setup: &DisSetup) -> Dis {
                 decimals: r.decimals,
             })
             .collect(),
+        claim_always: setup.claim_always,
+        default_page: setup.default_page,
+        auto_nav: setup.auto_nav,
+        auto_call: setup.auto_phone,
+        auto_media: setup.auto_media,
+        media_layout: setup.media_layout,
+        cover_flash: setup.cover_flash,
         ..Default::default()
     })
+}
+
+fn media_input(store: &Store, now: Instant) -> MediaInput {
+    if store.get_bool("media.active", now) != Some(true) {
+        return MediaInput::default();
+    }
+    let ms = |k| {
+        store
+            .get_num(k, now)
+            .filter(|v| *v >= 0.0)
+            .map(|v| v as u64)
+    };
+    MediaInput {
+        title: text(store, "media.title", now),
+        artist: text(store, "media.artist", now),
+        album: text(store, "media.album", now),
+        playing: store.get_bool("media.playing", now) == Some(true),
+        position_ms: ms("media.position_ms"),
+        duration_ms: ms("media.duration_ms"),
+        // No album art reaches carpid yet (LIVI doesn't forward it).
+        art: None,
+        cover: None,
+    }
+}
+
+fn call_input(store: &Store, now: Instant) -> CallInput {
+    let pct = |k| store.get_num(k, now).map(|v| v.clamp(0.0, 100.0) as u8);
+    CallInput {
+        state: text(store, "call.state", now),
+        name: text(store, "call.name", now),
+        number: text(store, "call.number", now),
+        signal_pct: pct("phone.signal_pct"),
+        battery_pct: pct("phone.battery_pct"),
+    }
 }
 
 fn text(store: &Store, name: &str, now: Instant) -> Option<String> {
@@ -217,13 +283,21 @@ impl Display {
             readings: None,
             top_text: String::new(),
             last_error: None,
+            focus: false,
+            media: None,
+            call: None,
             log: LogState::default(),
         }
     }
 
-    /// New settings. A change in readings restarts the driver.
+    /// New settings. Any change to what the driver shows (everything but
+    /// `enabled`) rebuilds it; `enabled` alone just starts or stops it.
     pub fn configure(&mut self, setup: DisSetup, now: Instant) {
-        if setup.readings != self.setup.readings {
+        let shape = |d: &DisSetup| DisSetup {
+            enabled: false,
+            ..d.clone()
+        };
+        if shape(&setup) != shape(&self.setup) {
             if self.running {
                 self.dis.stop(now);
             }
@@ -233,6 +307,8 @@ impl Display {
             self.running = false;
             self.nav = None;
             self.readings = None;
+            self.media = None;
+            self.call = None;
         }
         self.setup = setup;
     }
@@ -247,16 +323,61 @@ impl Display {
         }
     }
 
+    /// Wheel keys while the DIS has focus. Up/Down walk one list: the
+    /// readings subpages, then accel, then round again. The first key picks
+    /// the page on screen (or the default). Back unpicks it.
     pub fn key(&mut self, now: Instant, k: DisKey) {
-        match k {
-            DisKey::Up if self.user_page => self.page = (self.page + PAGES.len() - 1) % PAGES.len(),
-            DisKey::Down if self.user_page => self.page = (self.page + 1) % PAGES.len(),
-            DisKey::Up | DisKey::Down | DisKey::Select => self.user_page = true,
-            DisKey::Back => self.user_page = false,
+        if !self.user_page {
+            if k == DisKey::Back {
+                return;
+            }
+            let on = self.dis.wanted().filter(|id| PAGES.contains(id));
+            let page = on.unwrap_or(self.setup.default_page);
+            self.page = PAGES.iter().position(|p| *p == page).unwrap_or(0);
+            self.user_page = true;
+        } else {
+            match k {
+                DisKey::Up | DisKey::Down => {
+                    let down = k == DisKey::Down;
+                    let (i, n) = (
+                        self.dis.readings().page_index(),
+                        self.dis.readings().page_count(),
+                    );
+                    match PAGES[self.page] {
+                        ScreenId::Readings if down && i + 1 < n => {
+                            self.dis.step_readings(now, 1);
+                        }
+                        ScreenId::Readings if !down && i > 0 => {
+                            self.dis.step_readings(now, -1);
+                        }
+                        ScreenId::Readings => {
+                            self.page = PAGES
+                                .iter()
+                                .position(|p| *p == ScreenId::Accel)
+                                .unwrap_or(0);
+                        }
+                        _ => {
+                            // Into readings at its first (down) or last (up) subpage.
+                            let target = if down { 0 } else { n.saturating_sub(1) };
+                            self.dis.step_readings(now, target as i32 - i as i32);
+                            self.page = 0;
+                        }
+                    }
+                }
+                DisKey::Select => {}
+                DisKey::Back => self.user_page = false,
+            }
         }
-        if self.running {
-            self.dis
-                .set_user_page(now, self.user_page.then_some(PAGES[self.page]));
+        let page = self.user_page.then_some(PAGES[self.page]);
+        tracing::info!("dis: key {k:?} -> page {page:?}");
+        self.dis.set_user_page(now, page);
+    }
+
+    /// DIS focus on or off (the wheel drives the DIS).
+    pub fn set_focus(&mut self, now: Instant, on: bool) {
+        if on != self.focus {
+            self.focus = on;
+            self.dis.set_focus(now, on);
         }
     }
 
@@ -324,6 +445,19 @@ impl Display {
             if self.readings.as_ref() != Some(&r) {
                 self.dis.set_readings(now, r.clone());
                 self.readings = Some(r);
+            }
+            let m = media_input(store, now);
+            if self.media.as_ref() != Some(&m) {
+                self.dis.set_media(now, m.clone());
+                self.media = Some(m);
+            }
+            let c = call_input(store, now);
+            if self.call.as_ref() != Some(&c) {
+                self.dis.set_call(now, c.clone());
+                self.call = Some(c);
+            }
+            if let Some(v) = store.get_num("vehicle.speed_kmh", now) {
+                self.dis.set_speed(now, v);
             }
             self.dis.tick(now);
             while let Some(e) = self.dis.poll_event() {
@@ -410,7 +544,11 @@ impl Display {
                 Some(id) => tracing::info!("dis: wants the centre for {id:?}"),
                 None => tracing::info!(
                     "dis: nothing to show (no nav guidance, no page picked{})",
-                    if self.user_page { "" } else { "; wheel keys with DIS focus pick one" }
+                    if self.user_page {
+                        ""
+                    } else {
+                        "; wheel keys with DIS focus pick one"
+                    }
                 ),
             }
             self.log.want = Some(shown);

@@ -49,6 +49,13 @@ use std::path::{Path, PathBuf};
 ///
 /// [dis]
 /// enabled = false      # off: nothing is sent to the cluster
+/// claim = "always"     # or "tab": idle as a cluster-menu tab until picked
+/// default_page = "readings"   # or "accel"
+/// auto_nav = true      # nav guidance, calls, media each take the centre
+/// auto_phone = true    #   while they have content, and give it back
+/// auto_media = true
+/// media_layout = "stack"      # or "art" (cover beside the text)
+/// cover_flash_s = 4    # full cover on a new track, after it's drawn; 0 = off
 /// # readings = [ { key = "engine.rpm", label = "RPM", decimals = 0, scale = 1.0 }, ... ]
 ///
 /// [portal]             # phone portal; absent = off. Keys: carpi_portal::PortalConfig
@@ -181,13 +188,58 @@ fn check_curve(name: &str, pts: &[(f64, u8)], max: usize) -> Result<(), String> 
 }
 
 /// `[dis]`: the cluster display.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
 pub struct Dis {
-    #[serde(default)]
     pub enabled: bool,
     /// Absent: the default 2x4 set of ICAN values.
     pub readings: Option<Vec<ReadingCfg>>,
+    pub claim: Claim,
+    pub default_page: DisPage,
+    pub auto_nav: bool,
+    pub auto_phone: bool,
+    pub auto_media: bool,
+    pub media_layout: DisMediaLayout,
+    pub cover_flash_s: f64,
+}
+
+impl Default for Dis {
+    fn default() -> Self {
+        Dis {
+            enabled: false,
+            readings: None,
+            claim: Claim::Always,
+            default_page: DisPage::Readings,
+            auto_nav: true,
+            auto_phone: true,
+            auto_media: true,
+            media_layout: DisMediaLayout::Stack,
+            cover_flash_s: 4.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Claim {
+    /// Our default page holds the centre whenever nothing else wants it.
+    Always,
+    /// Idle as a cluster-menu tab until the driver picks it.
+    Tab,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisPage {
+    Readings,
+    Accel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisMediaLayout {
+    Stack,
+    Art,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -519,6 +571,20 @@ impl Config {
             dis: DisSetup {
                 enabled: self.dis.enabled,
                 readings: self.readings(),
+                claim_always: self.dis.claim == Claim::Always,
+                default_page: match self.dis.default_page {
+                    DisPage::Readings => carpi_core::DisScreen::Readings,
+                    DisPage::Accel => carpi_core::DisScreen::Accel,
+                },
+                auto_nav: self.dis.auto_nav,
+                auto_phone: self.dis.auto_phone,
+                auto_media: self.dis.auto_media,
+                media_layout: match self.dis.media_layout {
+                    DisMediaLayout::Stack => carpi_core::DisMediaLayout::Stack,
+                    DisMediaLayout::Art => carpi_core::DisMediaLayout::Art,
+                },
+                cover_flash: (self.dis.cover_flash_s > 0.0)
+                    .then(|| std::time::Duration::from_secs_f64(self.dis.cover_flash_s)),
             },
             light: carpi_core::LightSetup {
                 auto_brightness: l.auto_brightness,
