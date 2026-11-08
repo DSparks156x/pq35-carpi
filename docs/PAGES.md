@@ -104,22 +104,95 @@ A rewrite of the page. Built for a phone first, served by the existing axum serv
   - Later: flashing jobs, which log into a # like everything else.
 - Bug report stays: today's tar.gz, rebuilt as "zip of the latest capture plus status".
 
-## 5a. Settings redesign (Drew, 2026-11-08)
+## 5a. Car Integration settings (Drew, 2026-11-08)
 
-What's there grew one feature at a time and is clunky. Redo it after the next car test, plan first.
+All our settings live in one **Car Integration** tab at the bottom of LIVI's own Settings. Our separate Settings page and the Car tab go away.
 
-- **Where**: a "Car Integration" tab at the bottom of LIVI's own settings, not a bolt-on settings page of ours.
-- **DIS readings**: its own section, as rich as the old one.
-  - Several named pages.
-  - The full value list, more than today's catalog has. Check the old `dis_client` readings app for both.
-- **DIS behaviour, in plain words**:
-  - Claim on nav, claim on phone, claim on media.
-  - Release on no nav, release on no phone, release on no media.
-  - Auto claim.
-  - Nav style: stock vs fancy.
-  - Cover art flash: seconds, with 0 = off. Today it can't actually be turned off.
-- **Names**: say what the setting does. No internal terms.
-- **UI**: fast with the knob and D-pad. Levels are fine as long as they make sense: organise by what you're doing, values changed in place, no dead-end screens, every row does something on a press.
+- **Look**: native LIVI rows, built from our Rust code through small hooks in `livi-ui` (see the LIVI settings study). LIVI lists have no section captions, so grouping is by sub-page.
+- **Organisation**: by what you're doing, then by source. Levels are fine when they make sense.
+- **Rows**:
+  - Every row does something on a press, and choices and steps also change with the D-pad in place.
+  - Names say what happens.
+  - Live state sits next to the setting it explains.
+
+### Tree
+
+```
+Car Integration
+├─ Status                       live: bus, ignition, RNS-E source, phone, cluster, carpid version
+│  ├─ All values ▸              every store value with its age
+│  └─ Buses ▸                   ring members, frames, gate refusals
+├─ Cluster display
+│  ├─ Show on the cluster       on/off                        dis.enabled
+│  ├─ Our screen shows          Always / From the cluster menu  dis.claim
+│  ├─ Start page                Readings / Accel / Media      dis.default_page
+│  ├─ Readings pages ▸          named pages: add, rename (portal for text), reorder, remove
+│  │    └─ <page> ▸             Name, Cells ▸ (slot editor + picker), per cell: decimals, unit, icon
+│  ├─ Navigation ▸
+│  │    Take over when a route starts   dis.claim_nav
+│  │    Give back when it ends          dis.release_nav
+│  │    Look                            Ours / Stock            dis.nav_style
+│  │    Distance to the turn            dis.nav_distance
+│  │    Trip info                       dis.nav_pocket
+│  │      ETA / Time left / Distance left  dis.nav_eta, nav_time_left, nav_dest_distance
+│  │    Lanes                           Off / Instead of the road / Alternate with the road  dis.nav_lanes
+│  │    Units                           As the phone / Metric / Imperial  dis.units
+│  │    ETA clock                       As the phone / 12 h / 24 h        dis.clock
+│  ├─ Calls ▸                   Take over on a call / Give back after it
+│  └─ Media ▸                   Take over on a new track / Give back when it stops /
+│                               Layout (Text / Cover + text) / Cover flash (Off, 2–15 s)
+├─ Screen & lighting
+│  ├─ Auto brightness, Brightness now, Light sensor, Curve, Learned points, Scroll trim
+│  ├─ Brightness curve ▸        the plot and point editor
+│  └─ Night mode ▸              Decided by, Night threshold, Night from / Day from, Location
+├─ Controls
+│  ├─ Steering wheel ▸          per key: Short / Long → action
+│  ├─ Faceplate ▸               per key: Short / Long / Held 10 s → action
+│  ├─ Long press                ms                            input.long_ms (panel)
+│  ├─ Hold for system actions   s                             input.extended_s
+│  └─ Reset to defaults
+├─ Logging & captures
+│  ├─ Logging ▸                 the logging page (profiles, start/stop)
+│  ├─ Capture now
+│  ├─ Capture length            1–30 min                      logs.capture_minutes
+│  ├─ Space for logs            5–75 % of the disk            logs.max_pct
+│  └─ On your phone             http://10.10.0.1:5003 (info)
+├─ Power & clock
+│  ├─ Shut down when the car is off      power.shutdown
+│  ├─ Wait after the car goes quiet      power.silent_s (15–600 s)
+│  ├─ Stay on while the radio plays      power.radio_hold_min (0–120, 0 = off)
+│  ├─ Set the clock from the car         clock.set_from_car
+│  └─ Time zone                          clock.timezone (picker)
+├─ A/V over SD
+│  ├─ Status                    Teensy, link, stream (info)
+│  ├─ Audio gain                dB                            avsd GAIN
+│  ├─ Picture ▸                 LINKCAP, MAXVID, KEYINT, DITHER, palette snap ... with ranges
+│  └─ Restart the stream
+├─ Phone portal
+│  ├─ Address                   info
+│  ├─ PIN                       set / clear
+│  └─ Downloads need the PIN    portal.protect_downloads
+├─ Updates
+│  ├─ This version              info
+│  ├─ Channel                   Stable / Beta                 update.channel
+│  └─ Check and install         confirm first: drops the hotspot while it downloads
+└─ Advanced
+   ├─ Send to the car           tx.enabled (off = log only)
+   └─ Keys to LIVI              input.uinput
+```
+
+### API additions (carpi-proto `Settings` / `SettingsPatch`)
+
+- `logs { capture_minutes, max_pct }`
+- `clock { set_from_car, timezone }`
+- `power { shutdown, silent_s, radio_hold_min }`, which replaces the flat `power_shutdown`
+- `input { uinput, long_ms, extended_s }`
+- `portal { protect_downloads, address }`
+- `update { channel, version }`
+- `avsd { values, ranges }`, read from and written to `~/avsd/avsd.env` with a chain restart
+- the `dis` fields already landed, including `pages`
+
+All of these apply live, or are listed in `restart_needed`.
 
 ## 6. Order
 
