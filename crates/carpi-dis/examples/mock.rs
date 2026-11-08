@@ -2,7 +2,7 @@
 //! message they'd send to the framebuffer model (real glyphs from the font
 //! capture, native strokes, clips), and write what the centre would show.
 //!
-//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes]`
+//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes|nav-stock]`
 //!
 //! Each sheet is a grid of labelled tiles, 4x, lit pixels white on black.
 //! Optional "top lines" above a tile show the two 8-cell radio lines.
@@ -218,6 +218,49 @@ fn nav_lanes(out: &Path) {
     sheet(&tiles, 4, &out.join("nav_lanes.png"));
 }
 
+/// Stock style next to fancy, same maneuvers.
+fn nav_stock(out: &Path) {
+    use carpi_dis::screens::nav::NavStyle;
+    let m = |man: &str, side: Option<&str>, angle: Option<i32>, d: f64, road: &str| NavInput {
+        maneuver: Some(man.into()),
+        side: side.map(Into::into),
+        roundabout_angle: angle,
+        distance_m: Some(d),
+        road: Some(road.into()),
+        eta: Some("2:32 PM".into()),
+        time_to_destination_s: Some(900.0),
+        destination_distance_m: Some(9_000.0),
+        distance_unit: Some("mi".into()),
+        ..Default::default()
+    };
+    let cases = [
+        ("turn right", m("turn", Some("right"), None, 250.0, "Ring Road")),
+        ("slight left", m("slight_turn", Some("left"), None, 600.0, "A38 Bristol Road")),
+        ("roundabout, 3rd exit", m("roundabout_enter_and_exit", Some("right"), Some(270), 400.0, "Ring Road")),
+        ("u-turn", m("u_turn", Some("left"), None, 150.0, "Back Lane")),
+        ("fork right", m("fork", Some("right"), None, 900.0, "M5")),
+        ("straight", m("straight", None, None, 3000.0, "M5")),
+    ];
+    let top = Some(("One More".to_string(), "4.5\u{B0}C".to_string()));
+    let mut tiles = Vec::new();
+    for (name, inp) in cases {
+        for (style, sname) in [(NavStyle::Stock, "stock"), (NavStyle::Fancy, "fancy")] {
+            let mut s = NavScreen::new(NavConfig {
+                style,
+                ..NavConfig::default()
+            });
+            let t0 = Instant::now();
+            s.set(t0, inp.clone());
+            tiles.push(Tile {
+                label: format!("{sname}: {name}"),
+                fb: render_at(&mut s, t0, &[]),
+                top: top.clone(),
+            });
+        }
+    }
+    sheet(&tiles, 4, &out.join("nav_stock.png"));
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = PathBuf::from(args.first().expect("usage: mock <out dir> [sheet]"));
@@ -225,6 +268,7 @@ fn main() {
     let which = args.get(1).map_or("nav-lanes", String::as_str);
     match which {
         "nav-lanes" => nav_lanes(&out),
+        "nav-stock" => nav_stock(&out),
         other => panic!("unknown sheet {other}"),
     }
 }

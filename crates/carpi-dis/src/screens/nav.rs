@@ -21,7 +21,7 @@ use crate::helpers::{CentredField, Ctx, GlyphCells, QuickThenRefineIcon, ScrollT
 use crate::icons::{self, Art, Maneuver};
 use crate::lanes::{self, Lane};
 use crate::pack::{Group, PackError, Packer};
-use crate::proto::Rect;
+use crate::proto::{FULL, Rect};
 use std::time::{Duration, Instant};
 
 pub const ICON: Rect = Rect::new(0, 1, 40, 36);
@@ -105,10 +105,10 @@ pub struct NavConfig {
     pub style: NavStyle,
 }
 
-/// `Fancy`: the Maps icons, lanes and pocket. `Stock`: a lookalike of the
-/// RNS-E's own nav screen, ROM graphics-glyph arrows (`dc/stock_mono_catalog.json`).
-/// Stock needs the maneuver -> ROM object mapping first; until then it
-/// renders like Fancy.
+/// `Fancy`: the Maps icons, distance, lanes and pocket. `Stock`: a lookalike
+/// of the RNS-E's own nav screen: the ROM graphics-glyph arrow in the stock
+/// 54x40 icon area, the stock bar, the road at the stock row (y=41); no
+/// distance column (stock arrows reach across where it would be).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NavStyle {
     #[default]
@@ -262,6 +262,65 @@ pub fn pocket_pages(i: &NavInput, cfg: &NavConfig) -> Vec<Vec<String>> {
     out
 }
 
+/// Stock icon area, cleared before the glyphs (the RNS-E's `52 05 02 00 1B 36 28`).
+pub const STOCK_ICON: Rect = Rect::new(0, 0, 54, 40);
+/// Stock road row.
+pub const STOCK_ROAD_Y: u8 = 41;
+
+/// The stock ROM object for a maneuver: `(type, direction)`, see `stock_nav`.
+pub fn stock_object(m: Maneuver, left_hand_traffic: bool) -> (u8, u8) {
+    use crate::icons::Side::{Left, Right};
+    // Direction byte from a heading in 45-degree steps, + = right.
+    let dir = |deg: i32| ((0x100 - ((deg.rem_euclid(360) + 22) / 45 % 8) * 0x20) & 0xFF) as u8;
+    match m {
+        Maneuver::Slight(Right) => (0x0D, 0xE0),
+        Maneuver::Slight(Left) => (0x0D, 0x20),
+        Maneuver::Turn(Right) => (0x0D, 0xC0),
+        Maneuver::Turn(Left) => (0x0D, 0x40),
+        Maneuver::Sharp(Right) => (0x0D, 0xA0),
+        Maneuver::Sharp(Left) => (0x0D, 0x60),
+        Maneuver::UTurn if left_hand_traffic => (0x19, 0xC0),
+        Maneuver::UTurn => (0x19, 0x40),
+        Maneuver::Fork(Left) => (0x13, 0x40),
+        Maneuver::Fork(Right) => (0x13, 0xC0),
+        Maneuver::RampOn(Left) | Maneuver::RampOff(Left) => (0x14, 0x20),
+        Maneuver::RampOn(Right) | Maneuver::RampOff(Right) => (0x14, 0xE0),
+        Maneuver::Roundabout(Some(a)) => {
+            // Exit heading relative to the entry: AA's angle is how far round.
+            let rel = if left_hand_traffic { a - 180 } else { 180 - a };
+            (if left_hand_traffic { 0x16 } else { 0x15 }, dir(rel))
+        }
+        Maneuver::RoundaboutEnter | Maneuver::RoundaboutExit | Maneuver::Roundabout(None) => {
+            (if left_hand_traffic { 0x16 } else { 0x15 }, 0x00)
+        }
+        _ => (0x03, 0x00),
+    }
+}
+
+/// The ROM glyph records for a stock object, as text ops.
+fn stock_records((t, d): (u8, u8)) -> Vec<Op> {
+    let recs = crate::stock_nav::OBJECTS
+        .iter()
+        .find(|(ot, od, _)| *ot == t && *od == d)
+        .or_else(|| crate::stock_nav::OBJECTS.iter().find(|(ot, _, _)| *ot == 0x03))
+        .map_or(&[][..], |(_, _, r)| *r);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < recs.len() {
+        let n = usize::from(recs[i + 1]) + 2;
+        let r = &recs[i..i + n];
+        out.push(Op::Text {
+            clip: FULL,
+            x: r[3],
+            y: r[4],
+            flags: r[2],
+            bytes: r[5..].to_vec(),
+        });
+        i += n;
+    }
+    out
+}
+
 /// The icon as it fills [`ICON`].
 pub fn icon_art(m: Maneuver, left_hand_traffic: bool) -> Art {
     let (w, h) = (usize::from(ICON.w) * 2, usize::from(ICON.h) * 2);
@@ -319,7 +378,9 @@ impl NavScreen {
             dist: CentredField::new(DIST_Y, 40, 56, Font::Prop),
             unit: CentredField::new(UNIT_Y, 40, 56, Font::Prop),
             road: {
-                let mut r = ScrollText::new(39, 1, 63, Font::Prop);
+                // Stock: the RNS-E's road row (y=0x29).
+                let y = if cfg.style == NavStyle::Stock { STOCK_ROAD_Y } else { 39 };
+                let mut r = ScrollText::new(y, 1, 63, Font::Prop);
                 r.centred = true;
                 r
             },
@@ -390,6 +451,30 @@ impl NavScreen {
 
     fn icon_groups(&mut self, cx: &Ctx) -> Vec<Group> {
         let m = self.input.maneuver();
+        if self.cfg.style == NavStyle::Stock {
+            if self.icon_shown == Some(m) {
+                return Vec::new();
+            }
+            self.icon_shown = Some(m);
+            // The RNS-E's own sequence: clear the icon area, then the ROM
+            // glyph records. Up to 140 B, more than one message: the clear
+            // and the first records go together, the rest follow at once
+            // (the RNS-E splits them too).
+            let mut groups = Vec::new();
+            let mut ops = vec![Op::Clear(STOCK_ICON)];
+            let mut bytes = 7;
+            for op in stock_records(stock_object(m, self.cfg.left_hand_traffic)) {
+                let n = op.encode().len();
+                if bytes + n > 90 {
+                    groups.push(Group::new("stock-icon", std::mem::take(&mut ops)));
+                    bytes = 0;
+                }
+                bytes += n;
+                ops.push(op);
+            }
+            groups.push(Group::new("stock-icon", ops));
+            return groups;
+        }
         self.icon_shown = Some(m);
         let art = icon_art(m, self.cfg.left_hand_traffic);
         self.icon.set(cx, m, &art)
@@ -465,6 +550,16 @@ impl NavScreen {
 
 impl Screen for NavScreen {
     fn enter(&mut self, now: Instant, cx: &Ctx) -> Vec<Group> {
+        self.icon_shown = None;
+        if self.cfg.style == NavStyle::Stock {
+            self.road.reset();
+            self.bar.reset();
+            self.wake = None;
+            let mut g = self.icon_groups(cx);
+            g.extend(self.bar_groups());
+            g.extend(self.road.poll(now, cx, "road"));
+            return g;
+        }
         self.icon.reset();
         self.lane_strip.reset();
         self.strip_shown = false;
@@ -484,6 +579,12 @@ impl Screen for NavScreen {
 
     fn update(&mut self, now: Instant, cx: &Ctx) -> Vec<Group> {
         self.wake = None;
+        if self.cfg.style == NavStyle::Stock {
+            let mut g = self.bar_groups();
+            g.extend(self.road.poll(now, cx, "road"));
+            g.extend(self.icon_groups(cx));
+            return g;
+        }
         let mut g = self.distance_groups(cx);
         g.extend(self.bar_groups());
         g.extend(self.bottom_groups(now, cx));

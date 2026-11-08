@@ -39,6 +39,7 @@ pub mod reading_art;
 pub mod pack;
 pub mod proto;
 pub mod screens;
+pub mod stock_nav;
 pub mod session;
 pub mod top;
 
