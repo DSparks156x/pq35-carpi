@@ -319,6 +319,10 @@ pub fn nav_at(t: Duration) -> NavInput {
         distance_m: Some(d.max(0.0)),
         road: Some(road.into()),
         lanes: bench_lanes(m, side),
+        // Trip info for the pocket: 12 km / 15 min out, ETA 14:32.
+        eta: Some("14:32".into()),
+        time_to_destination_s: Some((900.0 - s).max(0.0)),
+        destination_distance_m: Some((12_400.0 - s * SPEED_MS).max(0.0)),
         ..Default::default()
     }
 }
@@ -490,6 +494,8 @@ pub struct Bench {
     next_speed: Instant,
     speed_n: u32,
     egg_track: Option<u64>,
+    /// Top line 1 with nav: a media title, as a marquee (line 2 left alone).
+    top: carpi_dis::top::TopLines,
     probe: Option<Probe>,
 }
 
@@ -528,6 +534,7 @@ impl Bench {
             next_speed: now,
             speed_n: 1,
             egg_track: None,
+            top: carpi_dis::top::TopLines::new(),
             probe: (screens == Screens::Probe).then_some(Probe {
                 stage: ProbeStage::Blank,
                 at: now,
@@ -580,6 +587,13 @@ impl Bench {
             if now >= self.next_kl15 {
                 self.out.push_back(Frame::new(KL15_ID, &[0x07]).unwrap());
                 self.next_kl15 = now + KL15_EVERY;
+            }
+            if self.screens == Screens::Nav {
+                self.top.set_lines(now, "One More Time - Daft Punk", None);
+                self.top.tick(now);
+                while let Some(f) = self.top.poll_transmit() {
+                    self.out.push_back(f);
+                }
             }
             if now >= self.next_input {
                 self.inputs(now);
@@ -799,6 +813,7 @@ impl Bench {
         let mut d = [self.next_stats, self.end]
             .into_iter()
             .chain(self.dis.next_deadline(now))
+            .chain(self.top.next_deadline())
             .min()
             .unwrap();
         if !self.stopped {
@@ -872,8 +887,9 @@ mod tests {
         let c = nav_at(Duration::from_secs(20));
         assert_eq!(c.distance_m, Some(600.0));
         assert_eq!(c.road.as_deref(), Some("A38 Bristol Road"));
-        // Wraps after six legs.
-        assert_eq!(nav_at(Duration::from_secs(120)), a);
+        // Wraps after six legs (the trip info keeps counting down).
+        let w = nav_at(Duration::from_secs(120));
+        assert_eq!((&w.maneuver, w.distance_m, &w.road, &w.lanes), (&a.maneuver, a.distance_m, &a.road, &a.lanes));
     }
 
     #[test]
