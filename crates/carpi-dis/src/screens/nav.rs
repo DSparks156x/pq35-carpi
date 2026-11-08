@@ -607,7 +607,7 @@ impl NavScreen {
             self.strip_shown = true;
             let l = self.input.lanes.clone();
             let (w, h) = (usize::from(LANES.w) * 2, usize::from(LANES.h) * 2);
-            let art = lanes::strip(&l, w, h, LANE_PITCH);
+            let art = lanes::strip_in(&l, w, h, LANE_PITCH, self.cfg.style == NavStyle::Stock);
             // The strip's opaque base covers the whole road row.
             return self.lane_strip.set(cx, l, &art);
         }

@@ -240,6 +240,31 @@ fn nav_stock(out: &Path) {
         ("u-turn", m("u_turn", Some("left"), None, 150.0, "Back Lane")),
         ("fork right", m("fork", Some("right"), None, 900.0, "M5")),
         ("straight", m("straight", None, None, 3000.0, "M5")),
+        (
+            "turn right, lanes",
+            NavInput {
+                lanes: vec![
+                    lane(&[("normal_left", false)]),
+                    lane(&[("straight", false)]),
+                    lane(&[("straight", false), ("normal_right", true)]),
+                    lane(&[("normal_right", true)]),
+                ],
+                ..m("turn", Some("right"), None, 250.0, "Ring Road")
+            },
+        ),
+        (
+            "keep left, lanes",
+            NavInput {
+                lanes: vec![
+                    lane(&[("slight_left", true)]),
+                    lane(&[("straight", false), ("slight_left", true)]),
+                    lane(&[("straight", false)]),
+                    lane(&[("sharp_right", false)]),
+                    lane(&[("uturn_left", false)]),
+                ],
+                ..m("slight_turn", Some("left"), None, 300.0, "M5")
+            },
+        ),
     ];
     let top = Some(("One More".to_string(), "4.5\u{B0}C".to_string()));
     let mut tiles = Vec::new();

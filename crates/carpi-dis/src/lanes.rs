@@ -9,6 +9,7 @@
 
 use crate::icons::Art;
 use crate::lane_icons::{ICONS, SIZE};
+use crate::lane_icons_stock::ICONS as STOCK_ICONS;
 
 /// One arrow of a lane, as carpi-core publishes it (`nav.lanes`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -23,8 +24,9 @@ pub type Lane = Vec<LaneArrow>;
 pub const AW: usize = SIZE;
 pub const AH: usize = SIZE;
 
-/// The mask for an AA lane shape (a few spellings), if we have one.
-fn mask(shape: &str) -> Option<&'static [u32; SIZE]> {
+/// The mask for an AA lane shape (a few spellings), if we have one; `stock`
+/// picks the stock-style set (square stems, broad heads, like the ROM arrows).
+fn mask_in(shape: &str, stock: bool) -> Option<&'static [u32; SIZE]> {
     let name = match shape {
         "right" => "normal_right",
         "left" => "normal_left",
@@ -32,7 +34,13 @@ fn mask(shape: &str) -> Option<&'static [u32; SIZE]> {
         "u_turn_right" => "uturn_right",
         s => s,
     };
-    ICONS.iter().find(|(n, _)| *n == name).map(|(_, m)| m)
+    let set = if stock { STOCK_ICONS } else { ICONS };
+    set.iter().find(|(n, _)| *n == name).map(|(_, m)| m)
+}
+
+#[cfg(test)]
+fn mask(shape: &str) -> Option<&'static [u32; SIZE]> {
+    mask_in(shape, false)
 }
 
 /// The arrow a lane shows: the highlighted one, else the first.
@@ -43,6 +51,11 @@ fn shown(lane: &Lane) -> Option<&LaneArrow> {
 /// Draw `lanes` left to right into a `w` x `h` px strip, centred, each lane in
 /// a `pitch`-px cell, arrows vertically centred.
 pub fn strip(lanes: &[Lane], w: usize, h: usize, pitch: usize) -> Art {
+    strip_in(lanes, w, h, pitch, false)
+}
+
+/// [`strip`] with the stock-style arrows when `stock`.
+pub fn strip_in(lanes: &[Lane], w: usize, h: usize, pitch: usize, stock: bool) -> Art {
     let mut px = vec![false; w * h];
     let fit = (w / pitch.max(1)).max(1);
     let (mut lo, mut hi) = (0, lanes.len());
@@ -62,7 +75,7 @@ pub fn strip(lanes: &[Lane], w: usize, h: usize, pitch: usize) -> Art {
     let y0 = h.saturating_sub(AH) / 2;
     for (i, lane) in lanes.iter().enumerate() {
         let Some(a) = shown(lane) else { continue };
-        let Some(m) = mask(&a.shape) else { continue };
+        let Some(m) = mask_in(&a.shape, stock) else { continue };
         let cx = x0 + i * pitch + pitch.saturating_sub(AW) / 2;
         for (y, row) in m.iter().enumerate() {
             for x in 0..AW {
