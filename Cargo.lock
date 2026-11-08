@@ -445,6 +445,7 @@ dependencies = [
  "anyhow",
  "carpi-can",
  "carpi-core",
+ "carpi-diag",
  "carpi-input",
  "carpi-light",
  "carpi-logs",

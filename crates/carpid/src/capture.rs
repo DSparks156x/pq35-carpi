@@ -520,7 +520,7 @@ impl Job {
     }
 }
 
-fn show_value(v: &carpi_proto::Value) -> String {
+pub(crate) fn show_value(v: &carpi_proto::Value) -> String {
     match v {
         carpi_proto::Value::Bool(b) => b.to_string(),
         carpi_proto::Value::Num(n) => format!("{n}"),
@@ -619,7 +619,7 @@ fn copy_configs(dir: &Path, files: &[(PathBuf, String)]) -> Vec<String> {
 }
 
 /// `version (channel), pq35-carpi <sha>, livi <sha>, sdlink <sha>`.
-fn release(manifest: &Path) -> String {
+pub(crate) fn release(manifest: &Path) -> String {
     let Some(m) = std::fs::read(manifest)
         .ok()
         .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
@@ -666,7 +666,7 @@ fn run_text(program: &str, args: &[&str]) -> Option<String> {
 }
 
 /// Logs over `max_pct` of their filesystem lose their oldest entries.
-fn prune(logs: &Logs, max_pct: u8, keep: Option<&carpi_logs::EntryId>) {
+pub(crate) fn prune(logs: &Logs, max_pct: u8, keep: Option<&carpi_logs::EntryId>) {
     let Some(size) = fs_size(logs.root()) else {
         return;
     };
@@ -719,7 +719,7 @@ pub fn group(n: u64) -> String {
     out
 }
 
-fn dur(d: Duration) -> String {
+pub(crate) fn dur(d: Duration) -> String {
     let s = d.as_secs();
     match s {
         0..60 => format!("{s} s"),

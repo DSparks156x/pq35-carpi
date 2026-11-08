@@ -101,6 +101,103 @@ pub enum Request {
     Light {
         action: LightAction,
     },
+    /// Data logging (docs/PAGES.md 4): profiles, and one run at a time into
+    /// the logs folder. Replies [`Response::Datalog`]; starting and stopping
+    /// also toast LIVI.
+    Datalog {
+        action: DatalogAction,
+    },
+}
+
+/// Rates a data-log profile can run at, Hz.
+pub const DATALOG_RATES: [u32; 5] = [1, 2, 5, 10, 20];
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DatalogAction {
+    /// Profiles, what each costs, and the run.
+    Status,
+    /// Starts logging `profile`. Refused while a run is going.
+    Start {
+        profile: String,
+    },
+    /// Stops the run and saves it.
+    Stop,
+    /// Adds or replaces a profile. With `replaces`, the profile of that name
+    /// is replaced (a rename).
+    Save {
+        profile: DatalogProfile,
+        #[serde(default)]
+        replaces: Option<String>,
+    },
+    Delete {
+        name: String,
+    },
+}
+
+/// A channel set and a rate. carpid keeps these in `datalog.toml` next to
+/// its config.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatalogProfile {
+    pub name: String,
+    /// Store names, in column order.
+    pub values: Vec<String>,
+    /// One of [`DATALOG_RATES`].
+    pub rate_hz: u32,
+}
+
+/// What a profile costs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DatalogLoad {
+    /// Values the bus or the bridge sends anyway.
+    pub bus_values: u32,
+    /// Values only diagnostics give, and the measuring-block reads and
+    /// modules they take.
+    pub diag_values: u32,
+    pub diag_groups: u32,
+    pub diag_modules: u32,
+    /// The rate each diag group can be read at with this set, Hz, at most the
+    /// profile's. `None` without diag values.
+    pub diag_hz: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DatalogProfileStatus {
+    pub profile: DatalogProfile,
+    pub load: DatalogLoad,
+}
+
+/// One run, going or ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DatalogRun {
+    /// `2026-11-08 #04`.
+    pub label: String,
+    pub date: String,
+    pub number: u32,
+    pub profile: String,
+    pub values: u32,
+    pub rate_hz: u32,
+    /// Local time, `YYYY-MM-DDTHH:MM:SS`.
+    pub started: String,
+    pub elapsed_ms: u64,
+    pub rows: u64,
+    /// The entry's folder on the Pi.
+    pub dir: String,
+    /// Set when it ended: "12 values, 10 Hz, 4 812 rows".
+    pub summary: String,
+    /// Why it stopped by itself, if it did.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DatalogStatus {
+    pub profiles: Vec<DatalogProfileStatus>,
+    /// The profile a key press starts: the last one started.
+    pub selected: Option<String>,
+    pub running: Option<DatalogRun>,
+    /// The last run that ended since carpid started.
+    pub last: Option<DatalogRun>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -624,6 +721,10 @@ pub enum Response {
         settings: Settings,
         restart_needed: Vec<String>,
     },
+    /// Reply to `Datalog`.
+    Datalog {
+        status: Box<DatalogStatus>,
+    },
 }
 
 /// What LIVI knows that the car needs: projection, nav, media, calls.
@@ -940,6 +1041,37 @@ mod tests {
             Request::Settings {
                 action: SettingsAction::Get
             }
+        );
+    }
+
+    #[test]
+    fn datalog_wire_shape() {
+        let r: Request =
+            decode(br#"{"type":"datalog","action":{"kind":"start","profile":"Boost"}}"#).unwrap();
+        assert_eq!(
+            r,
+            Request::Datalog {
+                action: DatalogAction::Start {
+                    profile: "Boost".into()
+                }
+            }
+        );
+        let r: Request = decode(
+            br#"{"type":"datalog","action":{"kind":"save","profile":{"name":"Boost","values":["engine.rpm"],"rate_hz":10}}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            r,
+            Request::Datalog {
+                action: DatalogAction::Save { replaces: None, .. }
+            }
+        ));
+        let s = Response::Datalog {
+            status: Box::default(),
+        };
+        assert_eq!(
+            serde_json::to_string(&s).unwrap(),
+            r#"{"type":"datalog","status":{"profiles":[],"selected":null,"running":null,"last":null}}"#
         );
     }
 

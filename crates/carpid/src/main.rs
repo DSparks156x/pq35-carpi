@@ -9,7 +9,8 @@
 //! its hotspot while they fetch. With `[portal]`, the phone portal runs too.
 //! Captures go to the logs folder (`capture`), automatically on crashes and
 //! bad CAN or update faults (`runmark`, `faults`); the Pi clock follows the
-//! car's until network time syncs (`clock`).
+//! car's until network time syncs (`clock`). Data-log runs go there too
+//! (`datalog`).
 
 mod act;
 mod api;
@@ -17,6 +18,7 @@ pub mod capture;
 mod clock;
 mod commands;
 mod config;
+mod datalog;
 mod faults;
 mod portal;
 mod runmark;
@@ -97,6 +99,7 @@ struct Daemon {
     /// Learned light points not yet in the file, and when they changed.
     learned_dirty: Option<Instant>,
     captures: capture::Captures,
+    datalog: datalog::Datalog,
     replay: bool,
     /// This run's crash marker (not in replay) and its last heartbeat.
     mark: Option<Arc<runmark::RunMark>>,
@@ -196,7 +199,19 @@ async fn main() -> anyhow::Result<()> {
         jobs.hub.clone(),
     );
     act.set_captures(captures.clone());
-    api::spawn(&cfg.api.socket, tx.clone(), jobs, captures.clone())?;
+    let datalog = datalog::Datalog::new(
+        datalog::Setup::new(&cfg, &args.config),
+        tx.clone(),
+        jobs.hub.clone(),
+    );
+    act.set_datalog(datalog.clone());
+    api::spawn(
+        &cfg.api.socket,
+        tx.clone(),
+        jobs,
+        captures.clone(),
+        datalog.clone(),
+    )?;
     captures.prune_now();
     match previous {
         runmark::Previous::Clean => {}
@@ -254,6 +269,7 @@ async fn main() -> anyhow::Result<()> {
         portal_status,
         learned_dirty: None,
         captures,
+        datalog,
         replay,
         mark,
         beat_at: Instant::now(),
@@ -297,6 +313,7 @@ async fn main() -> anyhow::Result<()> {
         }
         d.flush(&mut car);
     }
+    d.datalog.shutdown().await;
     api::cleanup(&socket);
     if let Some(m) = &d.mark {
         m.clean();

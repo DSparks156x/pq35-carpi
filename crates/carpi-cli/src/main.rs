@@ -49,6 +49,11 @@ enum Cmd {
         #[arg(long, default_value = "cli")]
         trigger: String,
     },
+    /// Data logging: start a profile, stop the run, list the profiles.
+    Log {
+        #[command(subcommand)]
+        cmd: LogCmd,
+    },
     /// Stream changing values from carpid until Ctrl-C.
     Watch {
         #[arg(default_value = "")]
@@ -97,6 +102,16 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum LogCmd {
+    /// Start logging a profile into the logs folder.
+    Start { profile: String },
+    /// Stop the run and save it.
+    Stop,
+    /// The profiles, what each costs, and the run.
+    Profiles,
+}
+
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Action {
     Check,
@@ -127,6 +142,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Values { prefix } => print(call(args.socket, Request::Values { prefix })?),
         Cmd::Bus => print(call(args.socket, Request::Bus)?),
         Cmd::Capture { trigger } => print(call(args.socket, Request::Capture { trigger })?),
+        Cmd::Log { cmd } => log(args.socket, cmd),
         Cmd::Watch { prefix, period_ms } => watch(args.socket, prefix, period_ms),
         Cmd::NavTrace { out, period_ms } => nav_trace(args.socket, out, period_ms),
         Cmd::Update { action, apply } => update(args.socket, action.into(), apply),
@@ -233,6 +249,7 @@ fn print(resp: Response) -> anyhow::Result<()> {
         Response::Command { id, command } => println!("command {id}: {command:?}"),
         Response::JobStarted { job } => println!("job {job} started"),
         Response::Job { event, .. } => println!("{}", serde_json::to_string(&event)?),
+        Response::Datalog { status } => print_datalog(&status),
         Response::Settings {
             settings,
             restart_needed,
@@ -244,6 +261,89 @@ fn print(resp: Response) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn log(socket: Option<PathBuf>, cmd: LogCmd) -> anyhow::Result<()> {
+    use carpi_proto::DatalogAction as A;
+    let action = match &cmd {
+        LogCmd::Start { profile } => A::Start {
+            profile: profile.clone(),
+        },
+        LogCmd::Stop => A::Stop,
+        LogCmd::Profiles => A::Status,
+    };
+    let status = match call(socket, Request::Datalog { action })? {
+        Response::Datalog { status } => status,
+        Response::Error { message } => bail!(message),
+        other => bail!("unexpected reply: {other:?}"),
+    };
+    let run = match cmd {
+        LogCmd::Profiles => {
+            print_datalog(&status);
+            return Ok(());
+        }
+        LogCmd::Start { .. } => status.running.as_ref(),
+        LogCmd::Stop => status.last.as_ref(),
+    };
+    if let Some(r) = run {
+        match &r.error {
+            _ if r.summary.is_empty() => println!(
+                "Logging {} ({}, {} values, {} Hz)",
+                r.label, r.profile, r.values, r.rate_hz
+            ),
+            None => println!("{}: {}", r.label, r.summary),
+            Some(e) => println!("{}: {} (stopped: {e})", r.label, r.summary),
+        }
+        println!("{}", r.dir);
+    }
+    Ok(())
+}
+
+fn print_datalog(s: &carpi_proto::DatalogStatus) {
+    let w = s
+        .profiles
+        .iter()
+        .map(|p| p.profile.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    for p in &s.profiles {
+        let l = &p.load;
+        let mut cost = format!("{} bus, {} diag", l.bus_values, l.diag_values);
+        if l.diag_groups > 0 {
+            cost.push_str(&format!(
+                " ({} groups, {} modules, ~{} Hz)",
+                l.diag_groups,
+                l.diag_modules,
+                l.diag_hz.unwrap_or(0.0)
+            ));
+        }
+        let key = if s.selected.as_ref() == Some(&p.profile.name) {
+            "  [key]"
+        } else {
+            ""
+        };
+        println!(
+            "{:w$}  {:>2} Hz  {:>3} values  {cost}{key}",
+            p.profile.name,
+            p.profile.rate_hz,
+            p.profile.values.len()
+        );
+    }
+    if s.profiles.is_empty() {
+        println!("no profiles");
+    }
+    if let Some(r) = &s.running {
+        println!(
+            "running: {} {}, {} s, {} rows",
+            r.label,
+            r.profile,
+            r.elapsed_ms / 1000,
+            r.rows
+        );
+    }
+    if let Some(r) = &s.last {
+        println!("last: {} {}, {}", r.label, r.profile, r.summary);
+    }
 }
 
 #[cfg(unix)]

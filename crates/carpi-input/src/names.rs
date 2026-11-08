@@ -60,13 +60,14 @@ const GESTURES: [(GestureKind, &str); 5] = [
     (GestureKind::Detent, "detent"),
 ];
 
-const SYSTEM: [(SystemAction, &str); 6] = [
+const SYSTEM: [(SystemAction, &str); 7] = [
     (SystemAction::ToggleDisFocus, "toggle_dis_focus"),
     (SystemAction::Shutdown, "shutdown"),
     (SystemAction::Reboot, "reboot"),
     (SystemAction::SaveCapture, "save_capture"),
     (SystemAction::BrightnessUp, "brightness_up"),
     (SystemAction::BrightnessDown, "brightness_down"),
+    (SystemAction::ToggleLogging, "toggle_logging"),
 ];
 
 const CAR: [(CarAction, &str); 7] = [

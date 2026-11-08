@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 carpi-can.workspace = true
 carpi-core.workspace = true
+carpi-diag.workspace = true
 carpi-input.workspace = true
 carpi-power.workspace = true
 carpi-proto.workspace = true

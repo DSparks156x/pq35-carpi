@@ -64,6 +64,9 @@ pub enum SystemAction {
     /// by default.
     BrightnessUp,
     BrightnessDown,
+    /// Starts the last data-log profile, or stops the run. Not bound by
+    /// default.
+    ToggleLogging,
 }
 
 /// Our pages inside the LIVI fork.

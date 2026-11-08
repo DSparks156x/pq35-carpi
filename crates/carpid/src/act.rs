@@ -26,6 +26,8 @@ pub struct Actuators {
     hub: Option<Arc<crate::commands::CommandHub>>,
     /// The capture key gesture.
     captures: Option<crate::capture::Captures>,
+    /// The logging key, when bound.
+    datalog: Option<crate::datalog::Datalog>,
 }
 
 impl Actuators {
@@ -66,6 +68,7 @@ impl Actuators {
             keyboard,
             hub: None,
             captures: None,
+            datalog: None,
         }
     }
 
@@ -75,6 +78,10 @@ impl Actuators {
 
     pub fn set_captures(&mut self, captures: crate::capture::Captures) {
         self.captures = Some(captures);
+    }
+
+    pub fn set_datalog(&mut self, datalog: crate::datalog::Datalog) {
+        self.datalog = Some(datalog);
     }
 
     /// Sends input actions to LIVI in order. False if no LIVI is attached.
@@ -154,6 +161,10 @@ impl Actuators {
                     tokio::spawn(async move { c.capture("key").await });
                 }
                 None => info!("capture: {}", car.save_default_capture()),
+            },
+            Output::Action(SystemAction::ToggleLogging) => match &self.datalog {
+                Some(d) => d.toggle(),
+                None => info!("logging key: no logger"),
             },
             Output::Action(a @ (SystemAction::Shutdown | SystemAction::Reboot)) => {
                 if !self.shutdown_enabled {

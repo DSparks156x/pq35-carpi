@@ -7,10 +7,12 @@
 //! whose prefixes cover diag catalog values also holds diag subscriptions:
 //! leased for 3x the period, renewed on every poll, dropped with it.
 //! Commands to LIVI, update jobs and diag jobs are per connection too
-//! (`commands.rs`, `update.rs`). `Capture` goes to `capture.rs`.
+//! (`commands.rs`, `update.rs`). `Capture` goes to `capture.rs`, `Datalog`
+//! to `datalog.rs`.
 
 use crate::Msg;
 use crate::capture::Captures;
+use crate::datalog::Datalog;
 use crate::update::Jobs;
 use carpi_proto::{Reading, Value};
 use std::collections::HashMap;
@@ -40,6 +42,7 @@ pub fn spawn(
     tx: mpsc::Sender<Msg>,
     jobs: Arc<Jobs>,
     captures: Captures,
+    datalog: Datalog,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
     use std::os::unix::fs::PermissionsExt;
@@ -66,8 +69,9 @@ pub fn spawn(
                     let tx = tx.clone();
                     let jobs = jobs.clone();
                     let captures = captures.clone();
+                    let datalog = datalog.clone();
                     tokio::spawn(async move {
-                        serve(conn, stream, tx.clone(), jobs, captures).await;
+                        serve(conn, stream, tx.clone(), jobs, captures, datalog).await;
                         let _ = tx.send(Msg::ConnClosed(conn)).await;
                     });
                 }
@@ -88,6 +92,7 @@ async fn serve(
     tx: mpsc::Sender<Msg>,
     jobs: Arc<Jobs>,
     captures: Captures,
+    datalog: Datalog,
 ) {
     use carpi_proto::{DiagAction, Request, Response};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -191,6 +196,7 @@ async fn serve(
                 }
             }
             Ok(Request::Capture { trigger }) => captures.capture(&trigger).await,
+            Ok(Request::Datalog { action }) => datalog.handle(action).await,
             Ok(Request::Settings { action }) => {
                 let (rtx, rrx) = oneshot::channel();
                 if tx.send(Msg::Settings(action, rtx)).await.is_err() {
@@ -325,6 +331,7 @@ pub fn spawn(
     _tx: mpsc::Sender<Msg>,
     _jobs: Arc<Jobs>,
     _captures: Captures,
+    _datalog: Datalog,
 ) -> anyhow::Result<()> {
     tracing::warn!(
         "no Unix sockets on this platform; API at {} disabled",
@@ -363,5 +370,147 @@ mod tests {
         // a times out.
         let d = diff(&mut seen, vec![r("a", None, 3000), r("b", Some(5.0), 10)]);
         assert_eq!(d, vec![r("a", None, 3000)]);
+    }
+
+    /// Data logging over the socket: start, a toast to LIVI, stop, and the
+    /// run in a temp logs folder.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn datalog_over_the_socket() {
+        use carpi_proto::{Command, DatalogAction, DatalogProfile, Request, Response};
+        use std::sync::Mutex;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        async fn ask(s: &mut tokio::net::UnixStream, req: &Request) -> Response {
+            s.write_all(&carpi_proto::encode(req)).await.unwrap();
+            next(s).await
+        }
+        async fn next(s: &mut tokio::net::UnixStream) -> Response {
+            let mut prefix = [0u8; 4];
+            s.read_exact(&mut prefix).await.unwrap();
+            let mut body = vec![0u8; carpi_proto::body_len(prefix).unwrap()];
+            s.read_exact(&mut body).await.unwrap();
+            carpi_proto::decode(&body).unwrap()
+        }
+        /// The reply, answering toasts on the way (and skipping the `Ok`s
+        /// to those answers).
+        async fn reply(s: &mut tokio::net::UnixStream, toasts: &mut Vec<String>) -> Response {
+            loop {
+                match next(s).await {
+                    Response::Ok => {}
+                    Response::Command {
+                        id,
+                        command: Command::Toast { text, .. },
+                    } => {
+                        toasts.push(text);
+                        let done = Request::CommandDone { id, error: None };
+                        s.write_all(&carpi_proto::encode(&done)).await.unwrap();
+                    }
+                    other => return other,
+                }
+            }
+        }
+
+        let t = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::channel(64);
+        let values = Arc::new(Mutex::new(vec![Reading {
+            name: "engine.rpm".into(),
+            value: Some(Value::Num(900.0)),
+            age_ms: 5,
+        }]));
+        let _lp = crate::datalog::tests::fake_loop(rx, values);
+        let hub = Arc::new(crate::commands::CommandHub::default());
+        let jobs = Arc::new(Jobs::new(
+            hub.clone(),
+            t.path().join("carpi-update"),
+            t.path().join("carpid.toml"),
+        ));
+        let captures = Captures::new(
+            crate::capture::Setup {
+                root: t.path().join("logs"),
+                minutes: 5,
+                max_pct: 25,
+                configs: Vec::new(),
+                state_dir: t.path().join("state"),
+                manifest: t.path().join("manifest.json"),
+                system: false,
+            },
+            tx.clone(),
+            hub.clone(),
+        );
+        let datalog = Datalog::new(crate::datalog::tests::setup(t.path()), tx.clone(), hub);
+        let sock = t.path().join("carpid.sock");
+        spawn(&sock, tx, jobs, captures, datalog).unwrap();
+
+        let mut s = tokio::net::UnixStream::connect(&sock).await.unwrap();
+        let hello = Request::Hello {
+            version: carpi_proto::PROTOCOL_VERSION,
+            client: "test".into(),
+        };
+        assert!(matches!(ask(&mut s, &hello).await, Response::Hello { .. }));
+        assert_eq!(ask(&mut s, &Request::Commands).await, Response::Ok);
+        let dl = |action| Request::Datalog { action };
+        let r = ask(
+            &mut s,
+            &dl(DatalogAction::Save {
+                profile: DatalogProfile {
+                    name: "Idle".into(),
+                    values: vec!["engine.rpm".into()],
+                    rate_hz: 10,
+                },
+                replaces: None,
+            }),
+        )
+        .await;
+        let Response::Datalog { status } = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(status.profiles.len(), 2);
+
+        let mut toasts = Vec::new();
+        s.write_all(&carpi_proto::encode(&dl(DatalogAction::Start {
+            profile: "Idle".into(),
+        })))
+        .await
+        .unwrap();
+        let Response::Datalog { status } = reply(&mut s, &mut toasts).await else {
+            panic!()
+        };
+        let run = status.running.unwrap();
+        assert_eq!(run.profile, "Idle");
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        s.write_all(&carpi_proto::encode(&dl(DatalogAction::Stop)))
+            .await
+            .unwrap();
+        let Response::Datalog { status } = reply(&mut s, &mut toasts).await else {
+            panic!()
+        };
+        assert!(status.running.is_none());
+        let last = status.last.unwrap();
+        assert!(last.rows >= 3, "{last:?}");
+        assert!(last.summary.starts_with("1 value, 10 Hz, "));
+        // The stop toast can trail the reply.
+        s.write_all(&carpi_proto::encode(&dl(DatalogAction::Status)))
+            .await
+            .unwrap();
+        let r = reply(&mut s, &mut toasts).await;
+        assert!(matches!(r, Response::Datalog { .. }), "{r:?}");
+        assert_eq!(
+            toasts,
+            [
+                format!("Logging {}", run.label),
+                format!("Log {} saved", run.label)
+            ]
+        );
+        let csv =
+            std::fs::read_to_string(std::path::Path::new(&last.dir).join("data.csv")).unwrap();
+        assert!(
+            csv.starts_with(
+                "time_s,engine.rpm
+0.000,900
+"
+            ),
+            "{csv}"
+        );
     }
 }

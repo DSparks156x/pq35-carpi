@@ -409,9 +409,10 @@ impl Car {
             | Request::Update { .. }
             | Request::Diag { .. }
             | Request::Settings { .. }
-            // carpid's capture module: it owns the journal and the logs folder.
-            | Request::Capture { .. } => Response::Error {
-                message: "subscriptions, commands, jobs and captures are handled per connection"
+            // carpid's capture and datalog modules: they own the logs folder.
+            | Request::Capture { .. }
+            | Request::Datalog { .. } => Response::Error {
+                message: "subscriptions, commands, jobs, captures and logging are handled per connection"
                     .into(),
             },
             Request::Hello { version, .. } => {
