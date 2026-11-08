@@ -128,6 +128,13 @@ pub fn get(cfg: &Config) -> Settings {
             .as_ref()
             .and_then(|p| p.pin.as_deref())
             .is_some_and(|p| !p.is_empty()),
+        logs: Default::default(),
+        clock: Default::default(),
+        power: Default::default(),
+        input: Default::default(),
+        portal: Default::default(),
+        update: Default::default(),
+        avsd: Default::default(),
     }
 }
 

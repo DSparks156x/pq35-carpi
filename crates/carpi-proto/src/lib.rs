@@ -247,13 +247,233 @@ pub enum SettingsAction {
 pub struct Settings {
     /// `[tx] enabled`: frames the gate passes are sent, not just logged.
     pub tx_enabled: bool,
-    /// `[power] shutdown`: act on shutdown requests.
+    /// Deprecated: `power.shutdown`, kept for the old fork until the new UI
+    /// lands.
     pub power_shutdown: bool,
     pub light: LightSettings,
     pub dis: DisSettings,
     /// The key binding table, every row. See [`Binding`].
     pub bindings: Vec<Binding>,
     pub portal_pin_set: bool,
+    #[serde(default)]
+    pub logs: LogsSettings,
+    #[serde(default)]
+    pub clock: ClockSettings,
+    #[serde(default)]
+    pub power: PowerSettings,
+    #[serde(default)]
+    pub input: InputSettings,
+    #[serde(default)]
+    pub portal: PortalSettings,
+    #[serde(default)]
+    pub update: UpdateSettings,
+    #[serde(default)]
+    pub avsd: AvsdSettings,
+}
+
+/// `[logs]`: captures and how much disk the logs may use.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LogsSettings {
+    /// How far back a capture goes, 1-30 minutes.
+    pub capture_minutes: u32,
+    /// Logs use at most this % of the disk, 5-75.
+    pub max_pct: u8,
+}
+
+impl Default for LogsSettings {
+    fn default() -> Self {
+        LogsSettings {
+            capture_minutes: 5,
+            max_pct: 25,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LogsPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_minutes: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_pct: Option<u8>,
+}
+
+/// `[clock]` and the Pi's timezone.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ClockSettings {
+    /// Set the Pi clock from the car's while network time hasn't synced.
+    pub set_from_car: bool,
+    /// The Pi's IANA timezone (`Europe/Berlin`); empty if unknown. Not in
+    /// carpid.toml: set through timedated.
+    pub timezone: String,
+    /// Choices for `timezone`, sorted.
+    #[serde(default)]
+    pub timezones: Vec<String>,
+}
+
+impl Default for ClockSettings {
+    fn default() -> Self {
+        ClockSettings {
+            set_from_car: true,
+            timezone: String::new(),
+            timezones: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClockPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_from_car: Option<bool>,
+    /// One of `ClockSettings::timezones`. carpid needs a restart after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+}
+
+/// `[power]`: shutting down when the car is off.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PowerSettings {
+    /// Act on shutdown requests (off: logged only).
+    pub shutdown: bool,
+    /// Shut down this long after the bus goes quiet, 15-600 s.
+    pub silent_s: u32,
+    /// While the radio was last seen on, wait this long instead, 0-120 min;
+    /// 0 = no hold.
+    pub radio_hold_min: u32,
+}
+
+impl Default for PowerSettings {
+    fn default() -> Self {
+        PowerSettings {
+            shutdown: false,
+            silent_s: 60,
+            radio_hold_min: 30,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PowerPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent_s: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radio_hold_min: Option<u32>,
+}
+
+/// `[input]`: keys to LIVI and the faceplate's press timings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputSettings {
+    /// Keys to LIVI through a virtual keyboard. Needs a restart.
+    pub uinput: bool,
+    /// Faceplate long press, 200-1500 ms.
+    pub long_ms: u32,
+    /// Faceplate hold for system actions, 3-20 s.
+    pub extended_s: u32,
+}
+
+impl Default for InputSettings {
+    fn default() -> Self {
+        InputSettings {
+            uinput: true,
+            long_ms: 440,
+            extended_s: 10,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InputPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uinput: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_ms: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extended_s: Option<u32>,
+}
+
+/// `[portal]`. The PIN is `Settings::portal_pin_set` / `SettingsPatch::portal_pin`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PortalSettings {
+    /// Downloads need the PIN too.
+    pub protect_downloads: bool,
+    /// Read-only: the URL for the phone (`http://10.10.0.1:5003`). `None`:
+    /// the portal is off.
+    #[serde(default)]
+    pub address: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PortalPatch {
+    /// Needs a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protect_downloads: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+/// `[update]`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct UpdateSettings {
+    pub channel: UpdateChannel,
+    /// Read-only: carpid's version and the installed release
+    /// (`carpid 0.1.0, release 2026.11.08 (stable)`).
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct UpdatePatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<UpdateChannel>,
+}
+
+/// A/V over SD settings: `~/avsd/avsd.env` (path in `[avsd] env`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AvsdSettings {
+    /// The file, and whether it exists.
+    pub path: String,
+    pub found: bool,
+    /// Value per key in `ranges`; a key missing from the file shows what
+    /// the chain uses then (hud2.sh's default).
+    pub values: std::collections::BTreeMap<String, f64>,
+    /// Every key the API can set, in page order.
+    pub ranges: Vec<AvsdRange>,
+}
+
+/// One avsd.env setting. Valid: `min..=max` in `step`s, or 0 when `zero_off`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AvsdRange {
+    /// `GAIN`, `LINKCAP`, ... and `TONEPAL`, `NURELAX` (parts of `ENCEXTRA`).
+    pub key: String,
+    pub label: String,
+    /// `dB`, `B/s`, `sectors`, ...; empty for none. 0/1 keys are on/off.
+    pub unit: String,
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+    /// The shipped avsd.env value.
+    pub default: f64,
+    /// 0 is allowed too and means off.
+    #[serde(default)]
+    pub zero_off: bool,
+    /// What it does, one line.
+    pub help: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AvsdPatch {
+    /// Keys from `AvsdSettings::ranges`. Any change restarts the stream.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub values: std::collections::BTreeMap<String, f64>,
+    /// Restart the stream (with or without changes).
+    #[serde(default)]
+    pub restart: bool,
 }
 
 /// Light model (`[light]`, PLAN 2.6). `ambient` is the model's log-scale
@@ -629,6 +849,8 @@ pub struct Binding {
 pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_enabled: Option<bool>,
+    /// Deprecated: `power.shutdown` (which wins if both are set). Kept for
+    /// the old fork until the new UI lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub power_shutdown: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -645,6 +867,20 @@ pub struct SettingsPatch {
     pub bindings: Option<Vec<Binding>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portal_pin: Option<PinChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logs: Option<LogsPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<ClockPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power: Option<PowerPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<InputPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal: Option<PortalPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<UpdatePatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avsd: Option<AvsdPatch>,
 }
 
 /// The PIN never shows in `Debug` output, so it can't reach a log.
