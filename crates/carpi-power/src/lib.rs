@@ -5,6 +5,11 @@
 //! activity before the backend acts cancels it. The amp-wake GPIO is a
 //! secondary input the backend may report; it doesn't drive the policy.
 //!
+//! The RNS-E can be on with the car off (woken by hand): it naps the bus and
+//! wakes it again every few seconds. While the last `0x661` seen says the
+//! radio is on, the wait is `radio_hold` instead, so the Pi stays up under a
+//! playing radio but still goes down if the radio dies without saying so.
+//!
 //! [`ShutdownPolicy`] is sans-IO. Backends do the I/O.
 
 use carpi_nm::BusState;
@@ -19,6 +24,8 @@ pub struct Config {
     /// the radio wakes the Pi, so the bus is always seen; on a desk with no
     /// CAN this keeps the Pi up.
     pub require_bus_seen: bool,
+    /// The wait while the radio was last seen on.
+    pub radio_hold: Duration,
 }
 
 impl Default for Config {
@@ -27,6 +34,7 @@ impl Default for Config {
         Config {
             silent_for: Duration::from_secs(60),
             require_bus_seen: true,
+            radio_hold: Duration::from_secs(30 * 60),
         }
     }
 }
@@ -44,6 +52,8 @@ pub struct ShutdownPolicy {
     silent_since: Option<Instant>,
     requested: bool,
     bus_seen: bool,
+    /// Last radio state seen on the bus; kept through silence.
+    radio_on: bool,
 }
 
 impl ShutdownPolicy {
@@ -53,6 +63,20 @@ impl ShutdownPolicy {
             silent_since: None,
             requested: false,
             bus_seen: false,
+            radio_on: false,
+        }
+    }
+
+    /// The radio's state from a fresh `0x661`.
+    pub fn set_radio_on(&mut self, on: bool) {
+        self.radio_on = on;
+    }
+
+    fn wait(&self) -> Duration {
+        if self.radio_on {
+            self.cfg.radio_hold.max(self.cfg.silent_for)
+        } else {
+            self.cfg.silent_for
         }
     }
 
@@ -79,7 +103,7 @@ impl ShutdownPolicy {
             return None;
         }
         let since = *self.silent_since.get_or_insert(now);
-        if !self.requested && now.saturating_duration_since(since) >= self.cfg.silent_for {
+        if !self.requested && now.saturating_duration_since(since) >= self.wait() {
             self.requested = true;
             return Some(PowerEvent::ShutdownRequested);
         }
@@ -93,7 +117,7 @@ impl ShutdownPolicy {
     /// When shutdown will be requested if nothing changes.
     pub fn next_deadline(&self) -> Option<Instant> {
         match (self.silent_since, self.requested) {
-            (Some(t), false) => Some(t + self.cfg.silent_for),
+            (Some(t), false) => Some(t + self.wait()),
             _ => None,
         }
     }
@@ -346,6 +370,32 @@ mod tests {
         p.update(t0 + Duration::from_secs(710), BusState::Silent, None);
         assert_eq!(
             p.update(t0 + Duration::from_secs(771), BusState::Silent, None),
+            Some(PowerEvent::ShutdownRequested)
+        );
+    }
+
+    #[test]
+    fn radio_on_holds_the_pi_up_through_naps() {
+        let t0 = Instant::now();
+        let mut p = ShutdownPolicy::new(Config::default());
+        p.update(t0, BusState::Awake, Some(false));
+        p.set_radio_on(true);
+        // Radio playing, bus napping: a long silence isn't shutdown yet.
+        assert_eq!(p.update(t0 + s(1), BusState::Silent, None), None);
+        assert_eq!(p.update(t0 + s(600), BusState::Silent, None), None);
+        // The radio never says off: the hold runs out.
+        assert_eq!(
+            p.update(t0 + s(1801), BusState::Silent, None),
+            Some(PowerEvent::ShutdownRequested)
+        );
+        // Radio switched off before the bus slept: the normal 60 s.
+        let mut p = ShutdownPolicy::new(Config::default());
+        p.update(t0, BusState::Awake, Some(false));
+        p.set_radio_on(true);
+        p.set_radio_on(false);
+        p.update(t0 + s(1), BusState::Silent, None);
+        assert_eq!(
+            p.update(t0 + s(61), BusState::Silent, None),
             Some(PowerEvent::ShutdownRequested)
         );
     }

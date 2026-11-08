@@ -239,6 +239,9 @@ impl Controls {
             g.tick(now);
         }
 
+        if let Some(on) = store.get_bool("rnse.radio_on", now) {
+            self.power.set_radio_on(on);
+        }
         if let Some(ev) = self.power.update(now, monitor.state(), view.kl15) {
             out.push(Output::Power(ev));
         }
