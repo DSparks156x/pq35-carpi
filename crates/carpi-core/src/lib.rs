@@ -11,6 +11,7 @@ pub mod display;
 pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
 pub use carpi_dis::ScreenId as DisScreen;
 pub use carpi_dis::screens::media::MediaLayout as DisMediaLayout;
+pub use carpi_dis::screens::nav::{Clock as DisClock, Units as DisUnits};
 pub use control::{AmbientSource, CurveMode, DarkSetup, DarkSource, LightSetup, Location, Output};
 pub use display::{DisSetup, Reading};
 

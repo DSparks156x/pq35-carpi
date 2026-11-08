@@ -54,6 +54,16 @@ pub fn get(cfg: &Config) -> Settings {
                 crate::config::DisMediaLayout::Art => carpi_proto::DisMediaLayout::Art,
             },
             cover_flash_s: cfg.dis.cover_flash_s,
+            units: match cfg.dis.units {
+                crate::config::DisUnits::Auto => carpi_proto::DisUnits::Auto,
+                crate::config::DisUnits::Metric => carpi_proto::DisUnits::Metric,
+                crate::config::DisUnits::Imperial => carpi_proto::DisUnits::Imperial,
+            },
+            clock: match cfg.dis.clock {
+                crate::config::DisClock::Auto => carpi_proto::DisClock::Auto,
+                crate::config::DisClock::H12 => carpi_proto::DisClock::H12,
+                crate::config::DisClock::H24 => carpi_proto::DisClock::H24,
+            },
             readings: cfg
                 .readings()
                 .into_iter()
@@ -287,6 +297,12 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         if let Some(v) = d.cover_flash_s {
             doc["dis"]["cover_flash_s"] = value(v);
         }
+        if let Some(v) = d.units {
+            doc["dis"]["units"] = value(snake(&v));
+        }
+        if let Some(v) = d.clock {
+            doc["dis"]["clock"] = value(snake(&v));
+        }
     }
     if let Some(b) = &patch.bindings {
         table(&mut doc, "input")?;
@@ -459,6 +475,8 @@ mod tests {
                     auto_phone: Some(false),
                     media_layout: Some(DisMediaLayout::Art),
                     cover_flash_s: Some(0.0),
+                    units: Some(carpi_proto::DisUnits::Imperial),
+                    clock: Some(carpi_proto::DisClock::H12),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -470,6 +488,8 @@ mod tests {
         assert_eq!(after.dis.default_page, DisPage::Media);
         assert!(!after.dis.auto_phone && after.dis.auto_nav, "only phone changed");
         assert_eq!(after.dis.media_layout, DisMediaLayout::Art);
+        assert_eq!(after.dis.units, carpi_proto::DisUnits::Imperial);
+        assert_eq!(after.dis.clock, carpi_proto::DisClock::H12);
         // And what the car model gets.
         let core = cfg.core().dis;
         assert!(!core.claim_always);

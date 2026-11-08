@@ -408,6 +408,32 @@ pub struct DisSettings {
     /// Full cover on a new track, held this long once drawn; 0 = off.
     #[serde(default = "four")]
     pub cover_flash_s: f64,
+    #[serde(default)]
+    pub units: DisUnits,
+    #[serde(default)]
+    pub clock: DisClock,
+}
+
+/// DIS distance units. `Auto`: as the phone shows them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisUnits {
+    #[default]
+    Auto,
+    Metric,
+    Imperial,
+}
+
+/// DIS ETA clock. `Auto`: 12 h if the phone's ETA has AM/PM.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DisClock {
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "12h")]
+    H12,
+    #[serde(rename = "24h")]
+    H24,
 }
 
 fn yes() -> bool {
@@ -464,6 +490,10 @@ pub struct DisPatch {
     pub media_layout: Option<DisMediaLayout>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover_flash_s: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub units: Option<DisUnits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<DisClock>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

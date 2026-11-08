@@ -82,6 +82,8 @@ auto_phone = true
 auto_media = true
 media_layout = "stack"      # or "art"
 cover_flash_s = 4           # full cover on a new track once drawn; 0 = off
+units = "auto"              # or "metric", "imperial" (auto: as the phone shows)
+clock = "auto"              # or "12h", "24h" (auto: 12 h if the phone's ETA has AM/PM)
 
 # Phone portal: http://<pi>:5003/files. Uploads need the PIN once one is set
 # (set it through the settings API).

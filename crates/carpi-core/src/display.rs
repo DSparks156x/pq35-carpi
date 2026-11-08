@@ -15,7 +15,7 @@
 use carpi_can::Frame;
 use carpi_dis::screens::call::CallInput;
 use carpi_dis::screens::media::{MediaInput, MediaLayout};
-use carpi_dis::screens::nav::{NavInput, format_distance};
+use carpi_dis::screens::nav::{Clock, NavConfig, NavInput, Units, format_distance_in};
 use carpi_dis::screens::readings::{ReadingSpec, ReadingsInput};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::top::TopLines;
@@ -68,6 +68,10 @@ pub struct DisSetup {
     pub media_layout: MediaLayout,
     /// Hold for the full cover on a new track, after it's drawn. `None` = off.
     pub cover_flash: Option<Duration>,
+    /// Distance units on the DIS (`Auto`: as the phone shows them).
+    pub units: Units,
+    /// ETA clock (`Auto`: 12 h if the phone's ETA has AM/PM).
+    pub clock: Clock,
 }
 
 impl Default for DisSetup {
@@ -82,6 +86,8 @@ impl Default for DisSetup {
             auto_media: true,
             media_layout: MediaLayout::Stack,
             cover_flash: Some(Duration::from_secs(4)),
+            units: Units::Auto,
+            clock: Clock::Auto,
         }
     }
 }
@@ -139,6 +145,14 @@ struct LogState {
     refusal: Option<String>,
 }
 
+fn nav_config(setup: &DisSetup) -> NavConfig {
+    NavConfig {
+        units: setup.units,
+        clock: setup.clock,
+        ..NavConfig::default()
+    }
+}
+
 fn new_dis(setup: &DisSetup) -> Dis {
     Dis::new(DisConfig {
         readings: setup
@@ -158,6 +172,7 @@ fn new_dis(setup: &DisSetup) -> Dis {
         auto_media: setup.auto_media,
         media_layout: setup.media_layout,
         cover_flash: setup.cover_flash,
+        nav: nav_config(setup),
         ..Default::default()
     })
 }
@@ -207,14 +222,56 @@ fn nav_input(store: &Store, now: Instant) -> NavInput {
     if store.get_bool("nav.active", now) != Some(true) {
         return NavInput::default();
     }
+    let ttd = store.get_num("nav.time_to_destination_s", now);
     NavInput {
         maneuver: text(store, "nav.maneuver", now),
         side: text(store, "nav.side", now),
         roundabout_angle: store.get_num("nav.roundabout_angle", now).map(|a| a as i32),
         distance_m: store.get_num("nav.distance_m", now),
         road: text(store, "nav.road", now),
-        ..Default::default()
+        lanes: lanes(store, now),
+        // AA sends the ETA as text; CarPlay only as Unix time, so it's the
+        // car clock (local) plus the time left.
+        eta: text(store, "nav.eta", now).or_else(|| eta_from_clock(store, now, ttd?)),
+        distance_unit: text(store, "nav.distance_unit", now),
+        time_to_destination_s: ttd,
+        destination_distance_m: store.get_num("nav.destination_distance_m", now),
     }
+}
+
+/// `nav.lanes` (JSON of `carpi_proto::Lane`, left to right) as the screen's lanes.
+fn lanes(store: &Store, now: Instant) -> Vec<carpi_dis::lanes::Lane> {
+    let Some(json) = text(store, "nav.lanes", now) else {
+        return Vec::new();
+    };
+    let Ok(lanes) = serde_json::from_str::<Vec<carpi_proto::Lane>>(&json) else {
+        return Vec::new();
+    };
+    lanes
+        .into_iter()
+        .map(|l| {
+            l.arrows
+                .into_iter()
+                .map(|a| carpi_dis::lanes::LaneArrow {
+                    shape: a.shape,
+                    highlighted: a.highlighted,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// `HH:MM` local: the car clock (`clock.datetime`, local time) plus `secs`.
+fn eta_from_clock(store: &Store, now: Instant, secs: f64) -> Option<String> {
+    let clock = text(store, "clock.datetime", now)?;
+    let hm = clock.get(11..16)?;
+    let (h, m) = hm.split_once(':')?;
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    if !secs.is_finite() || secs < 0.0 {
+        return None;
+    }
+    let total = (h * 60 + m + (secs / 60.0).round() as u32) % (24 * 60);
+    Some(format!("{:02}:{:02}", total / 60, total % 60))
 }
 
 /// What a top-lines source shows: line 1, and line 2 when the cluster's own
@@ -236,6 +293,7 @@ pub fn top_lines(
     now: Instant,
     centre: Option<ScreenId>,
     centre_ours: bool,
+    imperial: bool,
 ) -> Option<(String, Option<String>)> {
     let phone = || {
         let state = text(store, "call.state", now)?;
@@ -258,7 +316,7 @@ pub fn top_lines(
         if store.get_bool("nav.active", now) != Some(true) {
             return None;
         }
-        let (v, unit) = format_distance(store.get_num("nav.distance_m", now));
+        let (v, unit) = format_distance_in(store.get_num("nav.distance_m", now), imperial);
         let dist = if unit.is_empty() { v } else { format!("{v} {unit}") };
         let road = text(store, "nav.road", now).unwrap_or_default();
         Some(TopText {
@@ -524,7 +582,9 @@ impl Display {
         if self.setup.enabled && on_tv {
             let ours = self.running && self.dis.session().owned();
             let centre = if ours { self.dis.shown() } else { None };
-            let (l1, l2) = top_lines(store, now, centre, ours).unwrap_or_default();
+            let imperial =
+                carpi_dis::screens::nav::imperial(&nav_input(store, now), &nav_config(&self.setup));
+            let (l1, l2) = top_lines(store, now, centre, ours, imperial).unwrap_or_default();
             self.top_text = match &l2 {
                 Some(l2) => format!("{l1}|{l2}"),
                 None => l1.clone(),
@@ -687,5 +747,60 @@ impl Display {
             "dis.top_text",
             (!self.top_text.is_empty()).then(|| Value::Text(self.top_text.clone())),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store(now: Instant, kv: &[(&str, Value)]) -> Store {
+        let mut s = Store::default();
+        for (k, v) in kv {
+            s.set(k, Some(v.clone()), now, Duration::from_secs(60));
+        }
+        s
+    }
+
+    #[test]
+    fn nav_input_fills_eta_lanes_and_units() {
+        let now = Instant::now();
+        let t = |s: &str| Value::Text(s.into());
+        let s = store(
+            now,
+            &[
+                ("nav.active", Value::Bool(true)),
+                ("nav.distance_m", Value::Num(400.0)),
+                ("nav.distance_unit", t("mi")),
+                ("nav.time_to_destination_s", Value::Num(25.0 * 60.0)),
+                ("clock.datetime", t("2026-11-08T23:50:10")),
+                (
+                    "nav.lanes",
+                    t(r#"[{"arrows":[{"shape":"straight","highlighted":true}]}]"#),
+                ),
+            ],
+        );
+        let n = nav_input(&s, now);
+        // CarPlay-style: no ETA text, so car clock + time left, past midnight.
+        assert_eq!(n.eta.as_deref(), Some("00:15"));
+        assert_eq!(n.distance_unit.as_deref(), Some("mi"));
+        assert_eq!(n.lanes.len(), 1);
+        assert!(n.lanes[0][0].highlighted);
+        // Units follow the phone: the top line reads in feet/miles.
+        let imperial = carpi_dis::screens::nav::imperial(&n, &NavConfig::default());
+        assert!(imperial);
+        let (l1, _) = top_lines(&s, now, None, true, imperial).unwrap();
+        assert!(l1.ends_with(" mi") || l1.ends_with(" ft"), "{l1}");
+        // AA's ETA text wins over the clock.
+        let s2 = store(
+            now,
+            &[
+                ("nav.active", Value::Bool(true)),
+                ("nav.eta", t("2:32 PM")),
+                ("nav.time_to_destination_s", Value::Num(60.0)),
+                ("clock.datetime", t("2026-11-08T14:00:00")),
+            ],
+        );
+        assert_eq!(nav_input(&s2, now).eta.as_deref(), Some("2:32 PM"));
     }
 }

@@ -56,6 +56,8 @@ use std::path::{Path, PathBuf};
 /// auto_media = true
 /// media_layout = "stack"      # or "art" (cover beside the text)
 /// cover_flash_s = 4    # full cover on a new track, after it's drawn; 0 = off
+/// units = "auto"       # or "metric", "imperial" (auto: as the phone shows)
+/// clock = "auto"       # or "12h", "24h" (auto: 12 h if the phone's ETA has AM/PM)
 /// # readings = [ { key = "engine.rpm", label = "RPM", decimals = 0, scale = 1.0 }, ... ]
 ///
 /// [portal]             # phone portal; absent = off. Keys: carpi_portal::PortalConfig
@@ -201,6 +203,26 @@ pub struct Dis {
     pub auto_media: bool,
     pub media_layout: DisMediaLayout,
     pub cover_flash_s: f64,
+    pub units: DisUnits,
+    pub clock: DisClock,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisUnits {
+    Auto,
+    Metric,
+    Imperial,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum DisClock {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "12h")]
+    H12,
+    #[serde(rename = "24h")]
+    H24,
 }
 
 impl Default for Dis {
@@ -215,6 +237,8 @@ impl Default for Dis {
             auto_media: true,
             media_layout: DisMediaLayout::Stack,
             cover_flash_s: 4.0,
+            units: DisUnits::Auto,
+            clock: DisClock::Auto,
         }
     }
 }
@@ -592,6 +616,16 @@ impl Config {
                 },
                 cover_flash: (self.dis.cover_flash_s > 0.0)
                     .then(|| std::time::Duration::from_secs_f64(self.dis.cover_flash_s)),
+                units: match self.dis.units {
+                    DisUnits::Auto => carpi_core::DisUnits::Auto,
+                    DisUnits::Metric => carpi_core::DisUnits::Metric,
+                    DisUnits::Imperial => carpi_core::DisUnits::Imperial,
+                },
+                clock: match self.dis.clock {
+                    DisClock::Auto => carpi_core::DisClock::Auto,
+                    DisClock::H12 => carpi_core::DisClock::H12,
+                    DisClock::H24 => carpi_core::DisClock::H24,
+                },
             },
             light: carpi_core::LightSetup {
                 auto_brightness: l.auto_brightness,
