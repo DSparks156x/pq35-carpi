@@ -81,6 +81,16 @@ impl Controls {
         }
     }
 
+    /// Shutdown timings, live.
+    pub fn set_power(&mut self, cfg: carpi_power::Config) {
+        self.power.set_config(cfg);
+    }
+
+    /// Key timings, live.
+    pub fn set_gestures(&mut self, cfg: GestureConfig) {
+        self.gestures.set_config(cfg);
+    }
+
     pub fn set_light(&mut self, s: LightSetup) {
         if s.auto_brightness != self.light.setup().auto_brightness {
             self.handed_back = false;

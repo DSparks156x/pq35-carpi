@@ -60,19 +60,25 @@ impl GestureConfig {
 }
 
 impl Default for GestureConfig {
-    /// Wheel: long = 3 press frames at the assumed 500 ms repeat (1 s). No
-    /// key uses a double, so none waits for one. Faceplate: long = frame 5 at
-    /// 110 ms (440 ms); extended 10 s (Drew: rare, "could be 10s plus"; long
-    /// still fires on the way).
+    /// Faceplate: long = frame 5 at 110 ms (440 ms); extended 10 s (Drew:
+    /// rare, "could be 10s plus"; long still fires on the way).
     fn default() -> Self {
-        let ms = Duration::from_millis;
+        GestureConfig::new(Duration::from_millis(440), Duration::from_secs(10))
+    }
+}
+
+impl GestureConfig {
+    /// Faceplate keys long at `panel_long`, extended at `panel_extended`.
+    /// Wheel: long = 3 press frames at the assumed 500 ms repeat (1 s). No
+    /// key uses a double, so none waits for one.
+    pub fn new(panel_long: Duration, panel_extended: Duration) -> Self {
         let wheel_long = Timing {
-            long: Some(ms(1000)),
+            long: Some(Duration::from_millis(1000)),
             ..Default::default()
         };
         let panel = Timing {
-            long: Some(ms(440)),
-            extended: Some(ms(10_000)),
+            long: Some(panel_long),
+            extended: Some(panel_extended),
             double: None,
         };
         let mut timings = HashMap::new();
@@ -127,6 +133,11 @@ impl Recogniser {
             cfg,
             keys: BTreeMap::new(),
         }
+    }
+
+    /// New timings, live. Keys held now keep their press and use them.
+    pub fn set_config(&mut self, cfg: GestureConfig) {
+        self.cfg = cfg;
     }
 
     pub fn on_event(&mut self, ev: KeyEvent) -> Vec<Gesture> {
@@ -305,6 +316,28 @@ mod tests {
             }
         }
         c
+    }
+
+    #[test]
+    fn timings_change_live() {
+        let t0 = Instant::now();
+        let mut r = Recogniser::new(GestureConfig::default());
+        let ev = |edge, at| KeyEvent {
+            key: Key::Next,
+            edge,
+            at,
+        };
+        assert!(r.on_event(ev(Edge::Down, t0)).is_empty());
+        r.set_config(GestureConfig::new(ms(200), Duration::from_secs(3)));
+        // The held press uses the new long at once.
+        let g = r.tick(t0 + ms(250));
+        assert_eq!(g.len(), 1);
+        assert_eq!((g[0].kind, g[0].at), (Long, t0 + ms(200)));
+        let g = r.tick(t0 + ms(3000));
+        assert_eq!(g[0].kind, Extended);
+        assert!(r.on_event(ev(Edge::Up, t0 + ms(3100))).is_empty());
+        // The wheel keeps its 1 s.
+        assert_eq!(r.cfg.timing(Key::WheelClick).long, Some(ms(1000)));
     }
 
     #[test]

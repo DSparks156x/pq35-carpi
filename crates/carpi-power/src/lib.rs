@@ -67,6 +67,15 @@ impl ShutdownPolicy {
         }
     }
 
+    /// New timings, live. A silence already running counts towards them.
+    pub fn set_config(&mut self, cfg: Config) {
+        self.cfg = cfg;
+    }
+
+    pub fn config(&self) -> Config {
+        self.cfg
+    }
+
     /// The radio's state from a fresh `0x661`.
     pub fn set_radio_on(&mut self, on: bool) {
         self.radio_on = on;
@@ -393,6 +402,35 @@ mod tests {
         p.update(t0, BusState::Awake, Some(false));
         p.set_radio_on(true);
         p.set_radio_on(false);
+        p.update(t0 + s(1), BusState::Silent, None);
+        assert_eq!(
+            p.update(t0 + s(61), BusState::Silent, None),
+            Some(PowerEvent::ShutdownRequested)
+        );
+    }
+
+    #[test]
+    fn timings_change_live() {
+        let t0 = Instant::now();
+        let mut p = ShutdownPolicy::new(Config::default());
+        p.update(t0, BusState::Awake, Some(false));
+        assert_eq!(p.update(t0 + s(1), BusState::Silent, None), None);
+        p.set_config(Config {
+            silent_for: s(15),
+            ..Config::default()
+        });
+        assert_eq!(p.next_deadline(), Some(t0 + s(16)));
+        assert_eq!(
+            p.update(t0 + s(16), BusState::Silent, None),
+            Some(PowerEvent::ShutdownRequested)
+        );
+        // No radio hold (0): the radio playing doesn't extend the wait.
+        let mut p = ShutdownPolicy::new(Config {
+            radio_hold: Duration::ZERO,
+            ..Config::default()
+        });
+        p.update(t0, BusState::Awake, Some(false));
+        p.set_radio_on(true);
         p.update(t0 + s(1), BusState::Silent, None);
         assert_eq!(
             p.update(t0 + s(61), BusState::Silent, None),

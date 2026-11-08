@@ -128,6 +128,16 @@ impl Car {
         self.controls.routes = cfg.routes;
     }
 
+    /// Shutdown timings (`[power]`), live.
+    pub fn set_power(&mut self, cfg: carpi_power::Config) {
+        self.controls.set_power(cfg);
+    }
+
+    /// Key timings (`[input]`), live.
+    pub fn set_gestures(&mut self, cfg: carpi_input::GestureConfig) {
+        self.controls.set_gestures(cfg);
+    }
+
     /// The gate of interface `idx`, for its counters.
     pub fn gate(&self, idx: usize) -> &Gate {
         &self.controls.gates[idx]
