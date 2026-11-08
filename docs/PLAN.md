@@ -336,7 +336,7 @@ Contingency, only if latency or CPU says so: the fork's compositor renders offsc
 - **Replay**: candump files through the full daemon with TX captured; assert on decoded state and on what would have been sent. `references/canlog.txt` is the first fixture. Every capture Drew makes becomes one.
 - **DIS golden renders**: scene → PNG and scene → byte stream, both snapshot-tested.
 - **Property tests**: the gate never sends in `SleepPending`/`Silent`; the renderer never emits a message over the limit; the scheduler never polls a denied module.
-- **Bench**: Drew's A3 cluster bench for the DIS. The A3 and TT white clusters are basically identical, and the old driver runs on both. The bench runs at 500 kbit/s and the car at 100, so throughput numbers are confirmed in the car.
+- **Bench**: Drew's A3 cluster bench for the DIS. The A3 and TT white clusters are basically identical, and the old driver runs on both. In the car the path is cluster ↔ 500 kbit/s ↔ gateway ↔ 100 kbit/s ICAN ↔ Pi, while the bench talks to the cluster directly at 500. In the car, ICAN bandwidth, gateway forwarding delay and ACK round trips across the gateway all cost throughput, so throughput numbers are confirmed in the car.
 - **CI**: `cargo test` and clippy on x86-64, cross-build for aarch64. Pi-only bits (SocketCAN, GPIO, uinput) sit behind traits so CI never needs hardware.
 
 ## 5. Build order
