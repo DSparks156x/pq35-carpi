@@ -3,12 +3,15 @@
 //!
 //! Each connection gets a reader loop, a writer task, and one task per
 //! subscription. Requests go to the core loop; subscriptions poll it for
-//! readings at their period and send only what changed.
+//! readings at their period and send only what changed. Commands to LIVI
+//! and update jobs are per connection too (`commands.rs`, `update.rs`).
 
 use crate::Msg;
+use crate::update::Jobs;
 use carpi_proto::{Reading, Value};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Readings that differ from what this subscriber last saw. Age alone
@@ -28,7 +31,7 @@ pub fn diff(seen: &mut HashMap<String, Option<Value>>, items: Vec<Reading>) -> V
 }
 
 #[cfg(unix)]
-pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>) -> anyhow::Result<()> {
+pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) -> anyhow::Result<()> {
     use anyhow::Context;
     use std::os::unix::fs::PermissionsExt;
     use tokio::net::UnixListener;
@@ -52,8 +55,9 @@ pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>) -> anyhow::Result<()> {
                     let conn = next_conn;
                     next_conn += 1;
                     let tx = tx.clone();
+                    let jobs = jobs.clone();
                     tokio::spawn(async move {
-                        serve(conn, stream, tx.clone()).await;
+                        serve(conn, stream, tx.clone(), jobs).await;
                         let _ = tx.send(Msg::ConnClosed(conn)).await;
                     });
                 }
@@ -68,7 +72,7 @@ pub fn spawn(path: &Path, tx: mpsc::Sender<Msg>) -> anyhow::Result<()> {
 }
 
 #[cfg(unix)]
-async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>) {
+async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>, jobs: Arc<Jobs>) {
     use carpi_proto::{Request, Response};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::oneshot;
@@ -125,6 +129,36 @@ async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>)
                 }
                 Response::Ok
             }
+            Ok(Request::Commands) => {
+                jobs.hub.attach(conn, out_tx.clone());
+                Response::Ok
+            }
+            Ok(Request::CommandDone { id, error }) => {
+                jobs.hub.done(id, error);
+                Response::Ok
+            }
+            Ok(Request::Update { action, and_apply }) => {
+                let (events, mut rx) = mpsc::unbounded_channel();
+                match jobs.start(action, and_apply, events) {
+                    Err(message) => Response::Error { message },
+                    Ok(job) => {
+                        // Started goes out before the first event.
+                        if out_tx.send(Response::JobStarted { job }).await.is_err() {
+                            break;
+                        }
+                        // Weak: a closed connection mustn't wait for the job.
+                        let out = out_tx.downgrade();
+                        tokio::spawn(async move {
+                            while let Some(event) = rx.recv().await {
+                                if let Some(out) = out.upgrade() {
+                                    let _ = out.send(Response::Job { job, event }).await;
+                                }
+                            }
+                        });
+                        continue;
+                    }
+                }
+            }
             Ok(req) => {
                 let is_hello = matches!(req, Request::Hello { .. });
                 let (rtx, rrx) = oneshot::channel();
@@ -145,6 +179,7 @@ async fn serve(conn: u64, stream: tokio::net::UnixStream, tx: mpsc::Sender<Msg>)
     for (_, h) in subs {
         h.abort();
     }
+    jobs.hub.detach(conn);
     drop(out_tx);
     let _ = writer.await;
 }
@@ -189,7 +224,7 @@ pub fn cleanup(path: &Path) {
 }
 
 #[cfg(not(unix))]
-pub fn spawn(path: &Path, _tx: mpsc::Sender<Msg>) -> anyhow::Result<()> {
+pub fn spawn(path: &Path, _tx: mpsc::Sender<Msg>, _jobs: Arc<Jobs>) -> anyhow::Result<()> {
     tracing::warn!(
         "no Unix sockets on this platform; API at {} disabled",
         path.display()

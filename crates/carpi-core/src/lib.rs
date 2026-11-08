@@ -204,8 +204,12 @@ impl Car {
                 bridge::apply(&mut self.store, &update, now);
                 Response::Ok
             }
-            Request::Subscribe { .. } | Request::Unsubscribe { .. } => Response::Error {
-                message: "subscriptions are handled per connection".into(),
+            Request::Subscribe { .. }
+            | Request::Unsubscribe { .. }
+            | Request::Commands
+            | Request::CommandDone { .. }
+            | Request::Update { .. } => Response::Error {
+                message: "subscriptions, commands and jobs are handled per connection".into(),
             },
             Request::Hello { version, .. } => {
                 if version == proto::PROTOCOL_VERSION {

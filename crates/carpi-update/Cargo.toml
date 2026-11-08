@@ -1,0 +1,33 @@
+[package]
+name = "carpi-update"
+description = "Installs carpi bundles: check, fetch, apply, roll back"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+carpi-proto.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+sha2 = "0.11.1"
+hex = "0.4.3"
+tar = "0.4.46"
+minisign-verify = "0.3.0"
+ureq = { version = "3.5.1", features = ["json"], optional = true }
+ruzstd = "0.9.1"
+
+[features]
+default = ["net"]
+# HTTPS to GitHub (rustls with ring, which needs a C compiler for the
+# target). Off, check/fetch fail and the rest builds as pure Rust.
+net = ["dep:ureq"]
+
+[dev-dependencies]
+minisign = "0.10.0"
+tempfile = "3.27.0"

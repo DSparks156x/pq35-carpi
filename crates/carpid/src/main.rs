@@ -4,11 +4,14 @@
 //! watches the NM ring, keeps a rolling capture and answers the local API.
 //! The car model decides what to send (RNS-E label/brightness), which keys go
 //! to LIVI, and when to power off; `act` carries that out. Sending and
-//! powering off stay off until enabled in the config.
+//! powering off stay off until enabled in the config. Update jobs run
+//! `carpi-update` and ask LIVI to drop its hotspot while they fetch.
 
 mod act;
 mod api;
+mod commands;
 mod config;
+mod update;
 
 use anyhow::Context;
 use carpi_can::recorder::Recorder;
@@ -98,7 +101,12 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(read_port(idx, spec.name.clone(), port, tx.clone()));
     }
 
-    api::spawn(&cfg.api.socket, tx.clone())?;
+    let jobs = std::sync::Arc::new(update::Jobs::new(
+        Default::default(),
+        cfg.update.updater.clone(),
+        args.config.clone(),
+    ));
+    api::spawn(&cfg.api.socket, tx.clone(), jobs)?;
 
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

@@ -4,6 +4,15 @@
 //! that many bytes of JSON. The client sends `Hello` first; a version
 //! mismatch is refused (daemon and LIVI fork ship in lockstep).
 //!
+//! Mostly request/response, in order. Three kinds of response arrive
+//! unsolicited and may come between a request and its reply, so clients
+//! dispatch on the type rather than pairing replies blindly:
+//! - `Update` for a `Subscribe`;
+//! - `Job` for an update job the connection started;
+//! - `Command` to the connection that sent `Commands` (the LIVI fork),
+//!   answered with `CommandDone`. This is the daemon-to-LIVI direction of
+//!   the bridge.
+//!
 //! Licensed MIT OR Apache-2.0 so the GPL LIVI fork can link it. Keep this
 //! crate to message types and framing only.
 
@@ -49,6 +58,115 @@ pub enum Request {
     Bridge {
         update: Box<BridgeUpdate>,
     },
+    /// Makes this connection the one carpid sends [`Response::Command`] to
+    /// (the LIVI fork). The latest connection to ask wins. Replies `Ok`.
+    Commands,
+    /// Answer to [`Response::Command`] `id`: `error` is `None` when it
+    /// worked. Replies `Ok`.
+    CommandDone {
+        id: u32,
+        error: Option<String>,
+    },
+    /// Starts an update job. Replies [`Response::JobStarted`], then sends
+    /// [`Response::Job`] events on this connection until one with
+    /// [`JobEvent::Finished`]. One update job at a time.
+    Update {
+        action: UpdateAction,
+        /// With `fetch`: apply the bundle once it's verified and the AP is
+        /// back. Without it, `apply` does that later.
+        #[serde(default)]
+        and_apply: bool,
+    },
+}
+
+/// What an update job does. `check` and `fetch` need the internet: the AP
+/// is suspended while they run (see docs/DEPLOY.md, section 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateAction {
+    /// List releases on the configured channel.
+    Check,
+    /// Download and verify the newest release on the channel.
+    Fetch,
+    /// Install the downloaded bundle (offline).
+    Apply,
+    /// What's installed and downloaded (offline).
+    Status,
+}
+
+/// Something carpid asks the command connection (LIVI) to do.
+///
+/// The server-to-client direction: carpid sends `Response::Command { id,
+/// command }` to the connection that sent [`Request::Commands`], unsolicited
+/// and interleaved with other responses. The client does it and answers
+/// [`Request::CommandDone`] with the same `id`. carpid gives up waiting
+/// after a timeout of its own choosing; the client must still finish or undo
+/// safely.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Command {
+    /// Hotspot: `suspend` hands the Wi-Fi interface to NetworkManager,
+    /// `resume` restores whatever was running before `suspend`. The client
+    /// resumes by itself when carpid's connection drops or after
+    /// [`AP_SUSPEND_MAX_S`].
+    Ap { ap: ApAction },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApAction {
+    Suspend,
+    Resume,
+}
+
+/// Longest the AP may stay suspended. carpid resumes after 3 minutes; the
+/// client resumes on its own after this, in case carpid can't.
+pub const AP_SUSPEND_MAX_S: u64 = 240;
+
+/// One step of an update job. `carpi-update` prints these as JSON lines on
+/// stdout; carpid relays them as [`Response::Job`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum JobEvent {
+    /// A new stage started: `ap`, `network`, `check`, `download`,
+    /// `verify`, `unpack`, `profile`, `switch`, `restart`, `health`,
+    /// `rollback`, `cleanup`, `status`.
+    Stage { stage: String, message: String },
+    /// Bytes or items done in the current stage.
+    Progress {
+        stage: String,
+        done: u64,
+        total: Option<u64>,
+    },
+    /// Releases on the channel, newest first.
+    Releases { items: Vec<ReleaseInfo> },
+    /// What's on disk.
+    Installed(Installed),
+    /// Last event of a job.
+    Finished { ok: bool, message: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseInfo {
+    pub version: String,
+    /// `stable` or `beta`.
+    pub channel: String,
+    pub published: String,
+    /// Bundle size in bytes.
+    pub size: u64,
+    /// Same version as the one running.
+    pub installed: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Installed {
+    pub current: Option<String>,
+    pub previous: Option<String>,
+    /// Downloaded and verified, not applied yet.
+    pub downloaded: Option<String>,
+    /// How the last apply ended, if one ran: `ok`, `rolled_back`, `failed`.
+    pub last_apply: Option<String>,
+    pub os_profile: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -76,6 +194,20 @@ pub enum Response {
     },
     Error {
         message: String,
+    },
+    /// Unsolicited, to the command connection. See [`Command`].
+    Command {
+        id: u32,
+        command: Command,
+    },
+    /// Reply to `Update`: the job's events carry this number.
+    JobStarted {
+        job: u32,
+    },
+    /// Unsolicited, for a job this connection started.
+    Job {
+        job: u32,
+        event: JobEvent,
     },
 }
 
@@ -261,6 +393,39 @@ mod tests {
             json,
             r#"{"type":"values","items":[{"name":"vehicle.speed_kmh","value":0.0,"age_ms":12}]}"#
         );
+    }
+
+    #[test]
+    fn command_wire_shape() {
+        let c = Response::Command {
+            id: 7,
+            command: Command::Ap {
+                ap: ApAction::Suspend,
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&c).unwrap(),
+            r#"{"type":"command","id":7,"command":{"kind":"ap","ap":"suspend"}}"#
+        );
+        let u: Request = decode(br#"{"type":"update","action":"fetch"}"#).unwrap();
+        assert_eq!(
+            u,
+            Request::Update {
+                action: UpdateAction::Fetch,
+                and_apply: false
+            }
+        );
+        let e = JobEvent::Finished {
+            ok: true,
+            message: "done".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&e).unwrap(),
+            r#"{"event":"finished","ok":true,"message":"done"}"#
+        );
+        let i = JobEvent::Installed(Installed::default());
+        let back: JobEvent = serde_json::from_str(&serde_json::to_string(&i).unwrap()).unwrap();
+        assert_eq!(back, i);
     }
 
     #[test]

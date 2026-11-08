@@ -48,6 +48,33 @@ enum Cmd {
         #[arg(long, default_value_t = 200)]
         period_ms: u32,
     },
+    /// Run an update job in carpid and follow it: check, fetch, apply, status.
+    Update {
+        #[arg(value_enum)]
+        action: Action,
+        /// With fetch: apply once verified.
+        #[arg(long)]
+        apply: bool,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Action {
+    Check,
+    Fetch,
+    Apply,
+    Status,
+}
+
+impl From<Action> for carpi_proto::UpdateAction {
+    fn from(a: Action) -> Self {
+        match a {
+            Action::Check => Self::Check,
+            Action::Fetch => Self::Fetch,
+            Action::Apply => Self::Apply,
+            Action::Status => Self::Status,
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -62,6 +89,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Bus => print(call(args.socket, Request::Bus)?),
         Cmd::Capture { path } => print(call(args.socket, Request::SaveCapture { path })?),
         Cmd::Watch { prefix, period_ms } => watch(args.socket, prefix, period_ms),
+        Cmd::Update { action, apply } => update(args.socket, action.into(), apply),
     }
 }
 
@@ -141,6 +169,9 @@ fn print(resp: Response) -> anyhow::Result<()> {
         Response::Hello { daemon, .. } => println!("{daemon}"),
         Response::Ok => {}
         Response::Error { message } => bail!(message),
+        Response::Command { id, command } => println!("command {id}: {command:?}"),
+        Response::JobStarted { job } => println!("job {job} started"),
+        Response::Job { event, .. } => println!("{}", serde_json::to_string(&event)?),
     }
     Ok(())
 }
@@ -202,6 +233,40 @@ fn watch(socket: Option<PathBuf>, prefixes: Vec<String>, period_ms: u32) -> anyh
     loop {
         print(c.recv()?)?;
     }
+}
+
+/// Starts an update job and prints its events until it finishes.
+#[cfg(unix)]
+fn update(
+    socket: Option<PathBuf>,
+    action: carpi_proto::UpdateAction,
+    and_apply: bool,
+) -> anyhow::Result<()> {
+    let mut c = Client::connect(socket)?;
+    print(c.request(&Request::Update { action, and_apply })?)?;
+    loop {
+        let resp = c.recv()?;
+        let done = matches!(
+            &resp,
+            Response::Job {
+                event: carpi_proto::JobEvent::Finished { .. },
+                ..
+            }
+        );
+        print(resp)?;
+        if done {
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn update(
+    _socket: Option<PathBuf>,
+    _action: carpi_proto::UpdateAction,
+    _and_apply: bool,
+) -> anyhow::Result<()> {
+    bail!("talking to carpid needs a Unix socket")
 }
 
 #[cfg(not(unix))]

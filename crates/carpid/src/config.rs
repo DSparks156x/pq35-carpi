@@ -26,6 +26,10 @@ use std::path::{Path, PathBuf};
 ///
 /// [input]
 /// uinput = true        # keys to LIVI through a virtual keyboard
+///
+/// [update]             # read by carpi-update too; see docs/DEPLOY.md
+/// repo = "DSparks156x/pq35-carpi"
+/// channel = "stable"   # or "beta"
 /// ```
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +45,42 @@ pub struct Config {
     pub power: Power,
     #[serde(default)]
     pub input: Input,
+    #[serde(default)]
+    pub update: Update,
+}
+
+/// `[update]`. carpi-update reads the same section; carpid only needs to
+/// know where carpi-update is, but checks every key so typos fail here.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // carpi-update's keys: only checked here
+pub struct Update {
+    #[serde(default = "default_updater")]
+    pub updater: PathBuf,
+    pub repo: Option<String>,
+    pub channel: Option<String>,
+    pub pubkey: Option<PathBuf>,
+    pub restart_user: Option<Vec<String>>,
+    pub restart_system: Option<Vec<String>>,
+    pub check_frames: Option<bool>,
+}
+
+impl Default for Update {
+    fn default() -> Self {
+        Update {
+            updater: default_updater(),
+            repo: None,
+            channel: None,
+            pubkey: None,
+            restart_user: None,
+            restart_system: None,
+            check_frames: None,
+        }
+    }
+}
+
+fn default_updater() -> PathBuf {
+    "/opt/carpi/current/bin/carpi-update".into()
 }
 
 /// Off by default: the first runs on the car log what they would send.
@@ -166,6 +206,7 @@ impl Config {
             tx: Tx::default(),
             power: Power::default(),
             input: Input::default(),
+            update: Update::default(),
         }
     }
 

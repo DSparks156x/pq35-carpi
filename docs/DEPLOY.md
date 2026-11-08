@@ -1,6 +1,6 @@
 # Build, release, update
 
-Status: **draft for Drew.** Sections 1, 2 and 6 are written (`docs/BUNDLE.md`, `scripts/bundle.sh`, `.github/workflows/release.yml`, `os/profile.sh`) but have not had a CI run yet.
+Status: **draft for Drew.** Sections 1, 2 and 6 are written (`docs/BUNDLE.md`, `scripts/bundle.sh`, `.github/workflows/release.yml`, `os/profile.sh`) but have not had a CI run yet. Sections 3 to 5 are written (`crates/carpi-update`, carpid's update jobs, the fork's AP hook, `xtask`) and tested off the Pi only.
 
 Goals (Drew, 2026-11-07):
 - No building on the Pi and none on Windows. GitHub Actions builds, with caches kept so builds are quick.
@@ -68,6 +68,25 @@ A separate small binary, not part of carpid, because it has to replace carpid. c
 - **User config is never touched**: config files live in `~/.config/carpi`, `~/.config/LIVI` and so on. New defaults ship in `share/` for reference. No migrations unless Drew asks.
 - **Source**: `[update] repo = "DSparks156x/pq35-carpi"` and `channel = "stable" | "beta"`. Pointing at a fork is one line.
 
+As built: `carpi-update check | fetch [--force] | apply [--file F] [--allow-unsigned] [--reuse-current] | rollback | status`, with `--root` (default `/opt/carpi`) and `--profile` (default `/etc/carpi-profile`) for tests. It reads `[update]` and `[api]` from carpid's config:
+
+```toml
+[update]
+repo = "DSparks156x/pq35-carpi"
+channel = "stable"                          # or "beta" (beta also takes stable releases)
+# pubkey = "/etc/carpi/minisign.pub"        # bundles must be signed by it when it exists
+# restart_user = ["carpid.service"]         # systemctl --user restart
+# restart_system = ["livi-kiosk.service"]   # sudo -n systemctl restart
+# check_frames = false                      # health check also wants CAN frames
+# updater = "/opt/carpi/current/bin/carpi-update"   # carpid only
+```
+
+- Progress is one JSON `JobEvent` (carpi-proto) per line on stdout, ending with `finished`.
+- `fetch` checks the release's own `manifest.json` (signature, OS profile) before downloading the tarball, then verifies the tarball in one pass and keeps it in `/opt/carpi/downloads/<version>/`. `apply` without `--file` installs that.
+- `/opt/carpi/state.json` holds the downloaded version and how the last apply ended (`ok`, `rolled_back`, `failed`); `status` reports it, so the result of an apply survives carpid's restart.
+- An unsigned `--file` needs `--allow-unsigned` once the device has a key. No key: checksums only, with a note in the progress.
+- Firmware in the manifest is reported, not flashed.
+
 ## 4. The Update button: network dance
 
 LIVI owns `wlan0` as the hotspot. To fetch:
@@ -81,6 +100,13 @@ LIVI owns `wlan0` as the hotspot. To fetch:
 
 If no known network appears within about 30 s, restore the AP and report it. A downloaded but unapplied bundle can be applied later without fetching again.
 
+As built:
+- API (carpi-proto): `Request::Update { action: check | fetch | apply | status, and_apply }` replies `JobStarted { job }`, then unsolicited `Job { job, event }` until `finished`. One job at a time. `and_apply` with `fetch` is the Update button: fetch, AP back, apply.
+- Bridge, carpid to LIVI: the fork sends `Request::Commands` once; carpid sends unsolicited `Response::Command { id, command: Ap { ap: suspend | resume } }` and the fork answers `Request::CommandDone { id, error }`. carpid waits 30 s per command.
+- If NetworkManager already reports `connected` (Ethernet, say), the AP stays up.
+- The fork stops and starts `livi-wifi-ap.service` through LIVI's own sudo rule, and only starts it on resume if it ran before. It resumes by itself when carpid's connection drops or after 4 minutes.
+- `apply` runs as `systemd-run --user --unit=carpi-update-apply`, outside carpid's cgroup, because it restarts carpid. The UI loses the progress there and reads the result with `status`.
+
 ## 5. Direct deploy from the PC
 
 `carpi deploy` (an xtask in pq35-carpi) for development:
@@ -90,6 +116,13 @@ If no known network appears within about 30 s, restore the AP and report it. A d
   - a local bundle, where only carpid and carpi are cross-built on Windows with `cargo zigbuild --target aarch64-unknown-linux-gnu.2.41`. That's pure Rust, so no sysroot is needed. LIVI and sdlink come from the latest CI artifact, since they need Trixie's libraries.
 - **Delivery**: rsync over SSH to the Pi through LIVI's hotspot, then `carpi-update apply --file`. It's the same apply path, rollback included.
 - **Tags**: dev bundles are versioned `dev-<sha>`, so the UI shows what's actually installed.
+
+As built, `cargo xtask deploy`:
+- `--from-ci <branch|run-id>` (default: the current branch): `gh run download` of the newest successful `release.yml` run's bundle artifact.
+- `--file <bundle>`: a local bundle.
+- `--carpid-only`: `cargo zigbuild` of carpid and carpi, then a dev bundle `dev-<sha7>[-dirty]` holding only those two and a manifest made from the Pi's installed one. `carpi-update apply --reuse-current` takes the other files from the current release and checks them against that manifest. Without zig or cargo-zigbuild it says how to install them.
+- `--host` (default `carpi`), `--updater` (default `/opt/carpi/current/bin/carpi-update`).
+- Delivery is scp to the Pi's home, then `apply --file ... --allow-unsigned` over ssh, printing the progress. scp instead of rsync: Windows has no rsync.
 
 ## 6. OS profile
 
