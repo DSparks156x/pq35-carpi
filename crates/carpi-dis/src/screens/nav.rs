@@ -187,8 +187,10 @@ pub fn imperial(i: &NavInput, cfg: &NavConfig) -> bool {
     }
 }
 
-/// ETA forms, longest first, from the phone's text (`14:32`, `2:32 PM`).
-/// Unparseable text is shown as it came.
+/// ETA forms, longest first, from the phone's text (`14:32`, `2:32 PM`):
+/// just the time, no label (Drew: too crowded). 12 h is always `2:32pm`,
+/// lowercase, no space, else `2:32`; 24 h `14:32`. Unparseable text is shown
+/// as it came.
 pub fn eta_forms(text: &str, clock: Clock) -> Vec<String> {
     let t = text.trim();
     let upper = t.to_ascii_uppercase();
@@ -199,7 +201,7 @@ pub fn eta_forms(text: &str, clock: Clock) -> Vec<String> {
         .split_once(':')
         .and_then(|(h, m)| Some((h.trim().parse::<u32>().ok()?, m.trim().parse::<u32>().ok()?)));
     let Some((h, m)) = parsed.filter(|(h, m)| *h < 24 && *m < 60) else {
-        return vec![format!("ETA {t}"), t.to_string()];
+        return vec![t.to_string()];
     };
     let h24 = match (ampm, pm, h) {
         (true, true, 12) | (false, _, _) => h,
@@ -214,16 +216,10 @@ pub fn eta_forms(text: &str, clock: Clock) -> Vec<String> {
     };
     if twelve {
         let h12 = if h24 % 12 == 0 { 12 } else { h24 % 12 };
-        let (big, small) = if h24 < 12 { ("AM", "am") } else { ("PM", "pm") };
-        vec![
-            format!("ETA {h12}:{m:02} {big}"),
-            format!("ETA {h12}:{m:02}{small}"),
-            format!("{h12}:{m:02} {big}"),
-            format!("{h12}:{m:02}{small}"),
-            format!("{h12}:{m:02}"),
-        ]
+        let ap = if h24 < 12 { "am" } else { "pm" };
+        vec![format!("{h12}:{m:02}{ap}"), format!("{h12}:{m:02}")]
     } else {
-        vec![format!("ETA {h24:02}:{m:02}"), format!("{h24:02}:{m:02}")]
+        vec![format!("{h24:02}:{m:02}")]
     }
 }
 
@@ -645,10 +641,10 @@ mod tests {
             ..Default::default()
         };
         assert!(imperial(&i, &NavConfig::default()));
-        assert_eq!(eta_forms("2:32 PM", Clock::Auto)[3], "2:32pm");
-        assert_eq!(eta_forms("14:32", Clock::H12)[0], "ETA 2:32 PM");
-        assert_eq!(eta_forms("12:05 AM", Clock::H24)[1], "00:05");
-        assert_eq!(eta_forms("soon", Clock::Auto), vec!["ETA soon", "soon"]);
+        assert_eq!(eta_forms("2:32 PM", Clock::Auto), vec!["2:32pm", "2:32"]);
+        assert_eq!(eta_forms("14:32", Clock::H12), vec!["2:32pm", "2:32"]);
+        assert_eq!(eta_forms("12:05 AM", Clock::H24), vec!["00:05"]);
+        assert_eq!(eta_forms("soon", Clock::Auto), vec!["soon"]);
     }
 
     #[test]
@@ -660,7 +656,7 @@ mod tests {
             ..Default::default()
         };
         let p = pocket_pages(&i, &NavConfig::default());
-        assert_eq!(p[0], vec!["ETA 14:32", "14:32"]);
+        assert_eq!(p[0], vec!["14:32"]);
         assert_eq!(p[1], vec!["1h 05", "1h05", "1h"]);
         assert_eq!(p[2], vec!["12 km", "12km"]);
     }
