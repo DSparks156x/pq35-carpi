@@ -98,6 +98,20 @@ pub(crate) struct Display {
     readings: Option<ReadingsInput>,
     top_text: String,
     last_error: Option<String>,
+    /// Logged state, so the journal shows each change once (car test
+    /// 2026-11-08: the DIS did nothing and logged nothing).
+    log: LogState,
+}
+
+#[derive(Default)]
+struct LogState {
+    wait: Option<String>,
+    phase: Option<Phase>,
+    window: &'static str,
+    want: Option<Option<ScreenId>>,
+    /// Gate refusals of DDP frames since the last log line, and the reason.
+    refused: u32,
+    refusal: Option<String>,
 }
 
 fn new_dis(setup: &DisSetup) -> Dis {
@@ -203,6 +217,7 @@ impl Display {
             readings: None,
             top_text: String::new(),
             last_error: None,
+            log: LogState::default(),
         }
     }
 
@@ -270,12 +285,29 @@ impl Display {
             return;
         };
         let want = self.setup.enabled && may_draw(&view);
+        let wait = (!want).then(|| {
+            if !self.setup.enabled {
+                "disabled in config".to_string()
+            } else if view.bus != BusState::Awake {
+                format!("bus {:?}", view.bus)
+            } else {
+                format!("kl15 {:?}", view.kl15)
+            }
+        });
+        if wait != self.log.wait {
+            match &wait {
+                Some(w) => tracing::info!("dis: waiting ({w})"),
+                None => tracing::info!("dis: starting (bus awake, kl15 on)"),
+            }
+            self.log.wait = wait;
+        }
         if want && !self.running {
             self.running = true;
             self.dis.start(now);
             self.dis
                 .set_user_page(now, self.user_page.then_some(PAGES[self.page]));
         } else if !want && self.running {
+            tracing::info!("dis: stopped");
             self.running = false;
             self.dis.stop(now);
             self.nav = None;
@@ -297,6 +329,7 @@ impl Display {
             while let Some(e) = self.dis.poll_event() {
                 self.on_event(e);
             }
+            self.log_state();
             if let Some(e) = self.dis.last_error.take() {
                 self.last_error = Some(format!("frame skipped: {e:?}"));
             }
@@ -339,11 +372,48 @@ impl Display {
         out: &mut Vec<Output>,
     ) {
         while let Some(f) = self.dis.poll_transmit() {
-            if let Some(v) = &view
-                && gate.check(TxClass::DisplayDdp, &f, now, v).is_ok()
-            {
-                out.push(Output::Send { iface, frame: f });
+            let Some(v) = &view else { continue };
+            match gate.check(TxClass::DisplayDdp, &f, now, v) {
+                Ok(()) => out.push(Output::Send { iface, frame: f }),
+                Err(e) => {
+                    // A dropped DDP frame stalls the TP2 link; say so.
+                    let why = format!("{e:?}");
+                    if self.log.refusal.as_deref() != Some(why.as_str()) {
+                        tracing::warn!(
+                            "dis: gate refused DDP frame ({why}); {} refused before",
+                            self.log.refused
+                        );
+                        self.log.refusal = Some(why);
+                        self.log.refused = 0;
+                    }
+                    self.log.refused += 1;
+                }
             }
+        }
+    }
+
+    /// Phase, window and wanted screen, each logged when it changes.
+    fn log_state(&mut self) {
+        let s = self.dis.session();
+        let (phase, window) = (s.phase(), window_name(s.window()));
+        if self.log.phase != Some(phase) {
+            tracing::info!("dis: session {}", phase_name(phase));
+            self.log.phase = Some(phase);
+        }
+        if self.log.window != window {
+            tracing::info!("dis: window {window} (generation {})", s.generation());
+            self.log.window = window;
+        }
+        let shown = self.dis.wanted();
+        if self.log.want != Some(shown) {
+            match shown {
+                Some(id) => tracing::info!("dis: wants the centre for {id:?}"),
+                None => tracing::info!(
+                    "dis: nothing to show (no nav guidance, no page picked{})",
+                    if self.user_page { "" } else { "; wheel keys with DIS focus pick one" }
+                ),
+            }
+            self.log.want = Some(shown);
         }
     }
 
@@ -359,6 +429,11 @@ impl Display {
     }
 
     fn on_event(&mut self, e: SessionEvent) {
+        match &e {
+            SessionEvent::FrameDone => {}
+            SessionEvent::Ready(p) => tracing::info!("dis: handshake done: {p:?}"),
+            other => tracing::info!("dis: {other:?}"),
+        }
         let msg = match e {
             SessionEvent::Unsupported(rec) => format!("cluster record not supported: {rec:02X?}"),
             SessionEvent::Fault => "claim refused (53 C0)".into(),

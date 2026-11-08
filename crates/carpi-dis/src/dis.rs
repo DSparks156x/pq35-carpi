@@ -92,6 +92,8 @@ pub struct Dis {
     shown: Option<(ScreenId, u32)>,
     /// Re-enter the shown screen on the next frame (subpage change).
     reenter: bool,
+    /// What the arbiter last picked for the centre.
+    want: Option<ScreenId>,
     /// Bench probes: hold the centre, draw nothing; the probe sends raw frames.
     probe: bool,
     belief: Option<Fb>,
@@ -120,6 +122,7 @@ impl Dis {
             user_page: None,
             shown: None,
             reenter: false,
+            want: None,
             probe: false,
             belief: None,
             last_error: None,
@@ -129,6 +132,12 @@ impl Dis {
     pub fn session(&self) -> &Session {
         &self.session
     }
+    /// The screen the arbiter wants on the centre right now (`None`: nothing
+    /// to show, the centre is left to the cluster).
+    pub fn wanted(&self) -> Option<ScreenId> {
+        self.want
+    }
+
     pub fn shown(&self) -> Option<ScreenId> {
         self.shown.map(|(s, _)| s)
     }
@@ -357,6 +366,7 @@ impl Dis {
         }
         let class = self.arbiter.winner(now, Surface::Centre);
         let want = self.screen_for(now, class);
+        self.want = want;
         self.session.set_want(now, want.is_some());
         let (Some(id), Some(profile)) = (want, self.session.profile()) else {
             return;
