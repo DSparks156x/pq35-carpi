@@ -2,7 +2,7 @@
 //! message they'd send to the framebuffer model (real glyphs from the font
 //! capture, native strokes, clips), and write what the centre would show.
 //!
-//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes|nav-stock|media]`
+//! `cargo run -p carpi-dis --example mock -- <out dir> [nav-lanes|nav-stock|media|readings|accel]`
 //!
 //! Each sheet is a grid of labelled tiles, 4x, lit pixels white on black.
 //! Optional "top lines" above a tile show the two 8-cell radio lines.
@@ -349,6 +349,124 @@ fn media(out: &Path) {
     sheet(&tiles, 3, &out.join("media.png"));
 }
 
+/// Readings pages, plain and with DIS focus (inverted page name), Drew's
+/// units (imperial).
+fn readings(out: &Path) {
+    use carpi_dis::screens::readings::{ReadingCell, ReadingsInput, ReadingsPage, ReadingsScreen};
+    let cell = |k: &str, d: u8, u: &str| ReadingCell {
+        key: k.into(),
+        decimals: d,
+        icon: None,
+        unit: Some(u.into()),
+    };
+    let pages = vec![
+        ReadingsPage {
+            name: "Engine".into(),
+            cells: vec![
+                cell("vehicle.speed_mph", 0, "mph"),
+                cell("engine.rpm", 0, "rpm"),
+                cell("engine.coolant_f", 0, "\u{B0}F"),
+                cell("engine.oil_temp_f", 0, "\u{B0}F"),
+                cell("power.battery_v", 1, "V"),
+                cell("engine.boost_psi", 1, "psi"),
+                cell("engine.iat_f", 0, "\u{B0}F"),
+                cell("engine.afr", 1, ""),
+            ],
+        },
+        ReadingsPage {
+            name: "Temps".into(),
+            cells: vec![
+                cell("engine.coolant_f", 0, "\u{B0}F"),
+                cell("engine.oil_temp_f", 0, "\u{B0}F"),
+                cell("engine.iat_f", 0, "\u{B0}F"),
+                cell("ambient.outside_temp_f", 0, "\u{B0}F"),
+                cell("haldex.oil_temperature_f", 0, "\u{B0}F"),
+                cell("transmission.oil_temperature_f", 0, "\u{B0}F"),
+                cell("exhaust.egt_f", 0, "\u{B0}F"),
+                cell("ambient.cabin_f", 0, "\u{B0}F"),
+            ],
+        },
+    ];
+    let inputs = [
+        [Some(64.0), Some(2850.0), Some(195.0), Some(221.0), Some(14.1), Some(11.4), Some(88.0), Some(14.7)],
+        [Some(195.0), Some(221.0), Some(88.0), Some(41.0), Some(130.0), Some(176.0), None, Some(70.0)],
+    ];
+    let mut tiles = Vec::new();
+    for (page, values) in inputs.iter().enumerate() {
+        for focus in [false, true] {
+            let mut s = ReadingsScreen::with_pages(pages.clone());
+            for _ in 0..page {
+                s.step(1);
+            }
+            s.set_focus(focus);
+            s.set(ReadingsInput {
+                title: String::new(),
+                values: *values,
+            });
+            let name = &pages[page].name;
+            tiles.push(Tile {
+                label: format!("{name}{}", if focus { " (DIS focus)" } else { "" }),
+                fb: render_at(&mut s, Instant::now(), &[]),
+                top: None,
+            });
+        }
+    }
+    sheet(&tiles, 2, &out.join("readings.png"));
+}
+
+/// Accel test through a run, imperial legs: ready, timing, a leg just done
+/// (1 s inverted flash), results, then rolling after a lift.
+fn accel(out: &Path) {
+    use carpi_dis::screens::accel::{AccelConfig, AccelScreen, Leg};
+    let cfg = AccelConfig {
+        legs: vec![
+            Leg::Range { from: 0.0, to: 60.0 },
+            Leg::Range { from: 30.0, to: 70.0 },
+            Leg::Distance {
+                m: 402.336,
+                label: "1/4 mi".into(),
+            },
+            Leg::Speed,
+        ],
+        imperial: true,
+        ..AccelConfig::default()
+    };
+    // mph: stopped 1 s, then a pull easing off, lift at 20 s.
+    let v = |s: f64| {
+        if s < 1.0 {
+            0.0
+        } else if s < 20.0 {
+            120.0 * (1.0 - (-(s - 1.0) / 9.0).exp())
+        } else {
+            (120.0 * (1.0 - (-19.0f64 / 9.0).exp()) - (s - 20.0) * 15.0).max(0.0)
+        }
+    };
+    let shots = [
+        ("ready", 0.5),
+        ("timing", 3.0),
+        ("0-60 just done (1 s flash)", 7.4),
+        ("30-70 done, 1/4 mi running", 11.0),
+        ("1/4 mi just done", 16.2),
+        ("done, rolling after the lift", 21.0),
+    ];
+    let t0 = Instant::now();
+    let mut tiles = Vec::new();
+    for (name, at) in shots {
+        let mut s = AccelScreen::new(cfg.clone());
+        let mut t = 0.0;
+        while t <= at {
+            s.sample(t0 + Duration::from_secs_f64(t), v(t));
+            t += 0.05;
+        }
+        tiles.push(Tile {
+            label: name.into(),
+            fb: render_at(&mut s, t0 + Duration::from_secs_f64(at), &[]),
+            top: None,
+        });
+    }
+    sheet(&tiles, 3, &out.join("accel.png"));
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = PathBuf::from(args.first().expect("usage: mock <out dir> [sheet]"));
@@ -358,6 +476,8 @@ fn main() {
         "nav-lanes" => nav_lanes(&out),
         "nav-stock" => nav_stock(&out),
         "media" => media(&out),
+        "readings" => readings(&out),
+        "accel" => accel(&out),
         other => panic!("unknown sheet {other}"),
     }
 }
