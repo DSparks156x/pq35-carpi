@@ -1,0 +1,200 @@
+# Build the arm64 bundle (docs/BUNDLE.md) and publish it. docs/DEPLOY.md section 2.
+#   push to main  -> pre-release beta-<YYYYMMDD>-<sha7>, newest 5 kept
+#   tag v*        -> stable release
+#   anything else -> workflow artifact only
+# Nothing names this repo: forks build and publish their own releases. Signing needs the
+# MINISIGN_KEY secret (minisign -G -W secret key file); without it the bundle is unsigned.
+name: release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  bundle:
+    runs-on: ubuntu-24.04-arm
+    # Same glibc and libraries as Pi OS Trixie.
+    container: debian:trixie
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      DEBIAN_FRONTEND: noninteractive
+      # pq35: pkg-config. LIVI: livi/README.md "System Requirements" (build half). sdlink: gcc, make.
+      # Bundle: python3, zstd, minisign. Checkout: git.
+      APT_PACKAGES: >-
+        git ca-certificates curl build-essential pkg-config cmake libssl-dev
+        libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+        libwayland-dev libxkbcommon-dev libfontconfig1-dev
+        libudev-dev libinput-dev libseat-dev libgbm-dev
+        python3 minisign
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+    steps:
+      # zstd before any cache step, or caches saved with zstd never restore.
+      - name: apt bootstrap
+        run: |
+          rm -f /etc/apt/apt.conf.d/docker-clean
+          apt-get update
+          apt-get install -y --no-install-recommends zstd
+          echo "APT_KEY=apt-trixie-arm64-$(printf '%s' "$APT_PACKAGES" | sha256sum | cut -c1-16)" >> "$GITHUB_ENV"
+
+      - name: apt cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: ${{ env.APT_KEY }}
+
+      - name: apt install
+        run: apt-get install -y --no-install-recommends $APT_PACKAGES
+
+      - name: git safe.directory
+        run: git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: version
+        id: version
+        run: |
+          sha=$(git rev-parse --short=7 HEAD)
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            version=${GITHUB_REF_NAME#v} channel=stable
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            version=beta-$(TZ=UTC0 git log -1 --format=%cd --date=format-local:%Y%m%d)-$sha channel=beta
+          else
+            version=dev-$sha channel=dev
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "$channel $version"
+
+      - name: rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+            sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # LIVI's pinned toolchain, from livi/rust-toolchain.toml.
+          cd livi && "$HOME/.cargo/bin/rustup" toolchain install
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      # One cache per workspace. rust-cache keys on Cargo.lock and the rustc in the repo root
+      # (stable); LIVI's key adds its pinned toolchain file.
+      - name: rust cache (pq35-carpi)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: pq35-carpi
+          workspaces: . -> target
+
+      - name: rust cache (livi)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: livi
+          key: ${{ hashFiles('livi/rust-toolchain.toml') }}
+          workspaces: livi/native -> target
+
+      - name: build pq35-carpi
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
+        run: |
+          pkgs=(-p carpid -p carpi-cli)
+          [ -f crates/carpi-update/Cargo.toml ] && pkgs+=(-p carpi-update)
+          cargo build --release --locked "${pkgs[@]}"
+
+      - name: build LIVI
+        working-directory: livi/native
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
+        run: |
+          # LIVI stamps GITHUB_SHA otherwise, which is pq35-carpi's.
+          BUILD_SHA=$(git rev-parse HEAD) cargo xtask build-native
+
+      - name: build sdlink
+        run: make -C sdlink -j"$(nproc)"
+
+      - name: sccache stats
+        run: sccache --show-stats
+
+      - name: bundle
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+        run: |
+          key=()
+          if [ -n "$MINISIGN_KEY" ]; then
+            printf '%s\n' "$MINISIGN_KEY" > "$RUNNER_TEMP/minisign.key"
+            key=(--key "$RUNNER_TEMP/minisign.key")
+          else
+            echo "::warning::MINISIGN_KEY is not set: the bundle is unsigned"
+          fi
+          scripts/bundle.sh --version "${{ steps.version.outputs.version }}" \
+            --channel "${{ steps.version.outputs.channel }}" --out dist "${key[@]}"
+          rm -f "$RUNNER_TEMP/minisign.key"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: carpi-${{ steps.version.outputs.version }}-arm64
+          path: dist/
+          compression-level: 0 # already zstd
+          if-no-files-found: error
+
+  publish:
+    needs: [test, bundle]
+    if: github.event_name == 'push' && (needs.bundle.outputs.channel == 'beta' || needs.bundle.outputs.channel == 'stable')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.bundle.outputs.version }}
+      CHANNEL: ${{ needs.bundle.outputs.channel }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: carpi-${{ needs.bundle.outputs.version }}-arm64
+          path: dist
+
+      - name: release
+        run: |
+          notes=$(jq -r '"pq35-carpi \(.commits["pq35-carpi"])\nlivi \(.commits.livi)\nsdlink \(.commits.sdlink)\nmin OS profile \(.min_os_profile)"' dist/manifest.json)
+          [ -f dist/manifest.json.minisig ] || notes="$notes"$'\n\nUnsigned.'
+          tag=$VERSION
+          [ "$CHANNEL" = stable ] && tag=$GITHUB_REF_NAME
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # Re-run: replace the assets.
+            gh release upload "$tag" dist/* --clobber
+          elif [ "$CHANNEL" = stable ]; then
+            gh release create "$tag" dist/* --verify-tag --title "$VERSION" --notes "$notes"
+          else
+            gh release create "$VERSION" dist/* --target "$GITHUB_SHA" --prerelease --latest=false \
+              --title "$VERSION" --notes "$notes"
+          fi
+
+      - name: prune betas
+        if: needs.bundle.outputs.channel == 'beta'
+        run: |
+          gh release list --limit 200 --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | startswith("beta-")))] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+          while read -r tag; do
+            echo "deleting $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done

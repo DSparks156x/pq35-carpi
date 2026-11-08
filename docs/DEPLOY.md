@@ -1,6 +1,6 @@
 # Build, release, update
 
-Status: **draft for Drew.** Nothing here is built yet.
+Status: **draft for Drew.** Sections 1, 2 and 6 are written (`docs/BUNDLE.md`, `scripts/bundle.sh`, `.github/workflows/release.yml`, `os/profile.sh`) but have not had a CI run yet.
 
 Goals (Drew, 2026-11-07):
 - No building on the Pi and none on Windows. GitHub Actions builds, with caches kept so builds are quick.
@@ -26,6 +26,8 @@ carpi-<version>-arm64.tar.zst
 manifest.json.minisig
 ```
 
+The exact layout and `manifest.json` schema are in [BUNDLE.md](BUNDLE.md). Differences from the sketch above: `manifest.json` and its `.minisig` sit at the top of the tarball and are also published next to it, so a device can check a release before downloading it; `firmware/` only has the Teensy image when one is passed in, since CI doesn't run PlatformIO yet, and no RNS-E sectors (see Decisions).
+
 The device only ever talks to one repo's releases, so a fork of pq35-carpi is a complete product.
 
 ## 2. CI (GitHub Actions)
@@ -38,7 +40,7 @@ The device only ever talks to one repo's releases, so a fork of pq35-carpi is a 
 - **Jobs**:
   1. Test: the existing x86 fmt, clippy and test run.
   2. Build bundle on arm64.
-  3. Sign the manifest. The minisign key lives in repo secrets, and each fork uses its own.
+  3. Sign the manifest. The minisign key lives in repo secrets (`MINISIGN_KEY`, made with `minisign -G -W`), and each fork uses its own. Without it the bundle is built unsigned, with a warning.
   4. Publish.
 - **What triggers what**:
 
@@ -100,6 +102,8 @@ The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/p
 - later, the NVMe boot-time trimming.
 
 The bundle manifest names the minimum profile version it needs. The script is what I did by hand to the trial card, written down.
+
+Run it as `sudo os/profile.sh [--hat carpihat|cowcarhat] [--dry-run]`; CarPiHat is the default and Drew's hat has no lines yet. It records `PROFILE_VERSION` and the hat in `/etc/carpi-profile`, and also creates `/opt/carpi/releases` owned by the car user. The CAN network file sets `RequiredForOnline=no` so a car without the hat doesn't stall boot in wait-online.
 
 ## Decisions (Drew, 2026-11-07)
 

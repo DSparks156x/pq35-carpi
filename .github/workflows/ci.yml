@@ -3,12 +3,16 @@ name: ci
 on:
   push:
   pull_request:
+  # release.yml runs this first, so a red test blocks a release.
+  workflow_call:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: false # the workspace doesn't use livi/ or sdlink/
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -21,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: false # the workspace doesn't use livi/ or sdlink/
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-gnu

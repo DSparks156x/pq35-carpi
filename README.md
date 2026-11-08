@@ -24,7 +24,11 @@ cargo test --workspace
 cargo build --release -p carpid -p carpi-cli
 ```
 
-On the Pi, build natively and copy `target/release/carpid` and `target/release/carpi` to `~/.local/bin`, then install `deploy/carpid.service` and `deploy/carpid.toml` (instructions in the unit file).
+Releases are built by GitHub Actions (`.github/workflows/release.yml`), not on the Pi: an arm64 Debian Trixie build of carpid, carpi, LIVI (`livi/`) and the sdlink Pi side (`sdlink/`), packed by `scripts/bundle.sh` into one bundle ([docs/BUNDLE.md](docs/BUNDLE.md)). A push to `main` makes a beta pre-release, a `vX.Y.Z` tag a stable release, anything else a workflow artifact. Clone with `--recurse-submodules`. Design: [docs/DEPLOY.md](docs/DEPLOY.md).
+
+A fresh Pi OS Trixie card is set up with `sudo os/profile.sh`.
+
+By hand, for now: build natively on the Pi and copy `target/release/carpid` and `target/release/carpi` to `~/.local/bin`, then install `deploy/carpid.service` and `deploy/carpid.toml` (instructions in the unit file).
 
 ## Use
 
