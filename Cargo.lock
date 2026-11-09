@@ -351,6 +351,7 @@ dependencies = [
 name = "carpi-light"
 version = "0.1.0"
 dependencies = [
+ "carpi-gate",
  "carpi-state",
 ]
 
