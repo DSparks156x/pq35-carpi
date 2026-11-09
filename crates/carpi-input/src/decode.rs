@@ -36,8 +36,11 @@ impl Default for DecoderConfig {
         DecoderConfig {
             // Three missed 500 ms cycles.
             wheel_release_timeout: Duration::from_millis(1500),
-            // Three missed 110 ms repeats, plus slack.
-            panel_release_timeout: Duration::from_millis(400),
+            // The RNS-E sends its own release (04, five times), so this only
+            // covers a lost one. Its press repeats pause for most of a second
+            // during a long hold (car log 2026-11-08: a 10 s Prev hold came
+            // out as four ~1 s holds at 400 ms), so be generous.
+            panel_release_timeout: Duration::from_millis(1500),
             mode_again_window: Duration::from_millis(1000),
             knob_frames_per_detent: 1,
         }
@@ -520,13 +523,15 @@ mod tests {
         let mut d = Decoder::new(DecoderConfig::default());
         d.on_frame(t0, P, &[0x37, 0x30, 1, 0x02, 0x00, 0]);
         d.on_frame(t0 + ms(110), P, &[0x37, 0x30, 1, 0x02, 0x00, 0]);
-        assert_eq!(d.next_deadline(), Some(t0 + ms(510)));
+        assert_eq!(d.next_deadline(), Some(t0 + ms(1610)));
+        // A pause in the repeats mid-hold (the RNS-E does this) isn't a release.
+        assert!(d.on_frame(t0 + ms(1100), W, &[0x39, 0x00]).is_empty());
         // A wheel frame after the deadline flushes the release first.
-        let got = d.on_frame(t0 + ms(600), W, &[0x39, 0x00]);
+        let got = d.on_frame(t0 + ms(1700), W, &[0x39, 0x00]);
         assert_eq!(edges(&got), vec![(Key::Next, Edge::Up)]);
         // Then the real release burst finds nothing.
         assert!(
-            d.on_frame(t0 + ms(650), P, &[0x37, 0x30, 4, 0x02, 0x00, 0])
+            d.on_frame(t0 + ms(1750), P, &[0x37, 0x30, 4, 0x02, 0x00, 0])
                 .is_empty()
         );
     }
