@@ -26,6 +26,7 @@ mod portal;
 mod runmark;
 mod settings;
 mod update;
+mod wifi;
 
 use anyhow::Context;
 use carpi_can::recorder::Recorder;

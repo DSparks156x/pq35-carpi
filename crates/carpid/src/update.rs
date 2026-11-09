@@ -279,7 +279,7 @@ impl Jobs {
         events: mpsc::UnboundedSender<JobEvent>,
     ) -> Result<u32, String> {
         if self.busy.swap(true, Ordering::SeqCst) {
-            return Err("an update job is running".into());
+            return Err("an update or Wi-Fi job is running".into());
         }
         let job = self.next_job();
         let me = self.clone();
@@ -298,6 +298,47 @@ impl Jobs {
                 &events,
             )
             .await;
+            me.busy.store(false, Ordering::SeqCst);
+        });
+        Ok(job)
+    }
+}
+
+impl Jobs {
+    /// A Wi-Fi scan or test: it takes the radio from the hotspot, so it
+    /// shares the update's one-at-a-time.
+    pub fn start_wifi(
+        self: &Arc<Self>,
+        action: carpi_proto::WifiAction,
+        events: mpsc::UnboundedSender<JobEvent>,
+    ) -> Result<u32, String> {
+        use carpi_proto::WifiAction as W;
+        if !matches!(action, W::Scan | W::Test { .. }) {
+            return Err("not a Wi-Fi job".into());
+        }
+        if self.busy.swap(true, Ordering::SeqCst) {
+            return Err("an update or Wi-Fi job is running".into());
+        }
+        let job = self.next_job();
+        let me = self.clone();
+        tokio::spawn(async move {
+            let bridge = Livi(me.hub.clone());
+            match action {
+                W::Test { ssid } => {
+                    crate::wifi::test(
+                        &crate::wifi::Real,
+                        &bridge,
+                        &ssid,
+                        crate::wifi::TIMING,
+                        &events,
+                    )
+                    .await
+                }
+                _ => {
+                    crate::wifi::scan(&crate::wifi::Real, &bridge, crate::wifi::TIMING, &events)
+                        .await
+                }
+            }
             me.busy.store(false, Ordering::SeqCst);
         });
         Ok(job)

@@ -44,6 +44,13 @@ pub enum Request {
     SaveCapture {
         path: Option<String>,
     },
+    /// Wi-Fi networks the Pi joins when the hotspot steps aside (updates;
+    /// docs/PAGES.md 5b). `list`, `add` and `forget` answer [`Response::Wifi`];
+    /// `scan` and `test` drop the hotspot for a moment, so they're jobs like
+    /// `Update` (one at a time with them) and answer [`Response::JobStarted`].
+    Wifi {
+        action: WifiAction,
+    },
     /// Save a capture into the logs folder (docs/PAGES.md 3): the last few
     /// minutes of CAN, the journal, values and config, as the next
     /// `<date> #NN`. Answers [`Response::Captured`]; LIVI also gets a
@@ -909,6 +916,77 @@ pub enum PinChange {
     Clear,
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WifiAction {
+    List,
+    /// Saves a network (or replaces the saved one with that name). Joins
+    /// nothing: the hotspot holds the radio until an update or a test.
+    Add {
+        ssid: String,
+        /// `None`: an open network.
+        #[serde(default)]
+        password: Option<String>,
+        /// Not broadcast, so the scan won't show it.
+        #[serde(default)]
+        hidden: bool,
+    },
+    Forget {
+        ssid: String,
+    },
+    /// Hotspot down ~10 s, list what's in range, hotspot back. Job events:
+    /// [`JobEvent::WifiSeen`], then `Finished`.
+    Scan,
+    /// Hotspot down, join `ssid`, check for the internet, hotspot back.
+    Test {
+        ssid: String,
+    },
+}
+
+/// The password never shows in `Debug` output, so it can't reach a log.
+impl std::fmt::Debug for WifiAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WifiAction::List => f.write_str("List"),
+            WifiAction::Add {
+                ssid,
+                password,
+                hidden,
+            } => f
+                .debug_struct("Add")
+                .field("ssid", ssid)
+                .field("password", &password.as_ref().map(|_| "***"))
+                .field("hidden", hidden)
+                .finish(),
+            WifiAction::Forget { ssid } => f.debug_struct("Forget").field("ssid", ssid).finish(),
+            WifiAction::Scan => f.write_str("Scan"),
+            WifiAction::Test { ssid } => f.debug_struct("Test").field("ssid", ssid).finish(),
+        }
+    }
+}
+
+/// A saved client network.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiNetwork {
+    pub ssid: String,
+    /// Needs a password (WPA); false: open.
+    pub secured: bool,
+    pub hidden: bool,
+    /// Last joined, unix seconds; `None`: never.
+    pub last_used: Option<u64>,
+}
+
+/// A network in range, from a scan.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiSeen {
+    pub ssid: String,
+    /// 0-100.
+    pub signal: u8,
+    pub secured: bool,
+    /// Already saved.
+    pub saved: bool,
+}
+
 impl std::fmt::Debug for PinChange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1045,6 +1123,8 @@ pub enum JobEvent {
     Dtcs { module: u8, dtcs: Vec<Dtc> },
     /// Diag: mode, channels and subscriptions.
     DiagStatus(DiagStatus),
+    /// Wi-Fi scan: networks in range, strongest first.
+    WifiSeen { networks: Vec<WifiSeen> },
     /// Last event of a job.
     Finished { ok: bool, message: String },
 }
@@ -1153,6 +1233,12 @@ pub enum Response {
     CaptureSaved {
         path: String,
         frames: usize,
+    },
+    /// Reply to `Wifi` list, add and forget: the saved networks after it.
+    Wifi {
+        networks: Vec<WifiNetwork>,
+        /// The network the Pi is on now, if any (not while it's the hotspot).
+        connected: Option<String>,
     },
     /// Reply to `Capture`.
     Captured {

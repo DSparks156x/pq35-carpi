@@ -195,6 +195,42 @@ async fn serve(
                     }
                 }
             }
+            Ok(Request::Wifi { action }) => {
+                use carpi_proto::WifiAction as W;
+                let nm = crate::wifi::Real;
+                let done = match &action {
+                    W::List => Ok(()),
+                    W::Add {
+                        ssid,
+                        password,
+                        hidden,
+                    } => crate::wifi::add(&nm, ssid, password.as_deref(), *hidden).await,
+                    W::Forget { ssid } => crate::wifi::forget(&nm, ssid).await,
+                    W::Scan | W::Test { .. } => {
+                        let (events, rx) = mpsc::unbounded_channel();
+                        match jobs.start_wifi(action.clone(), events) {
+                            Err(message) => Err(message),
+                            Ok(job) => {
+                                if out_tx.send(Response::JobStarted { job }).await.is_err() {
+                                    break;
+                                }
+                                forward_job(job, rx, &out_tx);
+                                continue;
+                            }
+                        }
+                    }
+                };
+                match done {
+                    Err(message) => Response::Error { message },
+                    Ok(()) => match crate::wifi::list(&nm).await {
+                        Ok((networks, connected)) => Response::Wifi {
+                            networks,
+                            connected,
+                        },
+                        Err(message) => Response::Error { message },
+                    },
+                }
+            }
             Ok(Request::Capture { trigger }) => captures.capture(&trigger).await,
             Ok(Request::Datalog { action }) => datalog.handle(action).await,
             Ok(Request::Settings { action }) => {

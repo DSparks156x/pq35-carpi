@@ -189,6 +189,17 @@ polkit.addRule(function(action, subject) {
   }
 });" || true
 
+# 8b. carpid saves, tests and scans Wi-Fi networks for updates (docs/PAGES.md 5b). It runs as a
+#     lingering user service, not an active login, so polkit asks for a password without this.
+put_file /etc/polkit-1/rules.d/50-carpi-wifi.rules "// carpid: Wi-Fi networks for updates (crates/carpid/src/wifi.rs).
+polkit.addRule(function(action, subject) {
+  if ((action.id == \"org.freedesktop.NetworkManager.settings.modify.system\" ||
+       action.id == \"org.freedesktop.NetworkManager.network-control\" ||
+       action.id == \"org.freedesktop.NetworkManager.wifi.scan\") && subject.user == \"$USERNAME\") {
+    return polkit.Result.YES;
+  }
+});" || true
+
 # 9. Timezone, when asked for.
 if [ -n "$TZONE" ]; then
   [ -f "/usr/share/zoneinfo/$TZONE" ] || die "unknown timezone: $TZONE"
