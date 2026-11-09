@@ -167,11 +167,9 @@ umount -R "$MNT" || fail "Couldn't unmount the NVMe"
 stage eeprom "Setting the Pi to start from the NVMe"
 CONF=$(mktemp)
 rpi-eeprom-config > "$CONF" || fail "Couldn't read the boot settings"
-WANT=("BOOT_ORDER=0xf416")
-# A non-HAT+ NVMe adapter needs the bootloader to probe PCIe (config.txt turns it on for Linux).
-if grep -qE '^[[:space:]]*dtparam=(pciex1|nvme)' /boot/firmware/config.txt; then
-  WANT+=("PCIE_PROBE=1")
-fi
+# PCIE_PROBE: plain M.2 boards on the ribbon (not HAT+) aren't found by the bootloader without
+# it, and it costs a HAT+ nothing.
+WANT=("BOOT_ORDER=0xf416" "PCIE_PROBE=1")
 changed=0
 for w in "${WANT[@]}"; do
   key=${w%%=*}
