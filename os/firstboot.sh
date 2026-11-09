@@ -108,7 +108,11 @@ req = urllib.request.Request(
     headers={"Accept": "application/vnd.github+json", "User-Agent": "carpi-firstboot"},
 )
 releases = json.load(urllib.request.urlopen(req, timeout=60))
+# GitHub's list order need not follow publication time.
+releases.sort(key=lambda r: r.get("published_at") or r.get("created_at") or "", reverse=True)
 def ok(r):
+    if r["draft"]:
+        return False
     if version:
         return r["tag_name"] == version
     # Beta takes stable releases too.

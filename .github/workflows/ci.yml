@@ -24,6 +24,7 @@ jobs:
         run: |
           python3 -B tools/test-options-config.py
           python3 -B tools/test-firstboot-clock.py
+          python3 -B tools/test-firstboot-release.py
           python3 -B tools/test-install-avsd.py
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings

@@ -226,6 +226,16 @@ mod tests {
     }
 
     #[test]
+    fn candidates_are_sorted_when_api_results_are_out_of_order() {
+        let mut rel: Vec<Release> = serde_json::from_str(LIST).unwrap();
+        rel.reverse();
+
+        let beta = candidates(&rel, "beta");
+        let versions: Vec<_> = beta.iter().map(|c| c.version.as_str()).collect();
+        assert_eq!(versions, ["beta-20261108-aaaaaaa", "1.2.0"]);
+    }
+
+    #[test]
     fn asset_names() {
         assert_eq!(
             version_of("carpi-dev-e7e3f15-arm64.tar.zst"),
