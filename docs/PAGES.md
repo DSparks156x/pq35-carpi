@@ -216,7 +216,7 @@ LIVI has no on-screen keyboard and no way to join a Wi-Fi network. The update ne
 - **The one radio**: `wlan0` is the hotspot while LIVI runs, so the Pi can't join a network (or scan properly) with it up. Adding saves; joining happens in the update or in test.
 - **Scan** (Drew): Add a network drops the hotspot about 10 s to list nearby networks, then brings it back; the phone link drops meanwhile, and the screen says so before it starts. A name can still be typed for a hidden network. Action `scan` in the API.
 - **Profile**: a polkit rule so the car user (a lingering session, not an "active" one) may change NetworkManager's system connections. Passwords live in the profile as NetworkManager keeps them (root-only files).
-- **UI** (Drew): in LIVI's own Settings, General, Wi-Fi, beside the hotspot settings: Saved networks. Each with Forget and Test; Add a network scans, then opens the keyboard for the password (or the name, for a hidden one). Car Integration, Updates links to it.
+- **UI** (Drew): Car Integration, Updates: Wi-Fi networks. Saved networks, each with Forget and Test; Add a network scans, then opens the keyboard for the password (or the name, for a hidden one).
 - **Phone portal**: the same list and add form, for adding a network from a phone on the hotspot.
 
 ### Order
