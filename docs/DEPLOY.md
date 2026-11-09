@@ -135,6 +135,7 @@ The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/p
 - the journal on disk, capped at 200 MB, and the car user in `adm` (captures read every unit's journal);
 - a polkit rule so carpid can set the clock from the car's (timedated `set-time` and `set-ntp`);
 - the timezone, with `--tz` (or `CARPI_TZ`). It must match the car clock, which is local time;
+- zstd, for `os/install.sh`;
 - later, the NVMe boot-time trimming.
 
 The bundle manifest names the minimum profile version it needs. The script is what I did by hand to the trial card, written down.

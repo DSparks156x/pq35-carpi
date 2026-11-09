@@ -1,0 +1,14 @@
+# VNC for the desktop session: PAM login as the car user, RSA-AES. The config
+# (~/.config/wayvnc/config, with its own key) is written by os/install.sh.
+[Unit]
+Description=VNC for the labwc session (PAM login, RSA-AES)
+
+[Service]
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStartPre=/bin/sh -c "until [ -S $XDG_RUNTIME_DIR/wayland-0 ]; do sleep 1; done"
+ExecStart=/usr/bin/wayvnc
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -17,3 +17,8 @@ sha2 = "0.11.1"
 hex = "0.4.3"
 tar = "0.4.46"
 ruzstd = "0.9.1"
+fatfs = "0.3.6"
+fscommon = "0.1.1"
+xz2 = { version = "0.1.7", features = ["static"] }
+rpassword = "7"
+sha-crypt = "0.5"

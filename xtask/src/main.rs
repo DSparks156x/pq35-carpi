@@ -1,4 +1,4 @@
-//! `cargo xtask deploy`: put a bundle on the Pi and install it with
+//! `cargo xtask deploy` (and `image`, in image.rs): put a bundle on the Pi and install it with
 //! `carpi-update apply`, the same path (rollback included) a release takes.
 //! See docs/DEPLOY.md section 5.
 //!
@@ -8,6 +8,8 @@
 //! - `--file <bundle>`: a local bundle;
 //! - `--carpid-only`: carpid and carpi cross-built here with cargo-zigbuild;
 //!   the rest is reused from what's installed on the Pi.
+
+mod image;
 
 use anyhow::{Context, bail};
 use carpi_proto::JobEvent;
@@ -28,6 +30,9 @@ struct Args {
 enum Cmd {
     /// Install a bundle on the Pi.
     Deploy(Deploy),
+    /// A Raspberry Pi OS image (or flashed card) that sets itself up as a
+    /// carpi on first boot.
+    Image(Box<image::Image>),
 }
 
 #[derive(clap::Args)]
@@ -55,8 +60,11 @@ const GLIBC: &str = "2.41";
 const WORKFLOW: &str = "release.yml";
 
 fn main() -> anyhow::Result<()> {
-    let Cmd::Deploy(d) = Args::parse().cmd;
     let root = workspace_root()?;
+    let d = match Args::parse().cmd {
+        Cmd::Deploy(d) => d,
+        Cmd::Image(i) => return image::run(*i, &root),
+    };
     let (bundle, reuse) = if let Some(file) = &d.file {
         (file.clone(), false)
     } else if d.carpid_only {

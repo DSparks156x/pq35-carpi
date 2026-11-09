@@ -88,7 +88,11 @@ put "$ROOT/deploy/carpid.toml" share/config/carpid.toml 0644
 put "$ROOT/deploy/carpid.service" share/systemd/user/carpid.service 0644
 put "$ROOT/deploy/livi.service" share/systemd/user/livi.service 0644
 put "$ROOT/deploy/carpi-capture@.service" share/systemd/user/carpi-capture@.service 0644
+put "$ROOT/deploy/wayvnc.service" share/systemd/user/wayvnc.service 0644
 put "$ROOT/deploy/99-carpi-uinput.rules" share/udev/99-carpi-uinput.rules 0644
+put "$ROOT/os/profile.sh" share/os/profile.sh 0755
+put "$ROOT/os/install.sh" share/os/install.sh 0755
+put "$ROOT/os/firstboot.sh" share/os/firstboot.sh 0755
 
 FIRMWARE=()
 if [ -n "$TEENSY" ]; then

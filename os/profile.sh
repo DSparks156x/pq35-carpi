@@ -70,6 +70,8 @@ PACKAGES=(
   gstreamer1.0-gl gstreamer1.0-pulseaudio
   # carpid and the bench; polkitd for carpid's clock rule
   can-utils evtest wayvnc polkitd
+  # os/install.sh unpacks a bundle's share/ with tar --zstd
+  zstd
 )
 
 # 1. Packages
