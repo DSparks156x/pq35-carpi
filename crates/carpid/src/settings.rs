@@ -19,6 +19,7 @@ use toml_edit::{Array, DocumentMut, InlineTable, Item, Value, value};
 pub fn get(cfg: &Config) -> Settings {
     Settings {
         tx_enabled: cfg.tx.enabled,
+        flashing_mode: cfg.tx.flashing_mode,
         power_shutdown: cfg.power.shutdown,
         light: carpi_proto::LightSettings {
             auto_brightness: cfg.light.auto_brightness,
@@ -407,6 +408,10 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         table(&mut doc, "tx")?;
         doc["tx"]["enabled"] = value(v);
     }
+    if let Some(v) = patch.flashing_mode {
+        table(&mut doc, "tx")?;
+        doc["tx"]["flashing_mode"] = value(v);
+    }
     // The old flat field first: `power.shutdown` wins.
     if let Some(v) = patch.power_shutdown {
         table(&mut doc, "power")?;
@@ -666,6 +671,7 @@ mod tests {
         let (d, p) = file();
         let before = get(&Config::parse(FILE).unwrap());
         assert!(!before.tx_enabled);
+        assert!(!before.flashing_mode);
         assert!(!before.portal_pin_set);
         assert_eq!(before.dis.readings.len(), 8);
         assert_eq!(before.bindings[0].table, "dis_toggle");
@@ -684,6 +690,7 @@ mod tests {
         readings[1].key = "engine.oil_temp_c".into();
         let patch = SettingsPatch {
             tx_enabled: Some(true),
+            flashing_mode: Some(true),
             light: Some(LightPatch {
                 auto_brightness: Some(false),
                 ambient_source: Some(AmbientSource::Climatronic),
@@ -709,6 +716,7 @@ mod tests {
         let cfg = set(&p, &patch).unwrap();
         let after = get(&cfg);
         assert!(after.tx_enabled);
+        assert!(after.flashing_mode);
         assert!(after.dis.enabled);
         assert_eq!(after.dis.readings, readings);
         assert!(!after.light.auto_brightness);
@@ -727,6 +735,7 @@ mod tests {
         let text = std::fs::read_to_string(&p).unwrap();
         assert!(text.contains("# my car") && text.contains("# TT"));
         assert_eq!(get(&Config::parse(&text).unwrap()), after);
+        assert!(text.contains("flashing_mode = true"));
         assert_eq!(backups(d.path()), 1);
 
         let cfg = set(
@@ -753,6 +762,32 @@ mod tests {
         assert!(!reset.bindings_custom);
         assert_eq!(reset.bindings, before.bindings);
         assert!(!std::fs::read_to_string(&p).unwrap().contains("bindings ="));
+    }
+
+    #[test]
+    fn flashing_mode_is_persistent_and_can_be_cleared() {
+        let (_d, p) = file();
+        assert!(!get(&Config::parse(FILE).unwrap()).flashing_mode);
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                flashing_mode: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(get(&cfg).flashing_mode);
+        let cfg = Config::parse(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert!(get(&cfg).flashing_mode);
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                flashing_mode: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!get(&cfg).flashing_mode);
     }
 
     #[test]

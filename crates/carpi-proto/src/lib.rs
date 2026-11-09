@@ -308,6 +308,9 @@ pub enum SettingsAction {
 pub struct Settings {
     /// `[tx] enabled`: frames the gate passes are sent, not just logged.
     pub tx_enabled: bool,
+    /// `[tx] flashing_mode`: inhibit every CAN transmission until disabled.
+    #[serde(default)]
+    pub flashing_mode: bool,
     /// Deprecated: `power.shutdown`, kept for the old fork until the new UI
     /// lands.
     pub power_shutdown: bool,
@@ -942,6 +945,9 @@ pub struct Binding {
 pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_enabled: Option<bool>,
+    /// Persistently inhibit all CAN transmissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flashing_mode: Option<bool>,
     /// Deprecated: `power.shutdown` (which wins if both are set). Kept for
     /// the old fork until the new UI lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]

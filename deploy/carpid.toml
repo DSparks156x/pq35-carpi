@@ -34,6 +34,7 @@ set_from_car = true
 # Off: frames the gate approves (RNS-E label/brightness) are logged, not sent.
 [tx]
 enabled = false
+flashing_mode = false
 
 # Off: when the bus goes silent with Kl15 off, the shutdown is logged, not run.
 # silent_s: how long the bus stays quiet first (15-600). radio_hold_min: the

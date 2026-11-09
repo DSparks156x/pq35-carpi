@@ -9,13 +9,14 @@ use carpi_input::SystemAction;
 use carpi_power::{CarPiHat, PowerBackend, PowerEvent};
 use carpi_proto::{Command, InputAction};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 pub struct Actuators {
-    /// One sender per interface; `None` when TX is off or in replay.
-    tx: Vec<Option<mpsc::Sender<Frame>>>,
+    /// One writer per interface; dropping it aborts the worker and queued frames.
+    tx: Vec<Option<TxWorker>>,
     iface_names: Vec<String>,
     replay: bool,
     shutdown_enabled: bool,
@@ -34,10 +35,17 @@ impl Actuators {
     pub fn new(cfg: &crate::config::Config, iface_names: Vec<String>, replay: bool) -> Self {
         let tx = iface_names
             .iter()
-            .map(|name| (cfg.tx.enabled && !replay).then(|| open_tx(name)).flatten())
+            .map(|name| {
+                (tx_allowed(cfg.tx.enabled, cfg.tx.flashing_mode, replay))
+                    .then(|| open_tx(name))
+                    .flatten()
+            })
             .collect();
-        if !cfg.tx.enabled {
-            info!("TX disabled ([tx] enabled = false): logging frames instead of sending");
+        if !tx_allowed(cfg.tx.enabled, cfg.tx.flashing_mode, replay) {
+            info!(
+                "CAN transmission inhibited: {}",
+                tx_reason(cfg.tx.enabled, cfg.tx.flashing_mode, replay)
+            );
         }
 
         #[cfg(target_os = "linux")]
@@ -104,16 +112,20 @@ impl Actuators {
         true
     }
 
-    /// `[tx] enabled`, live. Never sends in replay.
-    pub fn set_tx_enabled(&mut self, on: bool) {
+    /// Live TX policy. Never sends in replay; inhibition aborts writer tasks.
+    pub fn set_tx_policy(&mut self, enabled: bool, flashing_mode: bool) {
+        let on = tx_allowed(enabled, flashing_mode, self.replay);
         for (slot, name) in self.tx.iter_mut().zip(&self.iface_names) {
-            match (on && !self.replay, slot.is_some()) {
+            match (on, slot.is_some()) {
                 (true, false) => *slot = open_tx(name),
                 (false, true) => *slot = None,
                 _ => {}
             }
         }
-        info!("TX {}", if on { "enabled" } else { "disabled" });
+        info!(
+            "CAN transmission {}",
+            if on { "enabled" } else { "inhibited" }
+        );
     }
 
     /// `[power] shutdown`, live.
@@ -124,8 +136,8 @@ impl Actuators {
     pub fn act(&mut self, out: Output, car: &Car) {
         match out {
             Output::Send { iface, frame } => match self.tx.get(iface).and_then(Option::as_ref) {
-                Some(s) => {
-                    if s.try_send(frame).is_err() {
+                Some(worker) => {
+                    if worker.sender.try_send(frame).is_err() {
                         warn!(
                             "{}: TX queue full, dropped {frame:?}",
                             self.iface_names[iface]
@@ -269,33 +281,55 @@ fn car_action(a: carpi_input::CarAction) -> Vec<InputAction> {
     }]
 }
 
-/// A sending socket and its writer task. Dropping the sender ends the task.
-fn open_tx(name: &str) -> Option<mpsc::Sender<Frame>> {
+fn tx_allowed(enabled: bool, flashing_mode: bool, replay: bool) -> bool {
+    enabled && !flashing_mode && !replay
+}
+
+fn tx_reason(enabled: bool, flashing_mode: bool, replay: bool) -> &'static str {
+    if flashing_mode {
+        "flashing mode is on"
+    } else if replay {
+        "replay mode"
+    } else if !enabled {
+        "[tx] enabled = false"
+    } else {
+        ""
+    }
+}
+
+/// A sending socket and its writer task. Dropping it aborts the task immediately.
+struct TxWorker {
+    sender: mpsc::Sender<Frame>,
+    task: tokio::task::JoinHandle<()>,
+    active: Arc<AtomicBool>,
+}
+
+impl Drop for TxWorker {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+        self.task.abort();
+    }
+}
+
+/// Open a CAN socket and its writer task.
+fn open_tx(name: &str) -> Option<TxWorker> {
     match TxPort::open(name) {
         Ok(port) => {
-            let (s, mut r) = mpsc::channel::<Frame>(256);
+            let (s, r) = mpsc::channel::<Frame>(256);
             let name = name.to_string();
-            tokio::spawn(async move {
-                while let Some(f) = r.recv().await {
-                    // ENOBUFS: the interface's queue is full (a DIS burst).
-                    // Wait for it to drain rather than drop the frame.
-                    let mut tries = 0;
-                    loop {
-                        match port.send(&f).await {
-                            Err(e) if e.raw_os_error() == Some(105) && tries < 50 => {
-                                tries += 1;
-                                tokio::time::sleep(Duration::from_millis(2)).await;
-                            }
-                            Err(e) => {
-                                warn!("{name}: send {f:?} failed: {e}");
-                                break;
-                            }
-                            Ok(()) => break,
-                        }
-                    }
-                }
-            });
-            Some(s)
+            let active = Arc::new(AtomicBool::new(true));
+            let worker_active = active.clone();
+            let port = Arc::new(port);
+            let send = move |frame| {
+                let port = port.clone();
+                async move { port.send(&frame).await }
+            };
+            let task = spawn_tx_writer(r, worker_active, name, send);
+            Some(TxWorker {
+                sender: s,
+                task,
+                active,
+            })
         }
         Err(e) => {
             warn!("{name}: can't open for sending: {e}");
@@ -304,9 +338,103 @@ fn open_tx(name: &str) -> Option<mpsc::Sender<Frame>> {
     }
 }
 
+fn spawn_tx_writer<F, Fut>(
+    mut receiver: mpsc::Receiver<Frame>,
+    active: Arc<AtomicBool>,
+    name: String,
+    mut send: F,
+) -> tokio::task::JoinHandle<()>
+where
+    F: FnMut(Frame) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = std::io::Result<()>> + Send,
+{
+    tokio::spawn(async move {
+        while let Some(frame) = receiver.recv().await {
+            if !active.load(Ordering::Acquire) {
+                break;
+            }
+            // ENOBUFS: the interface's queue is full (a DIS burst).
+            // Wait for it to drain rather than drop the frame.
+            let mut tries = 0;
+            loop {
+                if !active.load(Ordering::Acquire) {
+                    break;
+                }
+                match send(frame).await {
+                    Err(e) if e.raw_os_error() == Some(105) && tries < 50 => {
+                        tries += 1;
+                        if !active.load(Ordering::Acquire) {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                    }
+                    Err(e) => {
+                        warn!("{name}: send failed: {e}");
+                        break;
+                    }
+                    Ok(()) => break,
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn tx_policy_inhibits_flashing_mode_and_replay() {
+        assert!(tx_allowed(true, false, false));
+        assert!(!tx_allowed(true, true, false));
+        assert!(!tx_allowed(false, false, false));
+        assert!(!tx_allowed(true, false, true));
+        assert_eq!(tx_reason(true, true, false), "flashing mode is on");
+    }
+
+    #[tokio::test]
+    async fn dropping_retrying_worker_cancels_inflight_retry_and_queue() {
+        let (sender, receiver) = mpsc::channel::<Frame>(4);
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = attempts.clone();
+        let started = Arc::new(tokio::sync::Notify::new());
+        let started_send = started.clone();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let release_send = release.clone();
+        let send = move |_frame| {
+            let attempt = observed.fetch_add(1, Ordering::Relaxed) + 1;
+            let started = started_send.clone();
+            let release = release_send.clone();
+            async move {
+                if attempt == 1 {
+                    started.notify_one();
+                    release.notified().await;
+                    Err(std::io::Error::from_raw_os_error(105))
+                } else {
+                    Ok(())
+                }
+            }
+        };
+        sender.try_send(Frame::new(1, &[1]).unwrap()).unwrap();
+        sender.try_send(Frame::new(2, &[2]).unwrap()).unwrap();
+        let active = Arc::new(AtomicBool::new(true));
+        let task = spawn_tx_writer(receiver, active.clone(), "test".into(), send);
+        let worker = TxWorker {
+            sender,
+            task,
+            active,
+        };
+        started.notified().await;
+        drop(worker);
+        release.notify_one();
+        tokio::task::yield_now().await;
+        assert_eq!(
+            attempts.load(Ordering::Relaxed),
+            1,
+            "inhibit must cancel the current retry and discard the queued frame"
+        );
+    }
 
     #[test]
     fn knob_is_rotary_and_select_is_a_press() {

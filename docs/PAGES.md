@@ -120,6 +120,7 @@ All our settings live in one **Car Integration** tab at the bottom of LIVI's own
 
 ```
 Car Integration
+├─ Flashing mode                tx.flashing_mode (persistent CAN send inhibit)
 ├─ Status                       live: bus, ignition, RNS-E source, phone, cluster, carpid version
 │  ├─ All values ▸              every store value with its age
 │  └─ Buses ▸                   ring members, frames, gate refusals
@@ -183,6 +184,13 @@ Car Integration
 ```
 
 ### API additions (carpi-proto `Settings` / `SettingsPatch`)
+
+- `flashing_mode`: saved as `[tx] flashing_mode`. It blocks all daemon CAN sends, drops queued
+  frames and cancels retries, while passive RX continues. Turning it off restores the independent
+  `tx.enabled` preference. A toast announces changes/startup, and an amber banner stays over all
+  main screens, including projection, while on. Lightweight `system.flashing_mode` readings keep
+  the banner current with the settings pages hidden. Separate CAN tools are outside this setting;
+  a send already handed to the OS cannot be recalled.
 
 - `logs { capture_minutes, max_pct }`
 - `clock { set_from_car, timezone }`

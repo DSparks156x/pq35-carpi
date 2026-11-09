@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 ///
 /// [tx]
 /// enabled = false      # off: gate-approved frames are logged, not sent
+/// flashing_mode = false # on: persistently inhibit every CAN send
 ///
 /// [power]
 /// shutdown = false     # off: a shutdown request is logged, not acted on
@@ -426,6 +427,8 @@ fn default_updater() -> PathBuf {
 pub struct Tx {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub flashing_mode: bool,
 }
 
 /// Shutdown off by default: the first runs on the car log the request.

@@ -293,6 +293,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut tick = tokio::time::interval(Duration::from_millis(100));
+    d.publish_status(&mut car);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let stop = stop_signal();
     tokio::pin!(stop);
@@ -314,7 +315,7 @@ async fn main() -> anyhow::Result<()> {
                         ev.iface, ev.transition.from, ev.transition.to, ev.detail
                     );
                 }
-                d.publish_status(&car);
+                d.publish_status(&mut car);
                 d.save_learned(false);
                 d.housekeeping(&car);
             }
@@ -576,8 +577,10 @@ impl Daemon {
         car.configure(new.core(), now);
         car.set_power(new.power_policy());
         car.set_gestures(new.gestures());
-        if new.tx.enabled != self.cfg.tx.enabled {
-            self.act.set_tx_enabled(new.tx.enabled);
+        if new.tx.enabled != self.cfg.tx.enabled
+            || new.tx.flashing_mode != self.cfg.tx.flashing_mode
+        {
+            self.act.set_tx_policy(new.tx.enabled, new.tx.flashing_mode);
         }
         self.act.set_shutdown_enabled(new.power.shutdown);
         self.captures
@@ -610,6 +613,8 @@ impl Daemon {
             restart_needed.push("clock.timezone".into());
         }
         self.cfg = new;
+        // Keep lightweight status consistent with the Settings reply in this same turn.
+        self.publish_status(car);
         if let Some(r) = &patch.remote
             && let Err(e) = remote::apply(r)
         {
@@ -690,7 +695,16 @@ impl Daemon {
         }
     }
 
-    fn publish_status(&self, car: &Car) {
+    fn publish_status(&self, car: &mut Car) {
+        // Lightweight status for the shell, including when its settings pages are hidden.
+        car.set_values(
+            vec![(
+                "system.flashing_mode".into(),
+                Some(carpi_state::Value::Bool(self.cfg.tx.flashing_mode)),
+            )],
+            Duration::from_secs(3),
+            Instant::now(),
+        );
         let bus = car
             .ican()
             .map(|m| m.state().to_string())
@@ -706,7 +720,14 @@ impl Daemon {
         let extra = vec![
             (
                 "TX".into(),
-                if self.cfg.tx.enabled { "on" } else { "off" }.into(),
+                (if self.cfg.tx.flashing_mode {
+                    "FLASHING MODE — CAN sends inhibited"
+                } else if self.cfg.tx.enabled {
+                    "on"
+                } else {
+                    "off"
+                })
+                .into(),
             ),
             ("DIS".into(), text("dis.state")),
             ("Diag".into(), text("diag.mode")),
