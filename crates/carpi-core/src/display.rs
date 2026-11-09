@@ -95,6 +95,8 @@ pub struct DisSetup {
     pub nav_time_left: bool,
     pub nav_dest_distance: bool,
     pub nav_lanes: LaneLayout,
+    /// The accel test's lines as typed (`0-60mph`, `1/4mi`, `speed`), up to 4.
+    pub accel: Vec<String>,
 }
 
 impl Default for DisSetup {
@@ -122,6 +124,7 @@ impl Default for DisSetup {
             nav_time_left: true,
             nav_dest_distance: true,
             nav_lanes: LaneLayout::Flip,
+            accel: default_accel(),
         }
     }
 }
@@ -271,15 +274,34 @@ fn readings_pages(setup: &DisSetup) -> Vec<ReadingsPage> {
                     key: c.key.clone(),
                     decimals: c.decimals,
                     icon: c.icon.clone(),
-                    unit: c.unit.clone(),
+                    // The catalog knows units the key's name doesn't say
+                    // (engine.maf_gs is g/s).
+                    unit: c.unit.clone().or_else(|| {
+                        Some(key_unit(&c.key).to_string()).filter(|u| !u.is_empty())
+                    }),
                 })
                 .collect(),
         })
         .collect()
 }
 
+/// The old DIS client's lines (Drew's config), now with their unit.
+pub fn default_accel() -> Vec<String> {
+    ["0-60mph", "0-30mph", "40-70mph", "speed"].map(String::from).to_vec()
+}
+
+fn accel(setup: &DisSetup) -> carpi_dis::screens::accel::AccelConfig {
+    let mph = setup.units == Units::Imperial;
+    let (cfg, errors) = carpi_dis::screens::accel::accel_config(&setup.accel, mph);
+    for e in errors {
+        tracing::warn!("dis: accel line skipped: {e}");
+    }
+    cfg
+}
+
 fn new_dis(setup: &DisSetup) -> Dis {
     Dis::new(DisConfig {
+        accel: accel(setup),
         readings_pages: readings_pages(setup),
         readings: setup
             .readings
@@ -554,6 +576,30 @@ impl Display {
             enabled: false,
             ..d.clone()
         };
+        // Only the readings pages changed: swap them in, the session and the
+        // page on screen stay (editing them used to drop our DIS tab).
+        let rest = |d: &DisSetup| DisSetup {
+            pages: Vec::new(),
+            readings: Vec::new(),
+            ..shape(d)
+        };
+        if shape(&setup) != shape(&self.setup) && rest(&setup) == rest(&self.setup) {
+            let specs = setup
+                .readings
+                .iter()
+                .take(8)
+                .map(|r| ReadingSpec {
+                    key: r.key.clone(),
+                    label: r.label.clone(),
+                    decimals: r.decimals,
+                })
+                .collect();
+            self.dis.set_readings_pages(now, readings_pages(&setup), specs);
+            self.readings = None;
+            self.setup = setup;
+            tracing::info!("dis: readings pages updated in place");
+            return;
+        }
         if shape(&setup) != shape(&self.setup) {
             if self.running {
                 self.dis.stop(now);

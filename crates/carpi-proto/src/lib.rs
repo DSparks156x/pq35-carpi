@@ -666,6 +666,10 @@ pub struct DisSettings {
     pub nav_dest_distance: bool,
     #[serde(default)]
     pub nav_lanes: DisLanes,
+    /// Accel test lines as typed: `0-60mph`, `50-100kmh`, `1/4mi`, `1000ft`,
+    /// `100m`, `speed`. Up to 4.
+    #[serde(default)]
+    pub accel: Vec<String>,
 }
 
 /// Where nav lanes go near a turn.
@@ -818,6 +822,9 @@ pub struct DisPatch {
     pub nav_dest_distance: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_lanes: Option<DisLanes>,
+    /// Replaces all the lines; each must parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accel: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -420,8 +420,8 @@ fn accel(out: &Path) {
     use carpi_dis::screens::accel::{AccelConfig, AccelScreen, Leg};
     let cfg = AccelConfig {
         legs: vec![
-            Leg::Range { from: 0.0, to: 60.0 },
-            Leg::Range { from: 30.0, to: 70.0 },
+            Leg::range(0.0, 60.0),
+            Leg::range(30.0, 70.0),
             Leg::Distance {
                 m: 402.336,
                 label: "1/4 mi".into(),

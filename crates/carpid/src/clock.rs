@@ -210,6 +210,16 @@ pub fn set_from_car(car: i64, pi: i64) -> Result<Option<String>, String> {
     if synced {
         return Ok(None);
     }
+    // We left network time off; the clock has caught up with timesyncd's
+    // floor, so it can come back without moving the clock.
+    if !ntp
+        && LEFT_NTP_OFF.load(std::sync::atomic::Ordering::Relaxed)
+        && !behind_timesync_floor()
+        && run(&["set-ntp", "true"]).is_ok()
+    {
+        LEFT_NTP_OFF.store(false, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("clock: network time back on");
+    }
     let when = format_naive(car);
     if ntp {
         run(&["set-ntp", "false"])?;
@@ -226,8 +236,18 @@ pub fn set_from_car(car: i64, pi: i64) -> Result<Option<String>, String> {
         }
     }
     if ntp {
-        // Back on even when set-time failed, so network time still works.
-        if let Err(e) = run(&["set-ntp", "true"]) {
+        // timesyncd never lets the clock go back past the time it last saved
+        // (its clock file's mtime): turned back on, it would undo a set to an
+        // earlier time, every minute. Leave it off until the clock has passed
+        // that point again; a later check turns it back on.
+        if set.is_ok() && behind_timesync_floor() {
+            LEFT_NTP_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!(
+                "clock: network time stays off; timesyncd would put the clock forward to {}",
+                floor_text()
+            );
+        } else if let Err(e) = run(&["set-ntp", "true"]) {
+            // Back on even when set-time failed, so network time still works.
             tracing::warn!("clock: turning NTP back on: {e}");
         }
     }
@@ -237,6 +257,32 @@ pub fn set_from_car(car: i64, pi: i64) -> Result<Option<String>, String> {
         format_naive(pi),
         pi - car
     )))
+}
+
+/// carpid turned network time off and left it off (see [`set_from_car`]).
+#[cfg(target_os = "linux")]
+static LEFT_NTP_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// timesyncd's floor: its clock file's mtime. It won't let the clock run
+/// earlier than this when it starts.
+#[cfg(target_os = "linux")]
+const TIMESYNC_CLOCK: &str = "/var/lib/systemd/timesync/clock";
+
+#[cfg(target_os = "linux")]
+fn timesync_floor() -> Option<std::time::SystemTime> {
+    std::fs::metadata(TIMESYNC_CLOCK).and_then(|m| m.modified()).ok()
+}
+
+#[cfg(target_os = "linux")]
+fn behind_timesync_floor() -> bool {
+    timesync_floor().is_some_and(|f| std::time::SystemTime::now() < f)
+}
+
+#[cfg(target_os = "linux")]
+fn floor_text() -> String {
+    timesync_floor()
+        .and_then(|f| f.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or("?".into(), |d| format!("{} UTC (unix {})", format_naive(d.as_secs() as i64), d.as_secs()))
 }
 
 #[cfg(not(target_os = "linux"))]

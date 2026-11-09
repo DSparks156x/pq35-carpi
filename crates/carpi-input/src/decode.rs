@@ -105,7 +105,7 @@ pub fn known_key_frame(id: u32, data: &[u8]) -> bool {
     match id {
         ids::MFL_CMD => data.len() < 2 || !matches!(wheel_cmd(data[1]), WheelCmd::Unknown),
         // Byte 2 with anything but the rocker bits: logged, to learn the rest.
-        ids::STALK_KEYS => data.get(2).is_none_or(|b| b & !0x30 == 0),
+        ids::STALK_KEYS => data.get(2).is_none_or(|b| b & !0xB0 == 0),
         ids::RNSE_KEYS => {
             data.len() < 5
                 || data[0] != 0x37

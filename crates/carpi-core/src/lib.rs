@@ -10,12 +10,13 @@ pub mod display;
 
 pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
 pub use carpi_dis::ScreenId as DisScreen;
+pub use carpi_dis::screens::accel::parse_leg as parse_accel_line;
 pub use carpi_dis::screens::media::MediaLayout as DisMediaLayout;
 pub use carpi_dis::screens::nav::{
     Clock as DisClock, LaneLayout as DisLanes, NavStyle as DisNavStyle, Units as DisUnits,
 };
 pub use control::{AmbientSource, CurveMode, DarkSetup, DarkSource, LightSetup, Location, Output};
-pub use display::{DisCell, DisPage, DisSetup, Reading};
+pub use display::{DisCell, DisPage, DisSetup, Reading, default_accel};
 
 use carpi_can::RxFrame;
 use carpi_can::recorder::Recorder;

@@ -121,6 +121,7 @@ pub fn unit_for(key: &str) -> &'static str {
         ("_nm", "Nm"),
         ("_deg", "°"),
         ("_ms", "ms"),
+        ("_gs", "g/s"),
         ("_s", "s"),
     ];
     let k = key.to_ascii_lowercase();
@@ -245,6 +246,17 @@ impl ReadingsScreen {
     pub fn page_index(&self) -> usize {
         self.page
     }
+
+    /// New pages in place (the settings changed), keeping the page shown
+    /// where it still exists and the focus mark. The caller re-enters the
+    /// screen so it redraws whole.
+    pub fn replace_pages(&mut self, next: ReadingsScreen) {
+        let page = self.page.min(next.pages.len().saturating_sub(1));
+        let focus = self.focus;
+        *self = next;
+        self.page = page;
+        self.focus = focus;
+    }
     pub fn page_count(&self) -> usize {
         self.pages.len()
     }
@@ -277,11 +289,26 @@ impl ReadingsScreen {
     }
 
     fn value_groups(&mut self, cx: &Ctx) -> Vec<Group> {
-        let texts: Vec<String> = self
+        let specs: Vec<(Option<f64>, u8)> = self
             .cells()
             .iter()
             .enumerate()
-            .map(|(i, c)| format_value(self.input.values[i], c.decimals))
+            .map(|(i, c)| (self.input.values[i], c.decimals))
+            .collect();
+        // Too wide with its decimals (MAF 100.0): fewer decimals before `--`.
+        let texts: Vec<String> = specs
+            .iter()
+            .zip(&self.values)
+            .map(|(&(v, dp), f)| {
+                (0..=dp)
+                    .rev()
+                    .map(|d| format_value(v, d))
+                    .find(|t| {
+                        let b = audscii(t);
+                        cx.metrics.width(f.slot.font, &b) <= f.slot.width_px() && b.len() <= cx.text_cap()
+                    })
+                    .unwrap_or_else(|| format_value(v, dp))
+            })
             .collect();
         let mut out = Vec::new();
         for (f, t) in self.values.iter_mut().zip(texts) {

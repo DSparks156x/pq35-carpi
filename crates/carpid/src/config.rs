@@ -73,6 +73,8 @@ use std::path::{Path, PathBuf};
 /// nav_time_left = true
 /// nav_dest_distance = true
 /// nav_lanes = "flip"   # or "swap" (lanes instead of the road near a turn), "off"
+/// accel = ["0-60mph", "0-30mph", "40-70mph", "speed"]   # accel test lines, up to 4:
+/// #   a speed range (0-60mph, 50-100kmh), a distance (1/4mi, 1000ft, 100m) or speed
 /// # readings = [ { key = "engine.rpm", label = "RPM", decimals = 0, scale = 1.0 }, ... ]
 /// # Named pages (the wheel steps through them); any store or diag value:
 /// # pages = [ { name = "Daily", cells = [ { key = "engine.oil_temp_c", unit = "°F" },
@@ -245,6 +247,7 @@ pub struct Dis {
     pub nav_time_left: bool,
     pub nav_dest_distance: bool,
     pub nav_lanes: DisLanes,
+    pub accel: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -305,6 +308,7 @@ impl Default for Dis {
             nav_time_left: true,
             nav_dest_distance: true,
             nav_lanes: DisLanes::Flip,
+            accel: carpi_core::default_accel(),
         }
     }
 }
@@ -638,6 +642,12 @@ impl Config {
     }
 
     fn check(&self) -> Result<(), String> {
+        if self.dis.accel.len() > 4 {
+            return Err("[dis] accel: up to 4 lines".into());
+        }
+        for line in &self.dis.accel {
+            carpi_core::parse_accel_line(line).map_err(|e| format!("[dis] accel: {e}"))?;
+        }
         let l = &self.light;
         let manual: Vec<(f64, u8)> = l.manual_curve.iter().map(|p| (p.ambient, p.pct)).collect();
         check_curve("manual_curve", &manual, 32)?;
@@ -863,6 +873,7 @@ impl Config {
                     DisLanes::Swap => carpi_core::DisLanes::Swap,
                     DisLanes::Flip => carpi_core::DisLanes::Flip,
                 },
+                accel: self.dis.accel.clone(),
             },
             light: carpi_core::LightSetup {
                 auto_brightness: l.auto_brightness,

@@ -37,18 +37,160 @@ const FLASH: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Leg {
-    /// From one speed to another, in display units.
-    Range { from: f64, to: f64 },
+    /// From one speed to another, in display units. `label` as typed
+    /// (`0-60`), without the unit.
+    Range { from: f64, to: f64, label: String },
     /// From a standing start over this many metres.
     Distance { m: f64, label: String },
     /// Live speed, no timing.
     Speed,
 }
 
+/// Speed units a range can be typed in, as km/h per unit.
+const SPEED_UNITS: &[(&str, f64)] = &[("mph", 1.609_344), ("kmh", 1.0), ("km/h", 1.0), ("kph", 1.0)];
+/// Distance units, as metres per unit.
+const DIST_UNITS: &[(&str, f64)] = &[
+    ("mi", 1609.344),
+    ("km", 1000.0),
+    ("ft", 0.3048),
+    ("yd", 0.9144),
+    ("m", 1.0),
+];
+
+/// `12`, `12.5` or `1/4`.
+fn number(s: &str) -> Option<f64> {
+    match s.split_once('/') {
+        Some((a, b)) => {
+            let (a, b) = (a.parse::<f64>().ok()?, b.parse::<f64>().ok()?);
+            (b > 0.0).then(|| a / b)
+        }
+        None => s.parse().ok(),
+    }
+    .filter(|v: &f64| v.is_finite() && *v >= 0.0)
+}
+
+/// Splits `60mph` into `("60", "mph")`.
+fn split_unit(s: &str) -> (&str, &str) {
+    let at = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '/' || c == '-'))
+        .unwrap_or(s.len());
+    (&s[..at], &s[at..])
+}
+
+/// An accel line as the old DIS client took it, now with units: `0-60mph`,
+/// `50-100kmh`, `1/4mi`, `1000ft`, `100m`, `speed`. Returns the leg, and its
+/// speed unit (mph?) when it names one; a range without one is in the
+/// display unit ([`accel_config`]).
+pub fn parse_leg(text: &str) -> Result<(Leg, Option<bool>), String> {
+    let s: String = text.trim().to_ascii_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    if s.is_empty() {
+        return Err("empty".into());
+    }
+    if let Some(u) = s.strip_prefix("speed") {
+        return match u {
+            "" => Ok((Leg::Speed, None)),
+            "mph" => Ok((Leg::Speed, Some(true))),
+            "kmh" | "km/h" | "kph" => Ok((Leg::Speed, Some(false))),
+            _ => Err(format!("{text:?}: speed in mph or kmh")),
+        };
+    }
+    let (num, unit) = split_unit(&s);
+    if let Some((a, b)) = num.split_once('-') {
+        let (from, to) = (number(a), number(b));
+        let (Some(from), Some(to)) = (from, to) else {
+            return Err(format!("{text:?}: a range is two speeds, like 0-60mph"));
+        };
+        if to <= from {
+            return Err(format!("{text:?}: the second speed must be higher"));
+        }
+        let mph = match unit {
+            "" => None,
+            u => match SPEED_UNITS.iter().find(|(n, _)| *n == u) {
+                Some((n, _)) => Some(*n == "mph"),
+                None => return Err(format!("{text:?}: speed units are mph or kmh")),
+            },
+        };
+        return Ok((
+            Leg::Range {
+                from,
+                to,
+                label: format!("{a}-{b}"),
+            },
+            mph,
+        ));
+    }
+    let Some(v) = number(num) else {
+        return Err(format!("{text:?}: not a range (0-60mph), a distance (1/4mi) or speed"));
+    };
+    match DIST_UNITS.iter().find(|(n, _)| *n == unit) {
+        Some((n, per)) if v > 0.0 => Ok((
+            Leg::Distance {
+                m: v * per,
+                label: format!("{num}{n}"),
+            },
+            None,
+        )),
+        Some(_) => Err(format!("{text:?}: a distance above 0")),
+        None if unit.is_empty() => Err(format!("{text:?}: add a unit: ft, yd, m, mi or km")),
+        None => Err(format!("{text:?}: distance units are ft, yd, m, mi or km")),
+    }
+}
+
+/// Up to four typed lines as an accel setup. The timer runs in one speed
+/// unit: what `speed` names, else the first range's, else `default_mph`.
+/// Ranges in the other unit are converted (their label keeps what was
+/// typed). Lines that don't parse are skipped and returned as errors.
+pub fn accel_config(lines: &[String], default_mph: bool) -> (AccelConfig, Vec<String>) {
+    let mut errors = Vec::new();
+    let parsed: Vec<(Leg, Option<bool>)> = lines
+        .iter()
+        .take(4)
+        .filter_map(|l| parse_leg(l).map_err(|e| errors.push(e)).ok())
+        .collect();
+    let speed_unit = parsed.iter().find(|(l, _)| *l == Leg::Speed).and_then(|(_, u)| *u);
+    let range_unit = parsed
+        .iter()
+        .find(|(l, _)| matches!(l, Leg::Range { .. }))
+        .map(|(_, u)| u.unwrap_or(default_mph));
+    let mph = speed_unit.or(range_unit).unwrap_or(default_mph);
+    let legs = parsed
+        .into_iter()
+        .map(|(leg, unit)| match leg {
+            Leg::Range { from, to, label } => {
+                let u = unit.unwrap_or(default_mph);
+                let k = match (u, mph) {
+                    (true, false) => 1.609_344,
+                    (false, true) => 1.0 / 1.609_344,
+                    _ => 1.0,
+                };
+                Leg::Range { from: from * k, to: to * k, label }
+            }
+            other => other,
+        })
+        .collect();
+    (
+        AccelConfig {
+            legs,
+            imperial: mph,
+            ..AccelConfig::default()
+        },
+        errors,
+    )
+}
+
 impl Leg {
+    /// A range in display units, labelled as its numbers.
+    pub fn range(from: f64, to: f64) -> Leg {
+        Leg::Range {
+            from,
+            to,
+            label: format!("{from}-{to}"),
+        }
+    }
+
     pub fn label(&self) -> String {
         match self {
-            Leg::Range { from, to } => format!("{from}-{to}"),
+            Leg::Range { label, .. } => label.clone(),
             Leg::Distance { label, .. } => label.clone(),
             Leg::Speed => String::new(),
         }
@@ -67,8 +209,8 @@ impl Default for AccelConfig {
     fn default() -> Self {
         AccelConfig {
             legs: vec![
-                Leg::Range { from: 0.0, to: 100.0 },
-                Leg::Range { from: 80.0, to: 120.0 },
+                Leg::range(0.0, 100.0),
+                Leg::range(80.0, 120.0),
                 Leg::Distance {
                     m: 402.336,
                     label: "1/4 mi".into(),
@@ -418,6 +560,40 @@ impl Screen for AccelScreen {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn typed_lines_with_units() {
+        let p = |s: &str| parse_leg(s).unwrap();
+        assert_eq!(p("0-60mph"), (Leg::Range { from: 0.0, to: 60.0, label: "0-60".into() }, Some(true)));
+        assert_eq!(p("50-100 km/h").1, Some(false));
+        assert_eq!(p("0-60").1, None);
+        assert_eq!(p("speed"), (Leg::Speed, None));
+        let Leg::Distance { m, label } = p("1/4mi").0 else { panic!() };
+        assert!((m - 402.336).abs() < 1e-6);
+        assert_eq!(label, "1/4mi");
+        let Leg::Distance { m, .. } = p("1000ft").0 else { panic!() };
+        assert!((m - 304.8).abs() < 1e-6);
+        let Leg::Distance { m, .. } = p("100m").0 else { panic!() };
+        assert_eq!(m, 100.0);
+        assert!(parse_leg("1000").unwrap_err().contains("add a unit"));
+        assert!(parse_leg("60-0mph").is_err());
+        assert!(parse_leg("0-60mps").is_err());
+    }
+
+    #[test]
+    fn one_speed_unit_for_the_timer() {
+        let lines = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // mph first: the timer runs in mph, the km/h range is converted.
+        let (c, e) = accel_config(&lines(&["0-60mph", "50-100kmh", "1/4mi", "bogus"]), false);
+        assert!(c.imperial);
+        assert_eq!(e.len(), 1);
+        let Leg::Range { from, to, label } = &c.legs[1] else { panic!() };
+        assert!((from - 31.0686).abs() < 1e-3 && (to - 62.1371).abs() < 1e-3);
+        assert_eq!(label, "50-100");
+        // No units anywhere: the default.
+        let (c, _) = accel_config(&lines(&["0-100", "speed"]), false);
+        assert!(!c.imperial);
+    }
+
     use super::*;
 
     fn run(timer: &mut AccelTimer, t0: Instant, profile: impl Fn(f64) -> f64, secs: f64) {

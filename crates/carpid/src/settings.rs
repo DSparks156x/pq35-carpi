@@ -102,6 +102,7 @@ pub fn get(cfg: &Config) -> Settings {
                 crate::config::DisLanes::Swap => carpi_proto::DisLanes::Swap,
                 crate::config::DisLanes::Flip => carpi_proto::DisLanes::Flip,
             },
+            accel: cfg.dis.accel.clone(),
             readings: cfg
                 .readings()
                 .into_iter()
@@ -573,6 +574,9 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
         if let Some(v) = d.nav_lanes {
             doc["dis"]["nav_lanes"] = value(snake(&v));
         }
+        if let Some(lines) = &d.accel {
+            doc["dis"]["accel"] = value(toml_edit::Array::from_iter(lines.iter().map(|l| l.trim())));
+        }
     }
     if patch.bindings_reset {
         if let Some(t) = doc.get_mut("input").and_then(Item::as_table_like_mut) {
@@ -828,6 +832,31 @@ mod tests {
             },
         );
         assert!(bad.is_err());
+        // Accel lines as typed; one that doesn't parse is refused.
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                dis: Some(DisPatch {
+                    accel: Some(vec!["0-60mph".into(), "1/4mi".into(), "speed".into()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(get(&cfg).dis.accel, ["0-60mph", "1/4mi", "speed"]);
+        assert_eq!(cfg.core().dis.accel.len(), 3);
+        let bad = set(
+            &p,
+            &SettingsPatch {
+                dis: Some(DisPatch {
+                    accel: Some(vec!["1000".into()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        assert!(bad.unwrap_err().contains("add a unit"));
     }
 
     #[test]

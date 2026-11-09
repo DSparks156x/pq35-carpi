@@ -201,6 +201,21 @@ impl Dis {
         &self.readings
     }
 
+    /// New readings pages from the settings, without restarting the session:
+    /// the readings page on screen redraws with them.
+    pub fn set_readings_pages(&mut self, now: Instant, pages: Vec<ReadingsPage>, specs: Vec<ReadingSpec>) {
+        let next = if pages.is_empty() {
+            ReadingsScreen::new(specs)
+        } else {
+            ReadingsScreen::with_pages(pages)
+        };
+        self.readings.replace_pages(next);
+        if self.shown.is_some_and(|(id, _)| id == ScreenId::Readings) {
+            self.reenter = true;
+        }
+        self.step(now);
+    }
+
     /// Wheel up/down on the readings page: step subpages (wraps). The page
     /// re-enters with a clear; a blank on page switch is fine (Drew).
     pub fn step_readings(&mut self, now: Instant, delta: i32) {
