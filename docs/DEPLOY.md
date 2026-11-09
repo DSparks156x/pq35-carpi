@@ -136,11 +136,28 @@ The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/p
 - a polkit rule so carpid can set the clock from the car's (timedated `set-time` and `set-ntp`);
 - the timezone, with `--tz` (or `CARPI_TZ`). It must match the car clock, which is local time;
 - zstd, for `os/install.sh`;
+- zstd, for `os/install.sh`;
 - later, the NVMe boot-time trimming.
 
 The bundle manifest names the minimum profile version it needs. The script is what I did by hand to the trial card, written down.
 
 Run it as `sudo os/profile.sh [--hat carpihat|cowcarhat] [--tz Area/City] [--dry-run]`; CarPiHat is the default and Drew's hat has no lines yet. It records `PROFILE_VERSION` and the hat in `/etc/carpi-profile`, and also creates `/opt/carpi/releases` owned by the car user. The CAN network file sets `RequiredForOnline=no` so a car without the hat doesn't stall boot in wait-online.
+
+## 7. New card: `cargo xtask image`
+
+A stock Raspberry Pi OS Trixie image that sets itself up as a carpi on first boot.
+
+```
+cargo xtask image --image 2026-xx-xx-raspios-trixie-arm64.img.xz --tz America/Chicago
+cargo xtask image --boot E:\ --tz America/Chicago      # a card or NVMe already flashed with the stock image
+```
+
+- **Asks** for the Wi-Fi name and password (first boot needs the internet for packages). `--edit` opens the network-config in an editor before it's written; `--network-config FILE` uses a netplan file as it is; `--no-wifi` is wired only. `--password` asks for a login password (VNC and the console need one); ssh is key-only, with the `carpi` alias's key (or `--ssh-key`).
+- **Bundle**: `--bundle FILE`, `--from-ci BRANCH|RUN-ID`, default the CI bundle of the current branch.
+- **Writes** cloud-init's `user-data`, `network-config` and `meta-data` and a `carpi/` folder (bundle, carpi-update, `firstboot.sh`, `profile.sh`, `install.sh`, `setup.env`) into the boot partition. From an image it writes a new `<name>-carpi.img`; flash that with Imager and no OS customisation.
+- **First boot**: cloud-init makes the user and joins the Wi-Fi, then `os/firstboot.sh` waits for the network, runs `profile.sh`, then `install.sh`, turns on desktop autologin and reboots. Its log is `/var/log/carpi-firstboot.log`, also copied to `carpi/firstboot.log` on the boot partition. On a failure it doesn't reboot: ssh in, fix, re-run it.
+- **`os/install.sh --bundle F [--updater P]`**: the first install, also usable on any profiled Pi. Puts in what's missing and nothing else: `carpid.toml`, the user units (carpid, LIVI, the A/V chain, wayvnc), `~/avsd`, the governor unit, wayvnc's config. Enables them, then `carpi-update apply`. LIVI installs its own hotspot unit and udev rule when it runs.
+- **Not done yet** (after the boot-time work): the Lite image with LIVI's kiosk instead of the desktop session, the boot-time trimming, LIVI's default knob bindings, an offline first boot. Untested on a real card so far.
 
 ## Decisions (Drew, 2026-11-07)
 
