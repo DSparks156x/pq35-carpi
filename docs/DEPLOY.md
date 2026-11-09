@@ -75,8 +75,8 @@ As built: `carpi-update check | fetch [--force] | apply [--file F] [--allow-unsi
 repo = "DSparks156x/rnse-carpi"
 channel = "stable"                          # or "beta" (beta also takes stable releases)
 # pubkey = "/etc/carpi/minisign.pub"        # bundles must be signed by it when it exists
-# restart_user = ["carpid.service"]         # systemctl --user restart
-# restart_system = ["livi-kiosk.service"]   # sudo -n systemctl restart
+# restart_user = ["carpid.service", "livi.service"] # systemctl --user restart
+# restart_system = []                      # no system-service restart needed
 # check_frames = false                      # health check also wants CAN frames
 # updater = "/opt/carpi/current/bin/carpi-update"   # carpid only
 ```
