@@ -93,6 +93,10 @@ put "$ROOT/deploy/99-carpi-uinput.rules" share/udev/99-carpi-uinput.rules 0644
 put "$ROOT/os/profile.sh" share/os/profile.sh 0755
 put "$ROOT/os/install.sh" share/os/install.sh 0755
 put "$ROOT/os/firstboot.sh" share/os/firstboot.sh 0755
+put "$ROOT/os/options.py" share/os/options.py 0755
+for f in "$ROOT"/os/edid/*.bin; do
+  put "$f" "share/os/edid/$(basename "$f")" 0644
+done
 
 FIRMWARE=()
 if [ -n "$TEENSY" ]; then

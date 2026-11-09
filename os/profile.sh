@@ -1,7 +1,7 @@
 #!/bin/bash
 # Turn a fresh Raspberry Pi OS Trixie into a carpi device. DEPLOY.md section 6.
 #
-#   sudo os/profile.sh [--hat carpihat|cowcarhat] [--user NAME] [--tz ZONE] [--dry-run]
+#   sudo os/profile.sh [--hat carpihat|cowcarhat|none] [--user NAME] [--tz ZONE] [--dry-run]
 #
 # --tz (or CARPI_TZ=...): the Pi's timezone, e.g. America/Chicago. The car clock is local time and
 # carpid sets the Pi clock from it, so the two must agree. Without it the timezone is left alone.
@@ -54,7 +54,9 @@ case $HAT in
   cowcarhat)
     die "cowcarhat: lines not defined yet"
     ;;
-  *) die "unknown hat: $HAT (carpihat, cowcarhat)" ;;
+  # The image tool's options.py writes config.txt itself.
+  none) HAT_LINES=() ;;
+  *) die "unknown hat: $HAT (carpihat, cowcarhat, none)" ;;
 esac
 
 # Runtime only; nothing is built on the device.
