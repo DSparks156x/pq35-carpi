@@ -145,6 +145,14 @@ impl Actuators {
                     .then(|| key_action(k))
                     .flatten()
                     .is_some_and(|actions| self.send_input(actions));
+                let focus = match car.store().get("ui.focus", std::time::Instant::now()) {
+                    Some(carpi_state::Value::Text(f)) => f.clone(),
+                    _ => "unknown".into(),
+                };
+                info!(
+                    "key {k:?} -> {} (LIVI focus {focus})",
+                    if sent { "AA/CarPlay" } else { "LIVI" }
+                );
                 if !sent {
                     self.key(k);
                 }
@@ -269,8 +277,21 @@ fn open_tx(name: &str) -> Option<mpsc::Sender<Frame>> {
             let name = name.to_string();
             tokio::spawn(async move {
                 while let Some(f) = r.recv().await {
-                    if let Err(e) = port.send(&f).await {
-                        warn!("{name}: send {f:?} failed: {e}");
+                    // ENOBUFS: the interface's queue is full (a DIS burst).
+                    // Wait for it to drain rather than drop the frame.
+                    let mut tries = 0;
+                    loop {
+                        match port.send(&f).await {
+                            Err(e) if e.raw_os_error() == Some(105) && tries < 50 => {
+                                tries += 1;
+                                tokio::time::sleep(Duration::from_millis(2)).await;
+                            }
+                            Err(e) => {
+                                warn!("{name}: send {f:?} failed: {e}");
+                                break;
+                            }
+                            Ok(()) => break,
+                        }
                     }
                 }
             });

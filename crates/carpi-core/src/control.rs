@@ -60,6 +60,8 @@ pub(crate) struct Controls {
     gestures: Recogniser,
     pub routes: RouteConfig,
     pub focus: Focus,
+    /// Last dark-mode decision logged: night, and what decided it.
+    dark_logged: Option<(bool, Option<&'static str>)>,
 }
 
 impl Controls {
@@ -78,6 +80,7 @@ impl Controls {
             gestures: Recogniser::new(GestureConfig::default()),
             routes: RouteConfig::default(),
             focus: Focus::Livi,
+            dark_logged: None,
         }
     }
 
@@ -130,7 +133,7 @@ impl Controls {
         livi_up: bool,
         out: &mut Vec<Output>,
     ) {
-        if id != ids::MFL_CMD && id != ids::RNSE_KEYS {
+        if id != ids::MFL_CMD && id != ids::RNSE_KEYS && id != ids::STALK_KEYS {
             return;
         }
         if !carpi_input::known_key_frame(id, data)
@@ -168,6 +171,19 @@ impl Controls {
         let light = self
             .light
             .update(now, &carpi_light::Inputs::from_store(store, now));
+        let decided = (light.night, light.night_source.map(|s| s.as_str()));
+        if self.dark_logged != Some(decided) {
+            self.dark_logged = Some(decided);
+            let i = carpi_light::Inputs::from_store(store, now);
+            tracing::info!(
+                "dark mode: {} by {} (kl15 {:?}, lights on {:?}, car clock {:?})",
+                if light.night { "night" } else { "day" },
+                decided.1.unwrap_or("nothing yet"),
+                i.kl15,
+                light.lights_on,
+                store.get("clock.datetime", now).map(|v| v.to_string()),
+            );
+        }
         let auto = self.light.setup().auto_brightness;
         let num = |v: Option<f64>| v.map(Value::Num);
         store.set("light.night", Some(Value::Bool(light.night)), now, DERIVED);

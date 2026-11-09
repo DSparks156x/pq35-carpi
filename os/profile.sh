@@ -125,6 +125,15 @@ BitRate=100000
 RestartSec=100ms"; then
   if systemctl is-active -q systemd-networkd; then do_ networkctl reload; fi
 fi
+# The mcp2515's default queue is 10 frames; a DIS burst overflows it (ENOBUFS). Applies from
+# the next boot; set it now too.
+if put_file /etc/systemd/network/80-can0.link "[Match]
+OriginalName=can0
+
+[Link]
+TransmitQueueLength=100"; then
+  do_ ip link set can0 txqueuelen 100 2>/dev/null || true
+fi
 if ! systemctl is-enabled -q systemd-networkd 2>/dev/null; then
   say "enabling systemd-networkd"; do_ systemctl enable --now systemd-networkd
 fi

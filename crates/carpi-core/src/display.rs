@@ -204,8 +204,6 @@ pub fn default_readings() -> Vec<Reading> {
 
 /// Pages the DIS keys step through; always available (Drew). Nav, phone and
 /// media come and go with their content instead.
-const PAGES: [ScreenId; 2] = [ScreenId::Readings, ScreenId::Accel];
-
 /// `dis.*` values are rewritten every tick; let them lapse if ticks stop.
 const DERIVED: Duration = Duration::from_secs(1);
 
@@ -214,8 +212,8 @@ pub(crate) struct Display {
     dis: Dis,
     top: TopLines,
     running: bool,
-    /// Index into [`PAGES`], and whether a user page is shown at all.
-    page: usize,
+    /// The page the driver picked, while `user_page`.
+    picked: ScreenId,
     user_page: bool,
     nav: Option<NavInput>,
     readings: Option<ReadingsInput>,
@@ -534,7 +532,7 @@ impl Display {
             setup,
             top: TopLines::new(),
             running: false,
-            page: 0,
+            picked: ScreenId::Readings,
             user_page: false,
             nav: None,
             readings: None,
@@ -582,54 +580,62 @@ impl Display {
         }
     }
 
-    /// Wheel keys while the DIS has focus. Up/Down walk one list: the
-    /// readings subpages, then accel, then round again. The first key picks
-    /// the page on screen (or the default). Back unpicks it.
+    /// The stalk rocker (and the wheel while the DIS has focus): Up/Down
+    /// step through the pages from the one on screen, the way the old DIS
+    /// client did: media, nav while a route runs, the call while there is
+    /// one, each readings page, accel. Only while our DIS owns the centre;
+    /// otherwise ignored. Nav and calls still interrupt a picked page.
+    /// Back unpicks it.
     pub fn key(&mut self, now: Instant, k: DisKey) {
-        if !self.user_page {
-            if k == DisKey::Back {
+        if !self.running || !self.dis.session().owned() {
+            tracing::info!("dis: key {k:?} ignored (our DIS isn't up)");
+            return;
+        }
+        let delta: i32 = match k {
+            DisKey::Up => -1,
+            DisKey::Down => 1,
+            DisKey::Select => return,
+            DisKey::Back => {
+                self.user_page = false;
+                tracing::info!("dis: key Back -> automatic");
+                self.dis.set_user_page(now, None);
                 return;
             }
-            let on = self.dis.wanted().filter(|id| PAGES.contains(id));
-            let page = on.unwrap_or(self.setup.default_page);
-            self.page = PAGES.iter().position(|p| *p == page).unwrap_or(0);
-            self.user_page = true;
-        } else {
-            match k {
-                DisKey::Up | DisKey::Down => {
-                    let down = k == DisKey::Down;
-                    let (i, n) = (
-                        self.dis.readings().page_index(),
-                        self.dis.readings().page_count(),
-                    );
-                    match PAGES[self.page] {
-                        ScreenId::Readings if down && i + 1 < n => {
-                            self.dis.step_readings(now, 1);
-                        }
-                        ScreenId::Readings if !down && i > 0 => {
-                            self.dis.step_readings(now, -1);
-                        }
-                        ScreenId::Readings => {
-                            self.page = PAGES
-                                .iter()
-                                .position(|p| *p == ScreenId::Accel)
-                                .unwrap_or(0);
-                        }
-                        _ => {
-                            // Into readings at its first (down) or last (up) subpage.
-                            let target = if down { 0 } else { n.saturating_sub(1) };
-                            self.dis.step_readings(now, target as i32 - i as i32);
-                            self.page = 0;
-                        }
-                    }
-                }
-                DisKey::Select => {}
-                DisKey::Back => self.user_page = false,
-            }
+        };
+        // (screen, readings subpage)
+        let mut list: Vec<(ScreenId, usize)> = vec![(ScreenId::Media, 0)];
+        if self.dis.nav_available() {
+            list.push((ScreenId::Nav, 0));
         }
-        let page = self.user_page.then_some(PAGES[self.page]);
-        tracing::info!("dis: key {k:?} -> page {page:?}");
-        self.dis.set_user_page(now, page);
+        if self.dis.in_call() {
+            list.push((ScreenId::Call, 0));
+        }
+        let (sub, subs) = (
+            self.dis.readings().page_index(),
+            self.dis.readings().page_count().max(1),
+        );
+        list.extend((0..subs).map(|i| (ScreenId::Readings, i)));
+        list.push((ScreenId::Accel, 0));
+        let here = match self.dis.shown().or(self.dis.wanted()) {
+            Some(ScreenId::Readings) => Some((ScreenId::Readings, sub)),
+            Some(ScreenId::Cover | ScreenId::Egg) => Some((ScreenId::Media, 0)),
+            Some(s) => Some((s, 0)),
+            None => None,
+        };
+        let n = list.len() as i32;
+        let next = match here.and_then(|h| list.iter().position(|e| *e == h)) {
+            Some(i) => (i as i32 + delta).rem_euclid(n) as usize,
+            None if delta > 0 => 0,
+            None => list.len() - 1,
+        };
+        let (screen, page) = list[next];
+        if screen == ScreenId::Readings {
+            self.dis.step_readings(now, page as i32 - sub as i32);
+        }
+        self.picked = screen;
+        self.user_page = true;
+        tracing::info!("dis: key {k:?} -> {screen:?} {}", if screen == ScreenId::Readings { format!("page {}", page + 1) } else { String::new() });
+        self.dis.set_user_page(now, Some(screen));
     }
 
     /// Decode a new cover when `media.art_id` changes; drop it when it goes.
@@ -714,7 +720,7 @@ impl Display {
             self.running = true;
             self.dis.start(now);
             self.dis
-                .set_user_page(now, self.user_page.then_some(PAGES[self.page]));
+                .set_user_page(now, self.user_page.then_some(self.picked));
         } else if !want && self.running {
             tracing::info!("dis: stopped");
             self.running = false;
@@ -925,7 +931,7 @@ impl Display {
         set("dis.generation", Some(Value::Num(s.generation() as f64)));
         set(
             "dis.page",
-            Some(Value::Text(match (self.user_page, PAGES[self.page]) {
+            Some(Value::Text(match (self.user_page, self.picked) {
                 (false, _) => "none".into(),
                 (true, ScreenId::Readings) => "readings".into(),
                 (true, ScreenId::Nav) => "nav".into(),

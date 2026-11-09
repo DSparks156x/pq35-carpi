@@ -26,7 +26,7 @@ pub const TABLES: [&str; 7] = [
     "livi",
 ];
 
-const KEYS: [(Key, &str); 23] = [
+const KEYS: [(Key, &str); 25] = [
     (Key::WheelUp, "wheel_up"),
     (Key::WheelDown, "wheel_down"),
     (Key::WheelClick, "wheel_click"),
@@ -35,6 +35,8 @@ const KEYS: [(Key, &str); 23] = [
     (Key::VolUp, "vol_up"),
     (Key::VolDown, "vol_down"),
     (Key::VolClick, "vol_click"),
+    (Key::StalkUp, "stalk_up"),
+    (Key::StalkDown, "stalk_down"),
     (Key::Prev, "prev"),
     (Key::Next, "next"),
     (Key::Up, "up"),

@@ -8,6 +8,9 @@
 //! ~110 ms; 04 = released, sent five times. Knob rotation is two masks, one per
 //! direction, and every press frame counts.
 //!
+//! Stalk rocker (0x2C1): byte 2 bit 0x20 up, 0x10 down, held while set; a
+//! frame without either releases.
+//!
 //! Releases that never arrive are synthesised after a timeout.
 
 use crate::{Edge, Key, KeyEvent};
@@ -101,6 +104,8 @@ fn panel_cmd(k1: u8, k2: u8) -> Option<PanelCmd> {
 pub fn known_key_frame(id: u32, data: &[u8]) -> bool {
     match id {
         ids::MFL_CMD => data.len() < 2 || !matches!(wheel_cmd(data[1]), WheelCmd::Unknown),
+        // Byte 2 with anything but the rocker bits: logged, to learn the rest.
+        ids::STALK_KEYS => data.get(2).is_none_or(|b| b & !0x30 == 0),
         ids::RNSE_KEYS => {
             data.len() < 5
                 || data[0] != 0x37
@@ -123,6 +128,7 @@ pub struct Decoder {
     cfg: DecoderConfig,
     wheel: Option<Held>,
     panel: Option<Held>,
+    stalk: Option<Held>,
     last_mode_up: Option<Instant>,
     knob_acc: i16,
 }
@@ -133,6 +139,7 @@ impl Decoder {
             cfg,
             wheel: None,
             panel: None,
+            stalk: None,
             last_mode_up: None,
             knob_acc: 0,
         }
@@ -144,6 +151,7 @@ impl Decoder {
         match id {
             ids::MFL_CMD => self.wheel_frame(at, data, &mut out),
             ids::RNSE_KEYS => self.panel_frame(at, data, &mut out),
+            ids::STALK_KEYS => self.stalk_frame(at, data, &mut out),
             _ => {}
         }
         out
@@ -163,6 +171,12 @@ impl Decoder {
             self.panel = None;
             out.push(ev(h.key, Edge::Up, now));
         }
+        if let Some(h) = self.stalk
+            && now.saturating_duration_since(h.last) >= self.cfg.wheel_release_timeout
+        {
+            self.stalk = None;
+            out.push(ev(h.key, Edge::Up, now));
+        }
         out
     }
 
@@ -170,10 +184,8 @@ impl Decoder {
     pub fn next_deadline(&self) -> Option<Instant> {
         let w = self.wheel.map(|h| h.last + self.cfg.wheel_release_timeout);
         let p = self.panel.map(|h| h.last + self.cfg.panel_release_timeout);
-        match (w, p) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        let s = self.stalk.map(|h| h.last + self.cfg.wheel_release_timeout);
+        [w, p, s].into_iter().flatten().min()
     }
 
     fn wheel_frame(&mut self, at: Instant, data: &[u8], out: &mut Vec<KeyEvent>) {
@@ -215,6 +227,31 @@ impl Decoder {
             }
             out.push(ev(h.key, Edge::Up, at));
         }
+    }
+
+    fn stalk_frame(&mut self, at: Instant, data: &[u8], out: &mut Vec<KeyEvent>) {
+        let Some(&b) = data.get(2) else {
+            return;
+        };
+        let key = if b & 0x20 != 0 {
+            Some(Key::StalkUp)
+        } else if b & 0x10 != 0 {
+            Some(Key::StalkDown)
+        } else {
+            None
+        };
+        match (self.stalk, key) {
+            (Some(h), Some(k)) if h.key == k => out.push(ev(k, Edge::Repeat, at)),
+            (held, Some(k)) => {
+                if let Some(h) = held {
+                    out.push(ev(h.key, Edge::Up, at));
+                }
+                out.push(ev(k, Edge::Down, at));
+            }
+            (Some(h), None) => out.push(ev(h.key, Edge::Up, at)),
+            (None, None) => {}
+        }
+        self.stalk = key.map(|key| Held { key, last: at });
     }
 
     fn panel_frame(&mut self, at: Instant, data: &[u8], out: &mut Vec<KeyEvent>) {
@@ -285,6 +322,38 @@ mod tests {
             all.extend(edges(&d.on_frame(t0 + ms(t), id, data)));
         }
         all
+    }
+
+    #[test]
+    fn stalk_rocker_from_2c1() {
+        let t0 = Instant::now();
+        let mut d = Decoder::new(DecoderConfig::default());
+        const S: u32 = ids::STALK_KEYS;
+        let got = run(
+            &mut d,
+            t0,
+            &[
+                (0, S, &[0x00, 0x00, 0x00]),
+                (100, S, &[0x00, 0x00, 0x20]),
+                (200, S, &[0x00, 0x00, 0x20]),
+                (300, S, &[0x00, 0x00, 0x00]),
+                (400, S, &[0x00, 0x00, 0x10]),
+                (500, S, &[0x00, 0x00, 0x00]),
+            ],
+        );
+        use Edge::*;
+        assert_eq!(
+            got,
+            [
+                (Key::StalkUp, Down),
+                (Key::StalkUp, Repeat),
+                (Key::StalkUp, Up),
+                (Key::StalkDown, Down),
+                (Key::StalkDown, Up),
+            ]
+        );
+        assert!(known_key_frame(S, &[0, 0, 0x20]));
+        assert!(!known_key_frame(S, &[0, 0, 0x08]));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use std::time::Instant;
 
-/// A physical key. Wheel keys come from 0x5C3, the rest from 0x461.
+/// A physical key. Wheel keys come from 0x5C3, the stalk rocker from 0x2C1,
+/// the rest from 0x461.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Key {
     // --- Steering wheel (0x5C3) ---
@@ -13,6 +14,10 @@ pub enum Key {
     VolUp,
     VolDown,
     VolClick,
+
+    // --- Wiper-stalk rocker for the cluster display (0x2C1) ---
+    StalkUp,
+    StalkDown,
 
     // --- RNS-E faceplate (0x461, only while on TV) ---
     /// Track back (`01 00`).

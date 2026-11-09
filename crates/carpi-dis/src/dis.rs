@@ -112,6 +112,7 @@ pub struct Dis {
     cover_flash: Option<Duration>,
     flash: Option<Flash>,
     user_page: Option<ScreenId>,
+    in_call: bool,
     /// Screen entered, and the generation it was entered in.
     shown: Option<(ScreenId, u32)>,
     /// Re-enter the shown screen on the next frame (subpage change).
@@ -157,6 +158,7 @@ impl Dis {
             cover_flash: cfg.cover_flash,
             flash: None,
             user_page: None,
+            in_call: false,
             shown: None,
             reenter: false,
             want: None,
@@ -316,8 +318,19 @@ impl Dis {
         &self.accel
     }
 
+    /// Nav guidance is running (the rocker offers the nav page then).
+    pub fn nav_available(&self) -> bool {
+        self.arbiter.nav_available()
+    }
+
+    /// A call is on (the rocker offers the call page then).
+    pub fn in_call(&self) -> bool {
+        self.in_call
+    }
+
     /// Call state. Any call outranks media and user pages (not nav maneuvers).
     pub fn set_call(&mut self, now: Instant, c: CallInput) {
+        self.in_call = c.state.is_some();
         self.arbiter.set(Class::Call, c.state.is_some() && self.claims[1].0);
         self.content_changed(1, c.state.is_some(), ScreenId::Call);
         self.call.set(now, c);

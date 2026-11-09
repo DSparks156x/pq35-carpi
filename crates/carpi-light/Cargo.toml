@@ -9,4 +9,5 @@ license-file.workspace = true
 publish.workspace = true
 
 [dependencies]
+carpi-gate.workspace = true
 carpi-state.workspace = true

@@ -71,6 +71,9 @@ pub const DIAGNOSE_1: u32 = 0x65D;
 // --- Inputs ----------------------------------------------------------------
 /// Steering wheel buttons (MFL).
 pub const MFL_CMD: u32 = 0x5C3;
+/// Convenience to infotainment; byte 2 carries the wiper-stalk rocker for the
+/// cluster display: 0x20 up, 0x10 down (the old DIS client, Drew).
+pub const STALK_KEYS: u32 = 0x2C1;
 /// RNS-E faceplate/TV-panel keys, only sent while the RNS-E is on TV.
 pub const RNSE_KEYS: u32 = 0x461;
 

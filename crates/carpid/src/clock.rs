@@ -189,7 +189,10 @@ pub fn parse_show(text: &str) -> (bool, bool) {
 pub fn set_from_car(car: i64, pi: i64) -> Result<Option<String>, String> {
     use std::process::Command;
     let run = |args: &[&str]| -> Result<String, String> {
+        // Never a password prompt: without the polkit rule it fails
+        // instead of popping a dialog nobody can answer from the knob.
         let out = Command::new("timedatectl")
+            .arg("--no-ask-password")
             .args(args)
             .output()
             .map_err(|e| format!("timedatectl: {e}"))?;
@@ -317,7 +320,7 @@ pub fn set_timezone_command(tz: &str, choices: &[String]) -> Result<Vec<String>,
             format!("unknown timezone {tz:?}")
         });
     }
-    Ok(["timedatectl", "set-timezone", tz]
+    Ok(["timedatectl", "--no-ask-password", "set-timezone", tz]
         .iter()
         .map(|s| s.to_string())
         .collect())
@@ -404,7 +407,7 @@ mod tests {
         );
         assert_eq!(
             set_timezone_command("Europe/Berlin", &zones).unwrap(),
-            ["timedatectl", "set-timezone", "Europe/Berlin"]
+            ["timedatectl", "--no-ask-password", "set-timezone", "Europe/Berlin"]
         );
         assert!(set_timezone_command("Asia/Omsk", &zones).is_err());
         assert!(set_timezone_command("Europe/Berlin; reboot", &zones).is_err());

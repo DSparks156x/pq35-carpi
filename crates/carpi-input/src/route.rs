@@ -141,6 +141,10 @@ impl Default for RouteConfig {
             ((K::WheelDown, Short), DisKey::Down),
             ((K::WheelClick, Short), DisKey::Select),
             ((K::WheelClick, Long), DisKey::Back),
+            // The stalk rocker pages our DIS (while it's up), focus or
+            // not, TV or not.
+            ((K::StalkUp, Short), DisKey::Up),
+            ((K::StalkDown, Short), DisKey::Down),
         ]);
         let car = HashMap::from([
             ((K::Nav, Short), C::OpenNav),
@@ -186,6 +190,12 @@ impl Default for RouteConfig {
 }
 
 pub fn route(cfg: &RouteConfig, ctx: &Context, g: &Gesture) -> Route {
+    if matches!(g.key, Key::StalkUp | Key::StalkDown) {
+        return match cfg.dis.get(&(g.key, g.kind)) {
+            Some(&k) => Route::Dis(k),
+            None => Route::Drop,
+        };
+    }
     if !ctx.rnse_on_tv {
         return Route::Drop;
     }
@@ -256,6 +266,20 @@ mod tests {
         call: Call::Active,
         ..TV
     };
+
+    #[test]
+    fn stalk_always_drives_the_dis() {
+        let off = Context {
+            rnse_on_tv: false,
+            livi_connected: false,
+            ..TV
+        };
+        for ctx in [TV, off, IN_CALL] {
+            assert_eq!(r(ctx, Key::StalkDown, Short), Route::Dis(DisKey::Down));
+            assert_eq!(r(ctx, Key::StalkUp, Short), Route::Dis(DisKey::Up));
+            assert_eq!(r(ctx, Key::StalkUp, Long), Route::Drop);
+        }
+    }
 
     #[test]
     fn nothing_off_tv() {

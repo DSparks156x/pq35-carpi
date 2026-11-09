@@ -160,3 +160,4 @@ fn sends_only_label_and_brightness_to_the_rnse() {
         Some(carpi_state::Value::Text(t)) if t.starts_with("{\"source\":\"cluster\"")
     ));
 }
+

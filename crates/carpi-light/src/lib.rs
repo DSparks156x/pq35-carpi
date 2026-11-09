@@ -107,9 +107,9 @@ impl Inputs {
             dim_switch_pct: s.get_num("light.dim_switch_pct", now),
             low_beam: s.get_bool("lights.low_beam", now),
             side: s.get_bool("lights.side", now),
-            kl15: s
-                .get_bool("ignition.kl15", now)
-                .or_else(|| s.get_bool("ignition.zas.kl15", now)),
+            // The same rule as the DIS and the bus gate: on if either the
+            // BCM (0x575) or the ignition switch (0x2C3) says on.
+            kl15: carpi_gate::kl15(s, now),
             clock: match s.get("clock.datetime", now) {
                 Some(Value::Text(t)) => ClockTime::parse(t),
                 _ => None,
@@ -389,6 +389,20 @@ mod tests {
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
+    }
+
+    #[test]
+    fn ignition_is_on_if_either_source_says_so() {
+        // The light model used to take the BCM's word first: BCM off and the
+        // ignition switch on read as off, and night never followed the lights.
+        let now = Instant::now();
+        let mut s = carpi_state::Store::new();
+        let t = Duration::from_secs(5);
+        s.set("ignition.kl15", Some(carpi_state::Value::Bool(false)), now, t);
+        s.set("ignition.zas.kl15", Some(carpi_state::Value::Bool(true)), now, t);
+        assert_eq!(Inputs::from_store(&s, now).kl15, Some(true));
+        s.set("ignition.zas.kl15", Some(carpi_state::Value::Bool(false)), now, t);
+        assert_eq!(Inputs::from_store(&s, now).kl15, Some(false));
     }
 
     fn parked() -> Inputs {
