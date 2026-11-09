@@ -283,6 +283,28 @@ pub struct Settings {
     pub update: UpdateSettings,
     #[serde(default)]
     pub avsd: AvsdSettings,
+    #[serde(default)]
+    pub remote: RemoteSettings,
+}
+
+/// Remote access: VNC on the desktop. ssh is always on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSettings {
+    /// The wayvnc user unit is there.
+    pub vnc_installed: bool,
+    pub vnc_running: bool,
+    /// Starts with the desktop; off makes boot faster.
+    pub vnc_at_boot: bool,
+}
+
+/// Fields left out stay as they are.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemotePatch {
+    /// Start or stop VNC now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_running: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_at_boot: Option<bool>,
 }
 
 /// `[logs]`: captures and how much disk the logs may use.
@@ -906,6 +928,8 @@ pub struct SettingsPatch {
     pub update: Option<UpdatePatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avsd: Option<AvsdPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemotePatch>,
 }
 
 /// The PIN never shows in `Debug` output, so it can't reach a log.

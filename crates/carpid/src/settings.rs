@@ -161,6 +161,7 @@ pub fn get(cfg: &Config) -> Settings {
             },
             version: String::new(),
         },
+        remote: Default::default(),
         avsd: carpi_proto::AvsdSettings {
             path: crate::config::expand_home(&cfg.avsd.env)
                 .display()
@@ -182,6 +183,7 @@ pub fn system(s: &mut Settings, cfg: &Config) {
     }
     s.update.version = version(Path::new(MANIFEST));
     s.avsd = crate::avsd::read(&crate::config::expand_home(&cfg.avsd.env));
+    s.remote = crate::remote::read();
 }
 
 const MANIFEST: &str = "/opt/carpi/current/manifest.json";

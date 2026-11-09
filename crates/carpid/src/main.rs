@@ -23,6 +23,7 @@ mod config;
 mod datalog;
 mod faults;
 mod portal;
+mod remote;
 mod runmark;
 mod settings;
 mod update;
@@ -608,6 +609,11 @@ impl Daemon {
             restart_needed.push("clock.timezone".into());
         }
         self.cfg = new;
+        if let Some(r) = &patch.remote
+            && let Err(e) = remote::apply(r)
+        {
+            return Err(format!("carpid.toml saved, but {e}"));
+        }
         if let Some(a) = avsd {
             let changed = if a.values.is_empty() {
                 false
