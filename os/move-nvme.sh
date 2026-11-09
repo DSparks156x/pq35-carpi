@@ -180,7 +180,19 @@ for w in "${WANT[@]}"; do
   fi
 done
 if [ $changed = 1 ]; then
-  rpi-eeprom-config --apply "$CONF" >/dev/null || fail "Couldn't change the boot order"
+  # Its output goes to the journal: "UPDATE SUCCESSFUL" alone didn't mean the settings took.
+  ok=1; out=$(rpi-eeprom-config --apply "$CONF" 2>&1) || ok=0
+  printf '%s\n' "$out" | sed 's/^/eeprom: /'
+  [ $ok = 1 ] || fail "Couldn't change the boot order"
+  # Taken: either in the bootloader now (flashed at once), or staged for the next start
+  # (pieeprom.upd on the boot partition, which the bootloader flashes then).
+  now=$(rpi-eeprom-config 2>/dev/null)
+  taken=1
+  for w in "${WANT[@]}"; do grep -qx "$w" <<< "$now" || taken=0; done
+  if [ $taken = 0 ] && [ ! -f /boot/firmware/pieeprom.upd ]; then
+    fail "The boot order didn't take (still $(grep '^BOOT_ORDER=' <<< "$now"))"
+  fi
+  [ $taken = 1 ] && echo "eeprom: boot order set" || echo "eeprom: boot order staged for the next start"
 fi
 rm -f "$CONF"
 

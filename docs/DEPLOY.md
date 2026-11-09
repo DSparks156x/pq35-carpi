@@ -137,8 +137,7 @@ The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/p
 - a polkit rule so carpid can start Move to NVMe (`carpi-move-nvme.service`, start only), and rsync, fdisk, dosfstools and rpi-eeprom for it;
 - the timezone, with `--tz` (or `CARPI_TZ`). It must match the car clock, which is local time;
 - zstd, for `os/install.sh`;
-- zstd, for `os/install.sh`;
-- later, the NVMe boot-time trimming.
+- boot time ([BOOT.md](BOOT.md)): firmware and kernel command line, the netplan wrapper, cloud-init off after first boot, unused units off, the overlays folded into one DTB (`os/dt-merge.sh`), and the kiosk session (`carpi-session.service`: labwc on tty7, no lightdm, no desktop).
 
 The bundle manifest names the minimum profile version it needs. The script is what I did by hand to the trial card, written down.
 
@@ -156,9 +155,9 @@ cargo xtask image --boot E:\ --tz America/Chicago      # a card or NVMe already 
 - **Asks** for the Wi-Fi name and password (first boot needs the internet for packages). `--edit` opens the network-config in an editor before it's written; `--network-config FILE` uses a netplan file as it is; `--no-wifi` is wired only. `--password` asks for a login password (VNC and the console need one); ssh is key-only, with the `carpi` alias's key (or `--ssh-key`).
 - **Bundle**: `--bundle FILE`, `--from-ci BRANCH|RUN-ID`, default the CI bundle of the current branch.
 - **Writes** cloud-init's `user-data`, `network-config` and `meta-data` and a `carpi/` folder (bundle, carpi-update, `firstboot.sh`, `profile.sh`, `install.sh`, `setup.env`) into the boot partition. From an image it writes a new `<name>-carpi.img`; flash that with Imager and no OS customisation.
-- **First boot**: cloud-init makes the user and joins the Wi-Fi, then `os/firstboot.sh` waits for the network, runs `profile.sh`, then `install.sh`, turns on desktop autologin and reboots. Its log is `/var/log/carpi-firstboot.log`, also copied to `carpi/firstboot.log` on the boot partition. On a failure it doesn't reboot: ssh in, fix, re-run it.
+- **First boot**: cloud-init makes the user and joins the Wi-Fi, then `os/firstboot.sh` waits for the network, runs `profile.sh` (which also sets up the kiosk session), then `install.sh`, and reboots. Its log is `/var/log/carpi-firstboot.log`, also copied to `carpi/firstboot.log` on the boot partition. On a failure it doesn't reboot: ssh in, fix, re-run it.
 - **`os/install.sh --bundle F [--updater P]`**: the first install, also usable on any profiled Pi. Puts in what's missing and nothing else: `carpid.toml`, the user units (carpid, LIVI, the A/V chain, wayvnc), `~/avsd`, the governor unit, Move to NVMe's root unit and its script (`/usr/local/lib/carpi/move-nvme.sh`, root-owned, refreshed when the bundle's differs), wayvnc's config. Enables them, then `carpi-update apply`. LIVI installs its own hotspot unit and udev rule when it runs.
-- **Not done yet** (after the boot-time work): the Lite image with LIVI's kiosk instead of the desktop session, the boot-time trimming, LIVI's default knob bindings, an offline first boot. Untested on a real card so far.
+- **Not done yet**: the Lite image, a desktop on leaving LIVI, an offline first boot. Untested on a real card so far.
 
 ## Decisions (Drew, 2026-11-07)
 

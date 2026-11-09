@@ -89,7 +89,24 @@ def config_lines(s):
     return out
 
 
+DT_MERGE = "/usr/local/sbin/carpi-dt-merge"
+
+
+def dt_merge(action):
+    """os/dt-merge.sh (profile.sh installs it): edit config.txt plain, fold the overlays after."""
+    if os.access(DT_MERGE, os.X_OK):
+        subprocess.run([DT_MERGE, action], check=False)
+
+
 def apply_config_txt(s):
+    dt_merge("undo")
+    try:
+        edit_config_txt(s)
+    finally:
+        dt_merge("merge")
+
+
+def edit_config_txt(s):
     text = read(CONFIG)
     # Our block, replaced whole.
     text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "", text, flags=re.S)
@@ -177,7 +194,11 @@ def apply_user_config(s, share, user):
         os.chown(os.path.dirname(cfg), user.pw_uid, user.pw_gid)
     livi = os.path.join(home, ".config/LIVI/config.json")
     if not os.path.exists(livi):
-        seed = {"bindings": {"knobLeft": "PageUp", "knobRight": "PageDown"}}
+        # wifiDedicatedInterface: LIVI's access point is a boot unit, up before LIVI starts, so the
+        # phone is paged sooner (docs/BOOT.md). LIVI's own default is DE for the hotspot country.
+        seed = {"bindings": {"knobLeft": "PageUp", "knobRight": "PageDown"}, "wifiDedicatedInterface": True}
+        if re.fullmatch(r"[A-Z]{2}", s.get("country") or ""):
+            seed["country"] = s["country"]
         hot = s.get("hotspot") or {}
         if hot.get("name"):
             seed["carName"] = hot["name"]

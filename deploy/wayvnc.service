@@ -5,7 +5,7 @@ Description=VNC for the labwc session (PAM login, RSA-AES)
 
 [Service]
 Environment=WAYLAND_DISPLAY=wayland-0
-ExecStartPre=/bin/sh -c "until [ -S $XDG_RUNTIME_DIR/wayland-0 ]; do sleep 1; done"
+ExecStartPre=/bin/sh -c "until [ -S $XDG_RUNTIME_DIR/wayland-0 ]; do sleep 0.05; done"
 ExecStart=/usr/bin/wayvnc
 Restart=always
 RestartSec=2

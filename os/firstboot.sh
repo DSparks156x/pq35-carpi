@@ -7,7 +7,7 @@
 #   setup.env      CARPI_USER, CARPI_HAT, CARPI_TZ, with the bundle (*.tar.zst) beside it.
 #
 # Waits for the network (packages, and the release), profiles the OS, applies the answers
-# (os/options.py), installs the bundle, turns on desktop autologin. Success leaves
+# (os/options.py), installs the bundle (the kiosk session is profile.sh's). Success leaves
 # /var/lib/carpi-firstboot.done and cloud-init reboots (power_state in user-data). The log is
 # /var/log/carpi-firstboot.log, copied to carpi/firstboot.log on the boot partition. On a
 # failure there's no reboot: ssh in, fix, and re-run this script.
@@ -127,11 +127,8 @@ if [ -n "$SETUP" ]; then
     || fail "options.py post"
 fi
 
-# LIVI and wayvnc run in the desktop session: log the car user in at boot.
-if command -v raspi-config >/dev/null; then
-  say "desktop autologin"
-  raspi-config nonint do_boot_behaviour B4 || say "raspi-config B4 failed; set autologin by hand"
-fi
+# LIVI and wayvnc run in the kiosk session profile.sh set up (carpi-session.service, in place of
+# lightdm autologin: raspi-config's B4 would turn lightdm back on).
 
 rm -rf $WORK/b
 touch $DONE
