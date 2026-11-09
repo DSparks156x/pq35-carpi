@@ -575,7 +575,8 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
             doc["dis"]["nav_lanes"] = value(snake(&v));
         }
         if let Some(lines) = &d.accel {
-            doc["dis"]["accel"] = value(toml_edit::Array::from_iter(lines.iter().map(|l| l.trim())));
+            doc["dis"]["accel"] =
+                value(toml_edit::Array::from_iter(lines.iter().map(|l| l.trim())));
         }
     }
     if patch.bindings_reset {

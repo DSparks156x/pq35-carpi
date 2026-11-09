@@ -270,7 +270,9 @@ const TIMESYNC_CLOCK: &str = "/var/lib/systemd/timesync/clock";
 
 #[cfg(target_os = "linux")]
 fn timesync_floor() -> Option<std::time::SystemTime> {
-    std::fs::metadata(TIMESYNC_CLOCK).and_then(|m| m.modified()).ok()
+    std::fs::metadata(TIMESYNC_CLOCK)
+        .and_then(|m| m.modified())
+        .ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -282,7 +284,13 @@ fn behind_timesync_floor() -> bool {
 fn floor_text() -> String {
     timesync_floor()
         .and_then(|f| f.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or("?".into(), |d| format!("{} UTC (unix {})", format_naive(d.as_secs() as i64), d.as_secs()))
+        .map_or("?".into(), |d| {
+            format!(
+                "{} UTC (unix {})",
+                format_naive(d.as_secs() as i64),
+                d.as_secs()
+            )
+        })
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -453,7 +461,12 @@ mod tests {
         );
         assert_eq!(
             set_timezone_command("Europe/Berlin", &zones).unwrap(),
-            ["timedatectl", "--no-ask-password", "set-timezone", "Europe/Berlin"]
+            [
+                "timedatectl",
+                "--no-ask-password",
+                "set-timezone",
+                "Europe/Berlin"
+            ]
         );
         assert!(set_timezone_command("Asia/Omsk", &zones).is_err());
         assert!(set_timezone_command("Europe/Berlin; reboot", &zones).is_err());
