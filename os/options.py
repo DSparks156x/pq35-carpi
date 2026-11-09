@@ -180,9 +180,14 @@ def carpid_toml(s, default_text):
         # Send to the car and power off when the bus sleeps: what a car install wants.
         t = edit_section(t, "tx", "enabled", "true")
         t = edit_section(t, "power", "shutdown", "true")
-    channel = (s.get("release") or {}).get("channel")
+    release = s.get("release") or {}
+    channel = release.get("channel")
     if channel in ("stable", "beta"):
         t = edit_section(t, "update", "channel", f'"{channel}"')
+    # The repo the card installed from keeps the updates coming (a fork's, say).
+    repo = release.get("repo")
+    if isinstance(repo, str) and re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", repo):
+        t = edit_section(t, "update", "repo", f'"{repo}"')
     return t
 
 
