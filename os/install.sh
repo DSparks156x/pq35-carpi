@@ -77,7 +77,11 @@ for l in "bin:$CUR/bin" "chain:$CUR/share/sdlink/run"; do
   ln -s "${l#*:}" "$AV/current/$n"
   chown -h "$USERNAME:$GROUP" "$AV/current/$n"
 done
-put_missing "$S/sdlink/run/avsd.env" "$AV/avsd.env"
+if [ ! -e "$AV/avsd.env" ]; then
+  put_missing "$S/sdlink/run/avsd.env" "$AV/avsd.env"
+  # SDLink also supports Hudiy, which its generic defaults wait for. This install runs LIVI.
+  printf '\n# rnse-carpi front end\nAPP_PROC=livi-core\nCAP_SINK=avsd_out\nCAP_SINK_CREATE=1\n' >> "$AV/avsd.env"
+fi
 if [ ! -e /etc/systemd/system/avsd-governor.service ] && [ -f "$S/sdlink/run/avsd-governor.service" ]; then
   say "installing avsd-governor.service"
   install -m 0644 "$S/sdlink/run/avsd-governor.service" /etc/systemd/system/
