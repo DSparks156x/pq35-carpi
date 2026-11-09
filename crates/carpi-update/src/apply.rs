@@ -250,18 +250,35 @@ pub fn apply(
     opts: &Opts,
     emit: &mut dyn FnMut(JobEvent),
 ) -> Result<Outcome, String> {
-    let m = unpack(layout, file, policy, opts.os_profile, emit)?;
-    for fw in &m.firmware {
-        stage(
-            emit,
-            "firmware",
-            format!(
-                "{} image {:?} is in the bundle; flashing it is a separate, confirmed step",
-                fw.target, fw.version
-            ),
-        );
+    std::fs::create_dir_all(&layout.root).map_err(|e| format!("update state: {e}"))?;
+    let mut st = layout.state();
+    st.last_apply = Some("applying".into());
+    layout
+        .save_state(&st)
+        .map_err(|e| format!("update state: {e}"))?;
+    let result = (|| {
+        let m = unpack(layout, file, policy, opts.os_profile, emit)?;
+        for fw in &m.firmware {
+            stage(
+                emit,
+                "firmware",
+                format!(
+                    "{} image {:?} is in the bundle; flashing it is a separate, confirmed step",
+                    fw.target, fw.version
+                ),
+            );
+        }
+        switch(layout, &m.version, sys, opts, emit)
+    })();
+    // Failures before switch/health must not leave an earlier successful apply in status.
+    let mut st = layout.state();
+    if result.is_err() && st.last_apply.as_deref() == Some("applying") {
+        st.last_apply = Some("failed".into());
+        layout
+            .save_state(&st)
+            .map_err(|e| format!("update state: {e}"))?;
     }
-    switch(layout, &m.version, sys, opts, emit)
+    result
 }
 
 #[cfg(test)]
@@ -359,6 +376,30 @@ mod tests {
         .unwrap();
         assert!(observed);
         assert_eq!(l.state().last_apply.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn an_invalid_bundle_replaces_a_previous_success_with_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let l = Layout::new(d.path().join("root"));
+        std::fs::create_dir_all(&l.root).unwrap();
+        let mut state = l.state();
+        state.last_apply = Some("ok".into());
+        l.save_state(&state).unwrap();
+        let bad = d.path().join("invalid.tar.zst");
+        std::fs::write(&bad, b"invalid bundle").unwrap();
+        assert!(
+            apply(
+                &l,
+                &bad,
+                &policy(),
+                &mut Fake::new(Some(0)),
+                &OPTS,
+                &mut |_| {}
+            )
+            .is_err()
+        );
+        assert_eq!(l.state().last_apply.as_deref(), Some("failed"));
     }
 
     #[test]
