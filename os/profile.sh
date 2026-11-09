@@ -74,6 +74,8 @@ PACKAGES=(
   can-utils evtest wayvnc polkitd
   # os/install.sh unpacks a bundle's share/ with tar --zstd
   zstd
+  # Move to NVMe (os/move-nvme.sh)
+  rsync fdisk dosfstools rpi-eeprom
 )
 
 # 1. Packages
@@ -198,6 +200,17 @@ polkit.addRule(function(action, subject) {
   if ((action.id == \"org.freedesktop.NetworkManager.settings.modify.system\" ||
        action.id == \"org.freedesktop.NetworkManager.network-control\" ||
        action.id == \"org.freedesktop.NetworkManager.wifi.scan\") && subject.user == \"$USERNAME\") {
+    return polkit.Result.YES;
+  }
+});" || true
+
+# 8c. carpid starts Move to NVMe (os/move-nvme.sh, run as root by carpi-move-nvme.service, which
+#     os/install.sh installs). This unit only, start only.
+put_file /etc/polkit-1/rules.d/50-carpi-nvme.rules "// carpid: Move to NVMe (crates/carpid/src/storage.rs).
+polkit.addRule(function(action, subject) {
+  if (action.id == \"org.freedesktop.systemd1.manage-units\" &&
+      action.lookup(\"unit\") == \"carpi-move-nvme.service\" &&
+      action.lookup(\"verb\") == \"start\" && subject.user == \"$USERNAME\") {
     return polkit.Result.YES;
   }
 });" || true

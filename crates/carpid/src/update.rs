@@ -343,6 +343,29 @@ impl Jobs {
         });
         Ok(job)
     }
+
+    /// Move to NVMe: shares the one-at-a-time, so an update can't install mid-copy.
+    pub fn start_storage(
+        self: &Arc<Self>,
+        events: mpsc::UnboundedSender<JobEvent>,
+    ) -> Result<u32, String> {
+        if self.busy.swap(true, Ordering::SeqCst) {
+            return Err("an update or Wi-Fi job is running".into());
+        }
+        let job = self.next_job();
+        let me = self.clone();
+        tokio::spawn(async move {
+            crate::storage::move_job(
+                &crate::storage::Real,
+                &crate::storage::progress_path(),
+                crate::storage::TIMING,
+                &events,
+            )
+            .await;
+            me.busy.store(false, Ordering::SeqCst);
+        });
+        Ok(job)
+    }
 }
 
 #[cfg(test)]

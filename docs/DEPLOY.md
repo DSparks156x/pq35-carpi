@@ -134,6 +134,7 @@ The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/p
 - lingering;
 - the journal on disk, capped at 200 MB, and the car user in `adm` (captures read every unit's journal);
 - a polkit rule so carpid can set the clock from the car's (timedated `set-time` and `set-ntp`);
+- a polkit rule so carpid can start Move to NVMe (`carpi-move-nvme.service`, start only), and rsync, fdisk, dosfstools and rpi-eeprom for it;
 - the timezone, with `--tz` (or `CARPI_TZ`). It must match the car clock, which is local time;
 - zstd, for `os/install.sh`;
 - zstd, for `os/install.sh`;
@@ -156,7 +157,7 @@ cargo xtask image --boot E:\ --tz America/Chicago      # a card or NVMe already 
 - **Bundle**: `--bundle FILE`, `--from-ci BRANCH|RUN-ID`, default the CI bundle of the current branch.
 - **Writes** cloud-init's `user-data`, `network-config` and `meta-data` and a `carpi/` folder (bundle, carpi-update, `firstboot.sh`, `profile.sh`, `install.sh`, `setup.env`) into the boot partition. From an image it writes a new `<name>-carpi.img`; flash that with Imager and no OS customisation.
 - **First boot**: cloud-init makes the user and joins the Wi-Fi, then `os/firstboot.sh` waits for the network, runs `profile.sh`, then `install.sh`, turns on desktop autologin and reboots. Its log is `/var/log/carpi-firstboot.log`, also copied to `carpi/firstboot.log` on the boot partition. On a failure it doesn't reboot: ssh in, fix, re-run it.
-- **`os/install.sh --bundle F [--updater P]`**: the first install, also usable on any profiled Pi. Puts in what's missing and nothing else: `carpid.toml`, the user units (carpid, LIVI, the A/V chain, wayvnc), `~/avsd`, the governor unit, wayvnc's config. Enables them, then `carpi-update apply`. LIVI installs its own hotspot unit and udev rule when it runs.
+- **`os/install.sh --bundle F [--updater P]`**: the first install, also usable on any profiled Pi. Puts in what's missing and nothing else: `carpid.toml`, the user units (carpid, LIVI, the A/V chain, wayvnc), `~/avsd`, the governor unit, Move to NVMe's root unit and its script (`/usr/local/lib/carpi/move-nvme.sh`, root-owned, refreshed when the bundle's differs), wayvnc's config. Enables them, then `carpi-update apply`. LIVI installs its own hotspot unit and udev rule when it runs.
 - **Not done yet** (after the boot-time work): the Lite image with LIVI's kiosk instead of the desktop session, the boot-time trimming, LIVI's default knob bindings, an offline first boot. Untested on a real card so far.
 
 ## Decisions (Drew, 2026-11-07)

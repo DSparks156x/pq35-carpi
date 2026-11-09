@@ -52,10 +52,11 @@ Not asked: detected on the fly. The on-screen keyboard defaults to touch when a 
 
 ## NVMe and post-setup (Drew: most people have no M.2 USB enclosure)
 
-The page finishes an SD card. Everything after first boot happens on the head unit, in a **Setup** screen at the top of Car Integration that shows until it's dismissed: the time zone, the phone, Wi-Fi networks, DIS, VNC at startup, and:
+The page finishes an SD card. Everything after first boot happens on the head unit, in a **Setup** screen at the top of Car Integration that shows until "Done, hide this" (saved in `carpi-ui.json`; Advanced has "Show Setup again"). Its rows open the existing screens, and back from them returns to Setup: Time zone, Wi-Fi networks, Cluster display, Remote access (VNC at startup), and Move to NVMe. Each shows its current state.
 
-- **Move to NVMe**, when an NVMe drive is fitted and the Pi runs from the SD. It copies the running system onto the NVMe (fresh partitions filling the drive, the files copied over, the new partition IDs in `cmdline.txt` and `fstab`), sets the boot order to NVMe first (`rpi-eeprom-config`), and reboots onto it. Everything set up so far comes along: pairing, networks, settings. The SD stays a rescue card: with it in, the Pi still boots the NVMe; without the NVMe it boots the SD.
-- It runs as a root unit (`carpi-move-nvme.service`) that carpid may start (polkit rule from the profile), and carpid streams its progress as a job like an update. The hotspot stays up; the phone can't be used meanwhile (the disk is busy) and the screen says so.
+- **Move to NVMe**: in Setup and in Advanced, only when an NVMe drive is fitted and `/` isn't on it. The screen shows the drive, where the system runs from and how much it copies, warns that the NVMe is erased, and starts on the second push. It wipes `/dev/nvme0n1` (MBR like Pi OS: 512 MB FAT32 boot, ext4 root filling the rest), rsyncs `/` and `/boot/firmware` across, puts the new PARTUUIDs in the copy's `cmdline.txt` and `fstab`, sets `BOOT_ORDER=0xf416` (NVMe, SD, USB; plus `PCIE_PROBE=1` when config.txt has `dtparam=pciex1`), and reboots. Everything set up so far comes along. The SD's partitions are left alone: with it in, the Pi boots the NVMe; without the NVMe it boots the SD. Re-running starts over. It refuses when `/` is on the NVMe, there's no NVMe, it's smaller than what's in use plus 10 %, or it's over 2 TB.
+- How: `os/move-nvme.sh`, run as root by `carpi-move-nvme.service` (installed by `install.sh`, never enabled). carpid starts it through a polkit rule from the profile (`Request::Storage`, `move_to_nvme`) and relays the progress file the script writes (`/run/carpi-move-nvme/progress`) as job events; a run that stops without a result fails the job and points at `journalctl -u carpi-move-nvme`. The hotspot stays up; the phone can't be used meanwhile and the screen says so. `sudo os/move-nvme.sh --no-reboot` does the same by hand.
+- Tested: the parsing, the job and the screens; shellcheck; the script's checks and its cmdline/fstab/boot-order edits in a container. Partitioning, the copy and the reboot have not run anywhere yet: first run on a Pi with nothing on the NVMe to lose.
 
 ## Remote access (Car Integration tab)
 
@@ -66,7 +67,7 @@ A Remote access screen: the file portal's address; Start VNC now; VNC at startup
 1. Firstboot that fetches the bundle itself and reads `setup.json`; the options as profile/install steps.
 2. The web page, its preset files and writer; the Action that publishes it (and the CLI).
 3. Remote access screen (pq35-carpi + fork). Done.
-4. Setup screen and Move to NVMe.
+4. Setup screen and Move to NVMe. Built; not run on a Pi yet.
 5. Drew's NVMe through that path; grind the boot time; the trimming becomes a profile step and an option.
 
 ## Reference

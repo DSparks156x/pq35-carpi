@@ -473,6 +473,7 @@ impl Car {
             // carpid's capture and datalog modules: they own the logs folder.
             | Request::Capture { .. }
             | Request::Wifi { .. }
+            | Request::Storage { .. }
             | Request::Datalog { .. } => Response::Error {
                 message: "subscriptions, commands, jobs, captures and logging are handled per connection"
                     .into(),

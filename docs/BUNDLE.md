@@ -49,6 +49,8 @@ share/systemd/user/carpid.service
 share/systemd/user/livi.service
 share/systemd/user/carpi-capture@.service
 share/udev/99-carpi-uinput.rules
+share/systemd/system/carpi-move-nvme.service   Move to NVMe's root unit (os/install.sh)
+share/os/move-nvme.sh               its script
 share/sdlink/run/...                sdlink pi/run, as-is (scripts, units, avsd.env)
 firmware/teensy/sdemu.hex           only if the build had a Teensy image
 ```

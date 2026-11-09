@@ -280,6 +280,7 @@ fn print(resp: Response) -> anyhow::Result<()> {
         Response::JobStarted { job } => println!("job {job} started"),
         Response::Job { event, .. } => println!("{}", serde_json::to_string(&event)?),
         Response::Datalog { status } => print_datalog(&status),
+        Response::Storage { storage } => println!("{}", serde_json::to_string_pretty(&storage)?),
         Response::Settings {
             settings,
             restart_needed,

@@ -1,0 +1,17 @@
+# Move to NVMe (docs/IMAGE-TOOL.md): copies the running system onto the NVMe and restarts from it.
+# System unit, run as root. Never enabled: carpid starts it from the head unit's Move to NVMe
+# screen, through the polkit rule os/profile.sh writes. Installed by os/install.sh, with the
+# script it runs, from the bundle's share/.
+[Unit]
+Description=carpi: copy the system onto the NVMe and start from it
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/carpi/move-nvme.sh
+# Progress for carpid; kept after the unit ends so carpid reads the last line.
+RuntimeDirectory=carpi-move-nvme
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

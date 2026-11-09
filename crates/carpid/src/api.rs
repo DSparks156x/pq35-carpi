@@ -8,7 +8,7 @@
 //! leased for 3x the period, renewed on every poll, dropped with it.
 //! Commands to LIVI, update jobs and diag jobs are per connection too
 //! (`commands.rs`, `update.rs`). `Capture` goes to `capture.rs`, `Datalog`
-//! to `datalog.rs`.
+//! to `datalog.rs`, `Storage` to `storage.rs`.
 
 use crate::Msg;
 use crate::capture::Captures;
@@ -231,6 +231,24 @@ async fn serve(
                     },
                 }
             }
+            Ok(Request::Storage { action }) => match action {
+                carpi_proto::StorageAction::Status => Response::Storage {
+                    storage: crate::storage::status(&crate::storage::Real).await,
+                },
+                carpi_proto::StorageAction::MoveToNvme => {
+                    let (events, rx) = mpsc::unbounded_channel();
+                    match jobs.start_storage(events) {
+                        Err(message) => Response::Error { message },
+                        Ok(job) => {
+                            if out_tx.send(Response::JobStarted { job }).await.is_err() {
+                                break;
+                            }
+                            forward_job(job, rx, &out_tx);
+                            continue;
+                        }
+                    }
+                }
+            },
             Ok(Request::Capture { trigger }) => captures.capture(&trigger).await,
             Ok(Request::Datalog { action }) => datalog.handle(action).await,
             Ok(Request::Settings { action }) => {

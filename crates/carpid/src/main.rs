@@ -26,6 +26,7 @@ mod portal;
 mod remote;
 mod runmark;
 mod settings;
+mod storage;
 mod update;
 mod wifi;
 

@@ -5,7 +5,7 @@
 #
 # Sets up what a bundle can't do for itself, then installs it with carpi-update (the same apply a
 # release takes): the default carpid.toml, the user units, the A/V-over-SD chain's folder and its
-# governor unit, wayvnc's config. --updater: a carpi-update binary, for a device with none
+# governor unit, Move to NVMe's root unit and script, wayvnc's config. --updater: a carpi-update binary, for a device with none
 # installed yet (`cargo xtask image` puts one next to the bundle). Idempotent: anything already
 # there is left alone, so it never overwrites user config or a unit someone edited.
 set -euo pipefail
@@ -80,6 +80,18 @@ if [ ! -e /etc/systemd/system/avsd-governor.service ] && [ -f "$S/sdlink/run/avs
   install -m 0644 "$S/sdlink/run/avsd-governor.service" /etc/systemd/system/
   systemctl daemon-reload
   systemctl enable avsd-governor.service
+fi
+
+# 2b. Move to NVMe: the root unit carpid may start (polkit rule from os/profile.sh) and its script.
+#     The script goes where only root can change it, since root runs it.
+if [ -f "$S/os/move-nvme.sh" ] && ! cmp -s "$S/os/move-nvme.sh" /usr/local/lib/carpi/move-nvme.sh; then
+  say "installing /usr/local/lib/carpi/move-nvme.sh"
+  install -D -o root -g root -m 0755 "$S/os/move-nvme.sh" /usr/local/lib/carpi/move-nvme.sh
+fi
+if [ ! -e /etc/systemd/system/carpi-move-nvme.service ] && [ -f "$S/systemd/system/carpi-move-nvme.service" ]; then
+  say "installing carpi-move-nvme.service"
+  install -m 0644 "$S/systemd/system/carpi-move-nvme.service" /etc/systemd/system/
+  systemctl daemon-reload
 fi
 
 # 3. wayvnc on the desktop session: PAM login, RSA-AES with its own key.

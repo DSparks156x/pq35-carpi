@@ -118,6 +118,56 @@ pub enum Request {
     Datalog {
         action: DatalogAction,
     },
+    /// The disks (docs/IMAGE-TOOL.md, NVMe and post-setup). `status` answers
+    /// [`Response::Storage`]; `move_to_nvme` is a job like `Update`: it answers
+    /// [`Response::JobStarted`], then [`Response::Job`] events until `Finished`.
+    Storage {
+        action: StorageAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StorageAction {
+    /// Where the system runs from, and the NVMe if one is fitted.
+    Status,
+    /// Wipes the NVMe, copies the running system onto it, sets the Pi to start from it and
+    /// restarts. Job events: `Stage`, `Progress` (stage `copy`, percent), `Finished`.
+    MoveToNvme,
+}
+
+/// Where the system runs from. Reply to [`Request::Storage`] `status`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageStatus {
+    /// The device `/` is on: `/dev/mmcblk0p2`.
+    pub root: String,
+    pub root_disk: RootDisk,
+    /// The NVMe drive, if one is fitted.
+    pub nvme: Option<NvmeDisk>,
+    /// Bytes in use on `/` and `/boot/firmware`: what a move copies.
+    pub used: u64,
+    /// Why a move can't start; `None` when it can.
+    pub blocked: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootDisk {
+    Sd,
+    Nvme,
+    Usb,
+    #[default]
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NvmeDisk {
+    /// `/dev/nvme0n1`.
+    pub path: String,
+    /// The drive's own name, as it reports it; may be empty.
+    pub model: String,
+    /// Bytes.
+    pub size: u64,
 }
 
 /// Rates a data-log profile can run at, Hz.
@@ -1303,6 +1353,10 @@ pub enum Response {
     Datalog {
         status: Box<DatalogStatus>,
     },
+    /// Reply to `Storage` `status`.
+    Storage {
+        storage: StorageStatus,
+    },
 }
 
 /// What LIVI knows that the car needs: projection, nav, media, calls.
@@ -1745,6 +1799,35 @@ mod tests {
             serde_json::to_string(&s).unwrap(),
             r#"{"type":"datalog","status":{"profiles":[],"selected":null,"running":null,"last":null}}"#
         );
+    }
+
+    #[test]
+    fn storage_wire_shape() {
+        let r: Request = decode(br#"{"type":"storage","action":{"kind":"move_to_nvme"}}"#).unwrap();
+        assert_eq!(
+            r,
+            Request::Storage {
+                action: StorageAction::MoveToNvme
+            }
+        );
+        let s = Response::Storage {
+            storage: StorageStatus {
+                root: "/dev/mmcblk0p2".into(),
+                root_disk: RootDisk::Sd,
+                nvme: Some(NvmeDisk {
+                    path: "/dev/nvme0n1".into(),
+                    model: "WD Blue SN580".into(),
+                    size: 500_107_862_016,
+                }),
+                used: 6_000_000_000,
+                blocked: None,
+            },
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.starts_with(
+            r#"{"type":"storage","storage":{"root":"/dev/mmcblk0p2","root_disk":"sd","#
+        ));
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), s);
     }
 
     #[test]
