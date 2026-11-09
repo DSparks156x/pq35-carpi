@@ -100,6 +100,7 @@ A rewrite of the page. Built for a phone first, served by the existing axum serv
 - **Setup tab**:
   - Config upload.
   - Firmware upload.
+  - Wi-Fi networks (`/wifi`): the saved list (name, open or password, connected), Add (name, password, hidden) and Forget (with a confirm page). PIN when one is set. No scan or test: both drop the hotspot the phone is on, so the page points to the head unit.
   - Text entry for custom page names and DIS labels.
   - Later: flashing jobs, which log into a # like everything else.
 - Bug report stays: today's tar.gz, rebuilt as "zip of the latest capture plus status".
@@ -217,7 +218,7 @@ LIVI has no on-screen keyboard and no way to join a Wi-Fi network. The update ne
 - **Scan** (Drew): Add a network drops the hotspot about 10 s to list nearby networks, then brings it back; the phone link drops meanwhile, and the screen says so before it starts. A name can still be typed for a hidden network. Action `scan` in the API.
 - **Profile**: a polkit rule so the car user (a lingering session, not an "active" one) may change NetworkManager's system connections. Passwords live in the profile as NetworkManager keeps them (root-only files).
 - **UI** (Drew): Car Integration, Updates: Wi-Fi networks. Saved networks, each with Forget and Test; Add a network scans, then opens the keyboard for the password (or the name, for a hidden one).
-- **Phone portal**: the same list and add form, for adding a network from a phone on the hotspot.
+- **Phone portal** (done): Setup, Wi-Fi networks. The same list, add and forget, through carpid's `wifi` module (a hook, so carpi-portal doesn't depend on carpid). Checked on the server too: name 1-32 bytes, password 8-63 characters or empty for open. Passwords are never logged or sent back in a page. Scan and Test stay on the head unit.
 
 ### Order
 

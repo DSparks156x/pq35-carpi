@@ -4,7 +4,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use carpi_logs::{Kind, Logs};
-use carpi_portal::{Portal, PortalConfig, Status};
+use carpi_portal::{Portal, PortalConfig, Status, WifiNet, WifiOp};
 use http_body_util::BodyExt;
 use std::collections::BTreeMap;
 use std::fs;
@@ -1258,4 +1258,219 @@ fn config_keeps_old_keys() {
     assert_eq!(cfg.logs, std::path::PathBuf::from("/tmp/logs"));
     assert!(serde_json::from_value::<PortalConfig>(serde_json::json!({"nope": 1})).is_err());
     assert!(PortalConfig::default().logs.ends_with("logs"));
+}
+
+/// A Wi-Fi hook over a list, recording every op.
+fn wifi_app(cfg: PortalConfig) -> (Router, Arc<Mutex<Vec<WifiOp>>>) {
+    let ops = Arc::new(Mutex::new(Vec::new()));
+    let nets = Arc::new(Mutex::new(vec![WifiNet {
+        ssid: "Home & Away".into(),
+        secured: true,
+        hidden: false,
+        connected: true,
+    }]));
+    let o = ops.clone();
+    let app = Portal::new(cfg)
+        .wifi(move |op| {
+            o.lock().unwrap().push(op.clone());
+            let nets = nets.clone();
+            async move {
+                let mut n = nets.lock().unwrap();
+                match op {
+                    WifiOp::List => {}
+                    WifiOp::Add {
+                        ssid,
+                        password,
+                        hidden,
+                    } => {
+                        n.retain(|x| x.ssid != ssid);
+                        n.push(WifiNet {
+                            ssid,
+                            secured: password.is_some(),
+                            hidden,
+                            connected: false,
+                        });
+                    }
+                    WifiOp::Forget { ssid } => {
+                        let before = n.len();
+                        n.retain(|x| x.ssid != ssid);
+                        if n.len() == before {
+                            return Err(format!("{ssid:?} is not saved"));
+                        }
+                    }
+                }
+                Ok(n.clone())
+            }
+        })
+        .router();
+    (app, ops)
+}
+
+fn writes(ops: &Mutex<Vec<WifiOp>>) -> Vec<WifiOp> {
+    ops.lock()
+        .unwrap()
+        .iter()
+        .filter(|o| **o != WifiOp::List)
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn wifi_hidden_without_hook() {
+    let (_t, cfg) = setup();
+    let app = app(cfg);
+    assert!(!page(&app, "/setup").await.contains("/wifi"));
+    let (code, _, _) = send(&app, get("/wifi").body(Body::empty()).unwrap()).await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    let req = form("/wifi/add").body(Body::from("ssid=x")).unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn wifi_list_add_forget() {
+    let (_t, cfg) = setup();
+    let (app, ops) = wifi_app(cfg);
+    assert!(page(&app, "/setup").await.contains("href=\"/wifi\""));
+    let html = page(&app, "/wifi").await;
+    assert!(html.contains("Home &amp; Away") && html.contains("connected"));
+    assert!(html.contains("/wifi/forget?ssid=Home%20%26%20Away"));
+    assert!(html.contains("Car Integration &gt; Updates &gt; Wi-Fi networks"));
+    assert!(!html.contains("name=pin"));
+
+    let req = form("/wifi/add")
+        .body(Body::from("ssid=Cafe&password=hunter2hunter2&hidden=yes"))
+        .unwrap();
+    let (code, h, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/wifi");
+    let req = form("/wifi/add").body(Body::from("ssid=Open+one")).unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::SEE_OTHER);
+    assert_eq!(
+        writes(&ops),
+        [
+            WifiOp::Add {
+                ssid: "Cafe".into(),
+                password: Some("hunter2hunter2".into()),
+                hidden: true
+            },
+            WifiOp::Add {
+                ssid: "Open one".into(),
+                password: None,
+                hidden: false
+            }
+        ]
+    );
+    let html = page(&app, "/wifi").await;
+    assert!(html.contains("Password · hidden") && html.contains("Open one"));
+    assert!(!html.contains("hunter2"));
+
+    // Forget: the confirm page, then confirm=yes.
+    let html = page(&app, "/wifi/forget?ssid=Cafe").await;
+    assert!(html.contains("Forget Cafe?") && html.contains("name=confirm value=yes"));
+    let (code, _, _) = send(
+        &app,
+        get("/wifi/forget?ssid=Nope").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    let req = form("/wifi/forget").body(Body::from("ssid=Cafe")).unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::BAD_REQUEST);
+    let req = form("/wifi/forget")
+        .body(Body::from("ssid=Cafe&confirm=yes"))
+        .unwrap();
+    let (code, h, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/wifi");
+    assert!(!page(&app, "/wifi").await.contains(">Cafe<"));
+    // The hook's refusal reaches the phone.
+    let req = form("/wifi/forget")
+        .body(Body::from("ssid=Cafe&confirm=yes"))
+        .unwrap();
+    let (code, _, body) = send(&app, req).await;
+    assert_eq!(code, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(String::from_utf8(body).unwrap().contains("is not saved"));
+}
+
+#[tokio::test]
+async fn wifi_bad_input_refused() {
+    let (_t, cfg) = setup();
+    let (app, ops) = wifi_app(cfg);
+    let long = "x".repeat(33);
+    let p64 = "p".repeat(64);
+    for body in [
+        "ssid=&password=hunter2hunter2".to_string(),
+        "password=hunter2hunter2".into(),
+        format!("ssid={long}"),
+        "ssid=a%0Ab".into(),
+        "ssid=Cafe&password=s3cr3t!".into(),
+        format!("ssid=Cafe&password={p64}"),
+    ] {
+        let req = form("/wifi/add").body(Body::from(body.clone())).unwrap();
+        let (code, _, html) = send(&app, req).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
+        let html = String::from_utf8(html).unwrap();
+        assert!(html.contains("errline"), "{body}");
+        assert!(!html.contains("hunter2") && !html.contains("s3cr3t") && !html.contains(&p64));
+    }
+    // The name comes back for another try; the password does not.
+    let req = form("/wifi/add")
+        .body(Body::from("ssid=Cafe&password=s3cr3t!"))
+        .unwrap();
+    let html = String::from_utf8(send(&app, req).await.2).unwrap();
+    assert!(html.contains("value=\"Cafe\"") && html.contains("8-63 characters"));
+    let req = form("/wifi/forget")
+        .body(Body::from(format!("ssid={long}&confirm=yes")))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::BAD_REQUEST);
+    assert!(writes(&ops).is_empty());
+}
+
+#[tokio::test]
+async fn wifi_needs_pin() {
+    let (_t, mut cfg) = setup();
+    cfg.pin = Some("4711".into());
+    let (app, ops) = wifi_app(cfg.clone());
+    // Locked: the list shows, the forms ask for the PIN.
+    let html = page(&app, "/wifi").await;
+    assert!(html.contains("Home &amp; Away") && html.contains("name=pin"));
+
+    let add = "ssid=Cafe&password=hunter2hunter2";
+    let req = form("/wifi/add").body(Body::from(add)).unwrap();
+    let (code, _, body) = send(&app, req).await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+    assert!(!String::from_utf8(body).unwrap().contains("hunter2"));
+    let req = form("/wifi/add")
+        .body(Body::from(format!("{add}&pin=0000")))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN);
+    let req = form("/wifi/forget")
+        .body(Body::from("ssid=Home+%26+Away&confirm=yes"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::UNAUTHORIZED);
+    let req = form("/wifi/add")
+        .header(header::ORIGIN, "http://evil.example")
+        .header("x-carpi-pin", "4711")
+        .body(Body::from(add))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::FORBIDDEN);
+    assert!(writes(&ops).is_empty());
+
+    // PIN in the form, then the cookie.
+    let req = form("/wifi/add")
+        .body(Body::from(format!("{add}&pin=4711")))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::SEE_OTHER);
+    let req = form("/wifi/forget")
+        .header(header::COOKIE, "carpi_pin=34373131")
+        .body(Body::from("ssid=Cafe&confirm=yes"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.0, StatusCode::SEE_OTHER);
+    assert_eq!(writes(&ops).len(), 2);
+
+    // Protected downloads: the list is locked too.
+    cfg.protect_downloads = true;
+    let (app, _) = wifi_app(cfg);
+    let (code, _, body) = send(&app, get("/wifi").body(Body::empty()).unwrap()).await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+    assert!(!String::from_utf8(body).unwrap().contains("Away"));
 }

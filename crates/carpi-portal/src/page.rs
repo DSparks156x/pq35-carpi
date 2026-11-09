@@ -154,7 +154,7 @@ fn num(id: &EntryId) -> String {
 // Icons: 24x24 strokes, coloured by currentColor.
 const I_STAR: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 17l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/></svg>"#;
 const I_DL: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>"#;
-const I_CHEV: &str =
+pub(crate) const I_CHEV: &str =
     r#"<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>"#;
 const I_LOCK: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>"#;
 const I_OPEN: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>"#;
@@ -190,7 +190,7 @@ pub fn layout(title: &str, tab: Tab, access: Access, body: &str) -> String {
     o
 }
 
-fn pin_form(o: &mut String, back: &str, label: &str) {
+pub(crate) fn pin_form(o: &mut String, back: &str, label: &str) {
     let _ = write!(
         o,
         "<form class=pinf method=post action=\"/pin\">\
@@ -567,6 +567,7 @@ pub fn setup(
     access: Access,
     cfg: &PortalConfig,
     can_config: bool,
+    can_wifi: bool,
     lists: &SetupLists,
     can_read: bool,
 ) -> String {
@@ -585,7 +586,7 @@ pub fn setup(
             let what = if cfg.protect_downloads {
                 "everything"
             } else {
-                "uploads, stars, deletes and captures"
+                "uploads, stars, deletes, captures and Wi-Fi changes"
             };
             let _ = write!(b, "<p class=mut>The PIN is needed for {what}.</p>");
             pin_form(&mut b, "/setup", "Unlock");
@@ -594,6 +595,15 @@ pub fn setup(
     }
     if !can_read {
         return layout("Setup", Tab::Setup, access, &b);
+    }
+
+    if can_wifi {
+        let _ = write!(
+            b,
+            "<h2>Wi-Fi</h2><section class=\"card list\"><a class=row href=\"/wifi\">\
+             <span class=main><span class=t>Wi-Fi networks</span>\
+             <span class=s>Networks the car joins for updates</span></span>{I_CHEV}</a></section>"
+        );
     }
 
     b.push_str("<h2>Config</h2><section class=\"card pad\">");
@@ -773,6 +783,12 @@ output.err{color:var(--bad)}output.ok{color:var(--ok)}
 .range{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 16px}
 .range label{display:flex;flex-direction:column;gap:6px}
 .range input{min-height:48px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;font-size:1rem;text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums}
+.wf label.f{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;font-weight:650}
+.wf input[type=text],.wf input[type=password]{width:100%;min-height:48px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;font-size:1.05rem;text-transform:none;letter-spacing:0}
+.wf .check input{accent-color:var(--acc)}
+.wf input.pin{margin-bottom:12px;letter-spacing:.2em}
+.badge.on{color:var(--ok);background:color-mix(in srgb,var(--ok) 15%,transparent)}
+.errline{color:var(--bad);font-weight:650}
 .okline{display:flex;align-items:center;gap:10px;color:var(--ok);font-weight:650}
 .btns{margin-top:16px}
 .gap{height:10px}

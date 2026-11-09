@@ -2,8 +2,8 @@
 //! folder (`carpi_logs`: one entry per capture or data-log run, by day),
 //! download files or zips of an entry or a whole day, star, delete, start a
 //! capture; download the carpid journal, sdlink logs and a bug report; upload
-//! a new `carpid.toml` or a Teensy `.hex`. Nothing is flashed or restarted
-//! from here.
+//! a new `carpid.toml` or a Teensy `.hex`; list, add and forget saved Wi-Fi
+//! networks. Nothing is flashed or restarted from here.
 //!
 //! # Routes
 //!
@@ -23,6 +23,10 @@
 //! POST /pin, /lock             set / drop the PIN cookie
 //! GET  /api/status, /dl/config, /dl/journal, /dl/bugreport, /dl/<kind>/<name>
 //! POST /up/config, /up/firmware                            (PIN)
+//! GET  /wifi                   saved Wi-Fi networks, add form
+//! GET  /wifi/forget?ssid=..    confirm page
+//! POST /wifi/add               ssid, password, hidden      (PIN)
+//! POST /wifi/forget            ssid, confirm=yes           (PIN)
 //! ```
 //!
 //! # Threat model
@@ -42,8 +46,10 @@
 //! - Logs entries and their files only resolve through `carpi_logs`
 //!   (`EntryId::parse`, `Logs::dir`, `Logs::file`): fixed date/number shapes,
 //!   and only paths the entry listing itself produced. Symlinks are skipped.
-//! - Star, delete and capture are writes: PIN when one is set. Delete also
-//!   needs `confirm=yes`.
+//! - Star, delete, capture and Wi-Fi changes are writes: PIN when one is set.
+//!   Delete and forget also need `confirm=yes`.
+//! - Wi-Fi passwords go to the hook and nowhere else: never logged, never put
+//!   back into a page.
 //! - At most two zips or trimmed CSVs build at once, one capture at a time.
 //! - Uploads have size caps, and firmware only lands as a new, valid Intel HEX
 //!   file (never overwrites). Config is validated by the caller before it
@@ -58,6 +64,7 @@ mod files;
 mod page;
 mod trim;
 mod views;
+mod wifi;
 
 use axum::extract::{DefaultBodyLimit, Multipart, Path as UrlPath, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
@@ -169,6 +176,57 @@ type ValidateFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 type CaptureFn = Arc<
     dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync,
 >;
+type WifiFn = Arc<
+    dyn Fn(WifiOp) -> Pin<Box<dyn Future<Output = Result<Vec<WifiNet>, String>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// A saved Wi-Fi network, as the Wi-Fi page shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WifiNet {
+    pub ssid: String,
+    /// Needs a password; false: open.
+    pub secured: bool,
+    pub hidden: bool,
+    /// The Pi is on it now.
+    pub connected: bool,
+}
+
+/// What the Wi-Fi hook is asked to do. Checked before the hook sees it: names
+/// are 1-32 bytes, passwords 8-63 characters. `Debug` hides the password.
+#[derive(Clone, PartialEq, Eq)]
+pub enum WifiOp {
+    List,
+    /// Save (or replace the saved one with that name). `None`: open.
+    Add {
+        ssid: String,
+        password: Option<String>,
+        hidden: bool,
+    },
+    Forget {
+        ssid: String,
+    },
+}
+
+impl std::fmt::Debug for WifiOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WifiOp::List => f.write_str("List"),
+            WifiOp::Add {
+                ssid,
+                password,
+                hidden,
+            } => f
+                .debug_struct("Add")
+                .field("ssid", ssid)
+                .field("password", &password.as_ref().map(|_| "<hidden>"))
+                .field("hidden", hidden)
+                .finish(),
+            WifiOp::Forget { ssid } => f.debug_struct("Forget").field("ssid", ssid).finish(),
+        }
+    }
+}
 
 /// Builder. `Portal::new(cfg).status(..).validate_config(..).capture(..).serve(..)`.
 pub struct Portal {
@@ -177,6 +235,7 @@ pub struct Portal {
     status: Option<StatusFn>,
     validate: Option<ValidateFn>,
     capture: Option<CaptureFn>,
+    wifi: Option<WifiFn>,
 }
 
 impl Portal {
@@ -187,6 +246,7 @@ impl Portal {
             status: None,
             validate: None,
             capture: None,
+            wifi: None,
         }
     }
 
@@ -229,6 +289,18 @@ impl Portal {
         self
     }
 
+    /// Saved Wi-Fi networks: runs `op` and returns the list after it. `Err`
+    /// text is shown to the phone. Without a hook the Wi-Fi page is 404.
+    /// Nothing here may drop the hotspot: the phone is on it.
+    pub fn wifi<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(WifiOp) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Vec<WifiNet>, String>> + Send + 'static,
+    {
+        self.wifi = Some(Arc::new(move |op| Box::pin(f(op))));
+        self
+    }
+
     pub fn router(self) -> Router {
         let fw_limit = self.cfg.firmware_max as usize + (64 << 10);
         let cfg_limit = self.cfg.config_max as usize + (64 << 10);
@@ -239,6 +311,7 @@ impl Portal {
             status: self.status,
             validate: self.validate,
             capture: self.capture,
+            wifi: self.wifi,
             fails: Mutex::new(Fails::default()),
             zips: Arc::new(Semaphore::new(ZIPS)),
             capturing: Semaphore::new(1),
@@ -257,6 +330,9 @@ impl Portal {
             .route("/star/{date}/{nn}", post(views::star))
             .route("/delete/{date}/{nn}", post(views::delete))
             .route("/capture", post(views::capture))
+            .route("/wifi", get(wifi::page))
+            .route("/wifi/add", post(wifi::add))
+            .route("/wifi/forget", get(wifi::confirm).post(wifi::forget))
             .route("/lock", post(lock_handler))
             .route("/api/status", get(status_handler))
             .route("/dl/config", get(dl_config))
@@ -296,6 +372,7 @@ struct Shared {
     status: Option<StatusFn>,
     validate: Option<ValidateFn>,
     capture: Option<CaptureFn>,
+    wifi: Option<WifiFn>,
     fails: Mutex<Fails>,
     /// Zips being built (downloads and bug reports).
     zips: Arc<Semaphore>,

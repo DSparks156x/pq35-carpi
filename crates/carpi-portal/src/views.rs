@@ -50,6 +50,20 @@ impl Viewer {
         }
     }
 
+    /// After a write's PIN check passed: a header or cookie PIN was right.
+    pub fn checked(s: &Shared, headers: &HeaderMap) -> Self {
+        let pin_set = s.pin().is_some();
+        let access = Access {
+            pin_set,
+            unlocked: pin_set && crate::supplied_pin(headers).is_some(),
+        };
+        Viewer {
+            can_read: !s.cfg.protect_downloads || access.can_write(),
+            access,
+            clear_cookie: false,
+        }
+    }
+
     pub fn html(&self, code: StatusCode, body: String) -> Response {
         let mut r = html(code, body);
         if self.clear_cookie {
@@ -63,21 +77,27 @@ impl Viewer {
         r
     }
 
-    fn locked(&self, back: &str) -> Response {
+    pub(crate) fn locked(&self, back: &str) -> Response {
         self.html(StatusCode::UNAUTHORIZED, page::locked(self.access, back))
     }
 
-    fn message(&self, code: StatusCode, title: &str, text: &str, back: &str) -> Response {
+    pub(crate) fn message(
+        &self,
+        code: StatusCode,
+        title: &str,
+        text: &str,
+        back: &str,
+    ) -> Response {
         let ask_pin = matches!(code, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN);
         self.html(code, page::message(self.access, title, text, back, ask_pin))
     }
 
-    fn not_found(&self) -> Response {
+    pub(crate) fn not_found(&self) -> Response {
         self.message(StatusCode::NOT_FOUND, "Not found", "Nothing here.", "/")
     }
 
     /// A refused write as a page, with a PIN form when that was the problem.
-    fn refused(&self, r: Reject, back: &str) -> Response {
+    pub(crate) fn refused(&self, r: Reject, back: &str) -> Response {
         let title = match r.0 {
             StatusCode::UNAUTHORIZED => "PIN needed",
             StatusCode::FORBIDDEN => "Wrong PIN",
@@ -137,7 +157,14 @@ pub async fn setup(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response
         sdlink: files::list(&s.cfg.sdlink_logs),
         captures: files::list(&s.cfg.captures),
     };
-    let body = page::setup(v.access, &s.cfg, s.validate.is_some(), &lists, v.can_read);
+    let body = page::setup(
+        v.access,
+        &s.cfg,
+        s.validate.is_some(),
+        s.wifi.is_some(),
+        &lists,
+        v.can_read,
+    );
     v.html(StatusCode::OK, body)
 }
 

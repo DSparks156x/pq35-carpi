@@ -260,10 +260,10 @@ async fn main() -> anyhow::Result<()> {
         ..Default::default()
     });
     let portal_pin = portal::config(&cfg, &args.config, captures.root()).map(|p| {
-        portal::spawn(portal::with_captures(
-            portal::build(p, status_rx, started),
-            captures.clone(),
-        ))
+        let portal = portal::with_captures(portal::build(p, status_rx, started), captures.clone());
+        #[cfg(unix)]
+        let portal = portal::with_wifi(portal, wifi::Real);
+        portal::spawn(portal)
     });
     if portal_pin.is_none() {
         info!("no [portal] in the config; phone portal off");
