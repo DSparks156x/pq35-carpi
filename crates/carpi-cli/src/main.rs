@@ -215,6 +215,20 @@ fn print(resp: Response) -> anyhow::Result<()> {
                 println!("{:w$}  {:>12}  {:>6} ms", r.name, v, r.age_ms);
             }
         }
+        Response::Wifi {
+            networks,
+            connected,
+        } => {
+            for n in networks {
+                let on = connected.as_deref() == Some(n.ssid.as_str());
+                println!(
+                    "{}  {}{}",
+                    n.ssid,
+                    if n.secured { "password" } else { "open" },
+                    if on { "  (connected)" } else { "" }
+                );
+            }
+        }
         Response::Captured {
             label,
             dir,
