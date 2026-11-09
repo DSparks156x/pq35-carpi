@@ -121,6 +121,8 @@ protect_downloads = false
 [update]
 repo = "DSparks156x/rnse-carpi"
 channel = "stable"                # or "beta"
+restart_user = ["carpid.service", "livi.service"]
+restart_system = []
 
 # A/V over SD: the settings API edits env (only the keys it knows; comments
 # and other lines stay) and restarts unit, a user unit, to apply it.

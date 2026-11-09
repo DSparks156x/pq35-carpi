@@ -1276,9 +1276,12 @@ pub struct Installed {
     pub previous: Option<String>,
     /// Downloaded and verified, not applied yet.
     pub downloaded: Option<String>,
-    /// How the last apply ended, if one ran: `ok`, `rolled_back`, `failed`.
+    /// Apply outcome, or `applying` while switching/checking the release.
     pub last_apply: Option<String>,
     pub os_profile: Option<u32>,
+    /// A live updater holds the install lock. `None` from older updaters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_running: Option<bool>,
 }
 
 /// `Settings` is large but rare; boxing it would change every client.

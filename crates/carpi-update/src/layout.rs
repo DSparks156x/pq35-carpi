@@ -175,6 +175,11 @@ fn read_pointer(path: &Path) -> Option<String> {
 pub struct Lock(PathBuf);
 
 impl Lock {
+    /// Inspect without acquiring/removing the lock: status must not interrupt an updater.
+    pub fn running(root: &Path) -> bool {
+        std::fs::read_to_string(root.join("update.lock")).is_ok_and(|pid| alive(pid.trim()))
+    }
+
     pub fn take(root: &Path) -> io::Result<Lock> {
         std::fs::create_dir_all(root)?;
         let path = root.join("update.lock");
@@ -290,9 +295,12 @@ mod tests {
     #[test]
     fn lock_is_exclusive_and_released() {
         let d = tempfile::tempdir().unwrap();
+        assert!(!Lock::running(d.path()));
         let a = Lock::take(d.path()).unwrap();
+        assert!(Lock::running(d.path()));
         assert!(Lock::take(d.path()).is_err());
         drop(a);
+        assert!(!Lock::running(d.path()));
         assert!(Lock::take(d.path()).is_ok());
     }
 }

@@ -160,6 +160,10 @@ pub fn switch(
 ) -> Result<Outcome, String> {
     let io = |e: std::io::Error| format!("switching to {version}: {e}");
     let before = layout.current();
+    // A reconnect during the restart must not mistake the preceding apply's result for this one.
+    let mut st = layout.state();
+    st.last_apply = Some("applying".into());
+    layout.save_state(&st).map_err(io)?;
     layout.switch_to(version).map_err(io)?;
     stage(
         emit,
@@ -326,6 +330,35 @@ mod tests {
         let p = dir.join(Layout::bundle_name(version));
         std::fs::write(&p, bundle(version, profile, None)).unwrap();
         p
+    }
+
+    #[test]
+    fn restart_status_does_not_reuse_a_previous_success() {
+        let d = tempfile::tempdir().unwrap();
+        let l = Layout::new(d.path().join("root"));
+        std::fs::create_dir_all(&l.root).unwrap();
+        let mut state = l.state();
+        state.last_apply = Some("ok".into());
+        l.save_state(&state).unwrap();
+        let bundle = write_bundle(d.path(), "1.0.0", 1);
+        let mut observed = false;
+        let mut emit = |event| {
+            if matches!(event, JobEvent::Stage { ref stage, .. } if stage == "restart") {
+                assert_eq!(l.state().last_apply.as_deref(), Some("applying"));
+                observed = true;
+            }
+        };
+        apply(
+            &l,
+            &bundle,
+            &policy(),
+            &mut Fake::new(Some(0)),
+            &OPTS,
+            &mut emit,
+        )
+        .unwrap();
+        assert!(observed);
+        assert_eq!(l.state().last_apply.as_deref(), Some("ok"));
     }
 
     #[test]

@@ -194,6 +194,7 @@ fn lock(layout: &Layout) -> Result<Lock, String> {
 }
 
 fn installed(layout: &Layout, os_profile: Option<u32>) -> Installed {
+    let running = Lock::running(&layout.root);
     let st = layout.state();
     Installed {
         current: layout.current(),
@@ -203,6 +204,7 @@ fn installed(layout: &Layout, os_profile: Option<u32>) -> Installed {
             .filter(|v| layout.downloaded_bundle(v).is_file()),
         last_apply: st.last_apply,
         os_profile,
+        update_running: Some(running || Lock::running(&layout.root)),
     }
 }
 

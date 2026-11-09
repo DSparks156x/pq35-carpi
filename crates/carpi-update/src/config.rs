@@ -36,8 +36,8 @@ impl Default for Update {
             repo: "DSparks156x/rnse-carpi".into(),
             channel: "stable".into(),
             pubkey: "/etc/carpi/minisign.pub".into(),
-            restart_user: vec!["carpid.service".into()],
-            restart_system: vec!["livi-kiosk.service".into()],
+            restart_user: vec!["carpid.service".into(), "livi.service".into()],
+            restart_system: Vec::new(),
             check_frames: false,
         }
     }
@@ -122,7 +122,27 @@ mod tests {
         let c = Config::from_file(file).unwrap();
         assert_eq!(c.update.repo, "someone/pq35-fork");
         assert_eq!(c.update.channel, "beta");
-        assert_eq!(c.update.restart_user, ["carpid.service"]);
+        assert_eq!(c.update.restart_user, ["carpid.service", "livi.service"]);
+        assert!(c.update.restart_system.is_empty());
+    }
+
+    #[test]
+    fn explicit_service_overrides_are_preserved() {
+        let file: File = toml::from_str(
+            "[update]\nrestart_user=['custom.service']\nrestart_system=['custom-kiosk.service']\n",
+        )
+        .unwrap();
+        let c = Config::from_file(file).unwrap();
+        assert_eq!(c.update.restart_user, ["custom.service"]);
+        assert_eq!(c.update.restart_system, ["custom-kiosk.service"]);
+    }
+
+    #[test]
+    fn fresh_install_template_restarts_the_installed_user_services() {
+        let file: File = toml::from_str(include_str!("../../../deploy/carpid.toml")).unwrap();
+        let c = Config::from_file(file).unwrap();
+        assert_eq!(c.update.restart_user, ["carpid.service", "livi.service"]);
+        assert!(c.update.restart_system.is_empty());
     }
 
     #[test]
