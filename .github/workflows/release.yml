@@ -86,33 +86,48 @@ jobs:
           echo "$channel $version"
 
       - name: rustup
+        id: rustup
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
             sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # Use the job container's tool-cache path (/__t), not the host path.
+          echo "tool-cache=$RUNNER_TOOL_CACHE" >> "$GITHUB_OUTPUT"
           # LIVI's pinned toolchain, from livi/rust-toolchain.toml.
           cd livi && "$HOME/.cargo/bin/rustup" toolchain install
 
+      # Persist the verified tool install too: hosted runners otherwise download it on every
+      # run. Keep the version in this path/key and the action input in sync; no fallback keys.
+      - name: sccache tool cache
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ${{ steps.rustup.outputs.tool-cache }}/sccache/0.19.0
+          key: sccache-tool-v0.19.0-${{ runner.os }}-${{ runner.arch }}
+
       # The compile cache is a speed-up only: when GitHub can't hand out sccache (a 504 on its
-      # download, seen 2026-11-09), build without it.
+      # download, seen 2026-11-09), build without it. Pin the version to avoid a latest-release
+      # API request and retain the action's upstream SHA256 verification on cache misses.
       - id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: v0.19.0
+        timeout-minutes: 2
         continue-on-error: true
 
-      # One cache per workspace. rust-cache keys on Cargo.lock and the rustc in the repo root
-      # (stable); LIVI's key adds its pinned toolchain file.
-      - name: rust cache (rnse-carpi)
+      # Both workspaces share CARGO_HOME: one action keeps their dependency union and avoids
+      # competing post-save cleanup. Never cache/clean rustup's freshly installed cargo/bin:
+      # that left the old rnse-carpi cache at 1675 bytes after LIVI removed cargo before save.
+      # rust-cache includes the root rustc and workspace locks; include LIVI's toolchain too.
+      - name: rust cache (bundle workspaces)
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: rnse-carpi
-          workspaces: . -> target
-
-      - name: rust cache (livi)
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: livi
+          shared-key: bundle-trixie-v2
           key: ${{ hashFiles('livi/rust-toolchain.toml') }}
-          workspaces: livi/native -> target
+          cache-bin: false
+          workspaces: |
+            . -> target
+            livi/native -> target
 
       - name: build rnse-carpi
         env:

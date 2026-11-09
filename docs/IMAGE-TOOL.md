@@ -34,6 +34,11 @@ New installs open the main display fullscreen; existing LIVI settings are preser
 3. **SDLink**: goes with SDLink video.
 4. **Leave it**.
 
+For a new install, `install.sh` selects LIVI in `~/avsd/avsd.env`:
+`APP_PROC=livi-core`, `CAP_SINK=avsd_out`, and `CAP_SINK_CREATE=1`.
+SDLink's generic template defaults to Hudiy; copying it unchanged leaves the chain waiting
+for a process this system does not run. Existing environment files are preserved.
+
 ### Hat extras
 - **RTC**: CarPiHat's clock (`i2c-rtc,ds1307`; DS3231 on v0.3 boards), so the time is right before the car's clock arrives.
 
