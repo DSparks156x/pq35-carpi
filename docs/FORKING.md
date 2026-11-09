@@ -38,7 +38,7 @@ Nothing else: CI recreates the public key from the secret and puts it in each si
 
 A fresh card that installs your releases from the start:
 
-- **The setup page.** It installs `DSparks156x/rnse-carpi` releases (`REPO` in its `src/lib/build.js`). Fork `rnse-carpi-image`, change that one line and deploy it (Netlify, static site; its README). The page writes `release.repo` into the card's `carpi/setup.json`, which first boot reads.
+- **The setup page** (https://cowpowersystems.com/carpi/). Release step, advanced: the release repo, `owner/name` or a GitHub link; the page lists that repo's releases. A link that fills it in: `https://cowpowersystems.com/carpi/?repo=you/rnse-carpi`. The page writes it into the card's `carpi/setup.json` as `release.repo`: first boot installs from it and carpid updates from it (`[update] repo`). Hosting your own copy of the page is optional: fork `rnse-carpi-image` and change `REPO` in `src/lib/build.js`, the default.
 - **`cargo xtask image`** (DEPLOY.md, section 7): writes a card with your own bundle on it, no page needed.
 
 First boot downloads your release, installs it and trusts your key (if it's signed). From then on the device updates from your repo.
