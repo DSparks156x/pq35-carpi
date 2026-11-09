@@ -154,8 +154,19 @@ systemctl start "user@$(id -u "$CARPI_USER").service" || fail "user manager for 
 
 UPD=/tmp/carpi-update
 install -m 0755 $WORK/b/bin/carpi-update $UPD || fail "no carpi-update in the bundle"
+# A newly embedded firstboot.sh can download an older published bundle. Only pass the new
+# flag when both that bundle's installer and updater support it; legacy releases keep their
+# original installation behavior until a release with deferred startup is available.
+DEFER_START=()
+INSTALL_HELP=$(bash "$OS/install.sh" --help) || fail "install.sh help"
+UPDATER_HELP=$("$UPD" apply --help) || fail "carpi-update apply help"
+if grep -q -- '--defer-start' <<< "$INSTALL_HELP" && grep -q -- '--defer-start' <<< "$UPDATER_HELP"; then
+  DEFER_START=(--defer-start)
+else
+  say "legacy bundle: deferred startup unavailable; using its original installer"
+fi
 say "install $(basename "$BUNDLE")"
-bash "$OS/install.sh" --user "$CARPI_USER" --bundle "$BUNDLE" --updater $UPD || fail "install.sh"
+bash "$OS/install.sh" --user "$CARPI_USER" --bundle "$BUNDLE" --updater $UPD "${DEFER_START[@]}" || fail "install.sh"
 
 if [ -n "$SETUP" ]; then
   python3 "$OS/options.py" --setup "$SETUP" --share "$S" --user "$CARPI_USER" --phase post \

@@ -1,7 +1,8 @@
 #!/bin/bash
 # First install of a bundle on a profiled Pi (os/profile.sh first). DEPLOY.md section 7.
 #
-#   sudo os/install.sh --bundle FILE [--updater PATH] [--user NAME]
+#   sudo os/install.sh --bundle FILE [--updater PATH] [--user NAME] [--defer-start]
+#   --defer-start: fresh install only; stage for boot without starting services or checking health.
 #
 # Sets up what a bundle can't do for itself, then installs it with carpi-update (the same apply a
 # release takes): the default carpid.toml, the user units, the A/V-over-SD chain's folder and its
@@ -12,12 +13,14 @@ set -euo pipefail
 
 BUNDLE=
 UPDATER=
+DEFER_START=()
 USERNAME=${SUDO_USER:-}
 while [ $# -gt 0 ]; do
   case $1 in
     --bundle) BUNDLE=$2; shift 2 ;;
     --updater) UPDATER=$2; shift 2 ;;
     --user) USERNAME=$2; shift 2 ;;
+    --defer-start) DEFER_START=(--defer-start); shift ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "install: unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -38,6 +41,12 @@ CUR=/opt/carpi/current
 UNITS=$HOME_/.config/systemd/user
 [ -n "$UPDATER" ] || UPDATER=$CUR/bin/carpi-update
 [ -x "$UPDATER" ] || die "no carpi-update at $UPDATER: pass --updater"
+if [ ${#DEFER_START[@]} -gt 0 ]; then
+  [ ! -e "$CUR" ] && [ ! -L "$CUR" ] || die "--defer-start requires a fresh install: current already exists"
+  # Fail before changing config/units if a caller supplies an older updater.
+  HELP=$("$UPDATER" apply --help) || die "can't inspect carpi-update apply support"
+  grep -q -- '--defer-start' <<< "$HELP" || die "carpi-update does not support --defer-start"
+fi
 
 # as_user CMD...: run as the car user in their systemd session (linger keeps it up).
 as_user() {
@@ -55,7 +64,7 @@ put_missing() {
 for _ in $(seq 30); do [ -S /run/user/$UID_/bus ] && break; sleep 1; done
 [ -S /run/user/$UID_/bus ] || die "no user session bus for $USERNAME (is linger on?)"
 
-# 1. The bundle's share/: config and units go in before the apply, whose restart starts them.
+# 1. The bundle's share/: config and units go in before apply (or boot) starts them.
 SHARE=$(mktemp -d)
 trap 'rm -rf "$SHARE"' EXIT
 tar --zstd -C "$SHARE" -xf "$BUNDLE" share
@@ -123,7 +132,7 @@ if [ ! -e $PUB ] && [ -f "$S/keys/minisign.pub" ]; then
   install -D -o root -g root -m 0644 "$S/keys/minisign.pub" $PUB
 fi
 
-# 4. Enable the units (before the apply, so its restart and the next boot both start them).
+# 4. Enable the units for the next boot, and for apply's restart unless --defer-start is set.
 as_user systemctl --user daemon-reload
 for u in carpid.service livi.service avsd-chain.service wayvnc.service; do
   [ -e "$UNITS/$u" ] || continue
@@ -132,10 +141,14 @@ for u in carpid.service livi.service avsd-chain.service wayvnc.service; do
   as_user systemctl --user enable "$u"
 done
 
-# 5. The bundle. A first install has nothing to roll back to: a failed health check (no desktop
-#    session yet, say) leaves it installed, and the next boot brings everything up.
+# 5. The bundle. Cloud-init passes --defer-start so post-install options finish before boot
+#    starts services. Normal installs/updates still restart and check health; errors are fatal.
 install -d -o "$USERNAME" -g "$GROUP" /opt/carpi
 say "applying $(basename "$BUNDLE")"
-as_user "$UPDATER" apply --file "$BUNDLE" --allow-unsigned 2>&1 | while IFS= read -r l; do say "  $l"; done || say "apply reported a problem; see above"
+as_user "$UPDATER" apply --file "$BUNDLE" --allow-unsigned "${DEFER_START[@]}" 2>&1 | while IFS= read -r l; do say "  $l"; done || die "apply failed; see above"
 [ -L $CUR ] || die "carpi-update didn't install anything"
-say "done: $(readlink $CUR)"
+if [ ${#DEFER_START[@]} -gt 0 ]; then
+  say "staged: $(readlink "$CUR"); pending boot (health not checked)"
+else
+  say "done: $(readlink "$CUR")"
+fi

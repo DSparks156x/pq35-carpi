@@ -9,6 +9,7 @@ A tool that turns a stock Raspberry Pi OS Trixie card into a carpi: it asks how 
 - **The page carries no bundle.** First boot downloads the chosen release (stable, beta or an exact version) from rnse-carpi's GitHub releases: it already needs the internet for packages. So the page stays small and never fights GitHub's download rules.
 - **Presets**: the answers save as a file (`my-tt.json`) to load next time.
 - **What it writes**: cloud-init `user-data`, `network-config`, `meta-data`, and `carpi/`: `setup.json` (the answers), `firstboot.sh`. firstboot fetches the bundle, then runs `profile.sh` and `install.sh` from it with the answers.
+- **When it is ready**: releases supporting deferred installation finish all setup on the client Wi-Fi, then cloud-init performs one completion reboot. LIVI and its hotspot start after that reboot. The initial installation is staged without an update health check; ordinary later updates still restart services and check health. Older bundles retain their original startup behavior.
 - The repo's Action also builds a command-line version of the same writer (from `xtask image`) for scripting.
 
 ## Questions it asks

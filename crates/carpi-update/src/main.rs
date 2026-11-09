@@ -63,6 +63,9 @@ enum Cmd {
         /// release (dev bundles from `cargo xtask deploy --carpid-only`).
         #[arg(long, requires = "file")]
         reuse_current: bool,
+        /// First install only: verify and stage for boot, without starting services.
+        #[arg(long, requires = "file", conflicts_with = "reuse_current")]
+        defer_start: bool,
     },
     /// Go back to the previous release.
     Rollback,
@@ -123,6 +126,13 @@ fn run(args: &Args) -> Result<String, String> {
         window: apply::HEALTH_WINDOW,
         poll: apply::HEALTH_POLL,
         os_profile,
+        defer_start: matches!(
+            &args.cmd,
+            Cmd::Apply {
+                defer_start: true,
+                ..
+            }
+        ),
     };
     match &args.cmd {
         Cmd::Status => {
@@ -138,6 +148,7 @@ fn run(args: &Args) -> Result<String, String> {
             file,
             allow_unsigned,
             reuse_current,
+            defer_start: _,
         } => {
             let _lock = lock(&layout)?;
             let file = match file {
@@ -170,6 +181,9 @@ fn run(args: &Args) -> Result<String, String> {
             let mut sys = system::Real::new(&cfg);
             match apply::apply(&layout, &file, &policy, &mut sys, &opts, &mut emit)? {
                 apply::Outcome::Applied(v) => Ok(format!("{v} installed")),
+                apply::Outcome::Staged(v) => {
+                    Ok(format!("{v} staged; pending boot (health not checked)"))
+                }
                 apply::Outcome::RolledBack {
                     failed,
                     back_to,
@@ -365,4 +379,52 @@ fn fetch(
     }
     layout.save_state(&state).map_err(|e| e.to_string())?;
     Ok(format!("{v} downloaded and verified"))
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn deferred_apply_requires_a_file_and_refuses_reuse() {
+        assert!(Args::try_parse_from(["carpi-update", "apply", "--defer-start"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "carpi-update",
+                "apply",
+                "--file",
+                "bundle.tar.zst",
+                "--defer-start",
+                "--reuse-current",
+            ])
+            .is_err()
+        );
+        let args = Args::try_parse_from([
+            "carpi-update",
+            "apply",
+            "--file",
+            "bundle.tar.zst",
+            "--defer-start",
+        ])
+        .unwrap();
+        assert!(matches!(
+            args.cmd,
+            Cmd::Apply {
+                defer_start: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn ordinary_apply_still_starts_services() {
+        let args = Args::try_parse_from(["carpi-update", "apply"]).unwrap();
+        assert!(matches!(
+            args.cmd,
+            Cmd::Apply {
+                defer_start: false,
+                ..
+            }
+        ));
+    }
 }
