@@ -201,7 +201,16 @@ def apply_user_config(s, share, user):
     if not os.path.exists(livi):
         # wifiDedicatedInterface: LIVI's access point is a boot unit, up before LIVI starts, so the
         # phone is paged sooner (docs/BOOT.md). LIVI's own default is DE for the hotspot country.
-        seed = {"bindings": {"knobLeft": "PageUp", "knobRight": "PageDown"}, "wifiDedicatedInterface": True}
+        seed = {
+            "bindings": {"knobLeft": "PageUp", "knobRight": "PageDown"},
+            "wifiDedicatedInterface": True,
+            "kiosk": {"main": True, "cluster": False, "aux": False},
+        }
+        if s.get("video") in ("sdlink", "edid480i", "edid480p"):
+            seed.update(
+                mainScreenWidth=800, mainScreenHeight=480,
+                projectionWidth=800, projectionHeight=480,
+            )
         if re.fullmatch(r"[A-Z]{2}", s.get("country") or ""):
             seed["country"] = s["country"]
         hot = s.get("hotspot") or {}

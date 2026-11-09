@@ -290,7 +290,10 @@ pub async fn move_job(
             last_new = tokio::time::Instant::now();
         }
         let state = sys
-            .run("systemctl", &["is-active", UNIT])
+            .run(
+                "systemctl",
+                &["show", "--property=ActiveState", "--value", UNIT],
+            )
             .await
             .unwrap_or_else(|e| e);
         let running = matches!(state.trim(), "active" | "activating" | "reloading");
@@ -402,11 +405,16 @@ mod tests {
         async fn run(&self, prog: &str, args: &[&str]) -> Result<String, String> {
             let line = format!("{prog} {}", args.join(" "));
             self.calls.lock().unwrap().push(line.clone());
+            if line == format!("systemctl is-active {UNIT}")
+                && *self.state.lock().unwrap() != "active"
+            {
+                return Err(self.state.lock().unwrap().to_string());
+            }
             Ok(match prog {
                 "findmnt" => format!("{}\n", self.root),
                 "lsblk" => LSBLK.into(),
                 "df" => "Used\n6000000000\n70000000\n".into(),
-                "systemctl" if line.contains("is-active") => {
+                "systemctl" if line.contains("show --property=ActiveState --value") => {
                     format!("{}\n", self.state.lock().unwrap())
                 }
                 _ => String::new(),
@@ -477,6 +485,39 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn an_activating_oneshot_is_not_mistaken_for_a_stopped_unit() {
+        let f = Fake::new();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let job = tokio::spawn({
+            let f = f.clone();
+            async move { move_job(&f, Path::new("p"), T, &tx).await }
+        });
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(T.poll).await;
+        tokio::task::yield_now().await;
+        let calls = f.calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| {
+                c == "systemctl show --property=ActiveState --value carpi-move-nvme.service"
+            }),
+            "the active state query succeeds while the oneshot is activating: {calls:?}"
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|c| c == "systemctl is-active carpi-move-nvme.service"),
+            "is-active exits unsuccessfully for activating oneshots"
+        );
+
+        *f.file.lock().unwrap() = Some(format!("start|{}\nfinished|ok|Copied\n", now_s()));
+        tokio::time::advance(T.poll).await;
+        tokio::task::yield_now().await;
+        job.await.unwrap();
+        drop(rx);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_unit_that_stops_silently_fails_the_job() {
         let f = Fake::new();
         // Last run's file, and the unit never gets going.
@@ -493,6 +534,12 @@ mod tests {
         assert!(
             !evs.iter()
                 .any(|e| matches!(e, JobEvent::Finished { ok: true, .. }))
+        );
+        assert!(
+            f.calls.lock().unwrap().iter().any(|c| {
+                c == "systemctl show --property=ActiveState --value carpi-move-nvme.service"
+            }),
+            "a genuine failed state is still detected"
         );
     }
 
