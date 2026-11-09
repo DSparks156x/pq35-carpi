@@ -97,10 +97,10 @@ jobs:
 
       # One cache per workspace. rust-cache keys on Cargo.lock and the rustc in the repo root
       # (stable); LIVI's key adds its pinned toolchain file.
-      - name: rust cache (pq35-carpi)
+      - name: rust cache (rnse-carpi)
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: pq35-carpi
+          shared-key: rnse-carpi
           workspaces: . -> target
 
       - name: rust cache (livi)
@@ -110,7 +110,7 @@ jobs:
           key: ${{ hashFiles('livi/rust-toolchain.toml') }}
           workspaces: livi/native -> target
 
-      - name: build pq35-carpi
+      - name: build rnse-carpi
         env:
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
@@ -125,7 +125,7 @@ jobs:
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
         run: |
-          # LIVI stamps GITHUB_SHA otherwise, which is pq35-carpi's.
+          # LIVI stamps GITHUB_SHA otherwise, which is rnse-carpi's.
           BUILD_SHA=$(git rev-parse HEAD) cargo xtask build-native
 
       - name: build sdlink
@@ -175,7 +175,7 @@ jobs:
 
       - name: release
         run: |
-          notes=$(jq -r '"pq35-carpi \(.commits["pq35-carpi"])\nlivi \(.commits.livi)\nsdlink \(.commits.sdlink)\nmin OS profile \(.min_os_profile)"' dist/manifest.json)
+          notes=$(jq -r '"rnse-carpi \(.commits["rnse-carpi"])\nlivi \(.commits.livi)\nsdlink \(.commits.sdlink)\nmin OS profile \(.min_os_profile)"' dist/manifest.json)
           [ -f dist/manifest.json.minisig ] || notes="$notes"$'\n\nUnsigned.'
           tag=$VERSION
           [ "$CHANNEL" = stable ] && tag=$GITHUB_REF_NAME

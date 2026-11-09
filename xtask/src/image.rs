@@ -226,7 +226,7 @@ fn user_data(a: &Image, key: &str, password: Option<&str>) -> anyhow::Result<Str
     };
     Ok(format!(
         "#cloud-config
-# Written by `cargo xtask image` (pq35-carpi). First boot runs carpi/firstboot.sh.
+# Written by `cargo xtask image` (rnse-carpi). First boot runs carpi/firstboot.sh.
 hostname: {host}
 manage_etc_hosts: true
 # No RTC: the clock is wrong until NTP, and apt would call the archive's files not yet valid.

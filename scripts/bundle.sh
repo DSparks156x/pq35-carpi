@@ -101,6 +101,13 @@ for f in "$ROOT"/os/edid/*.bin; do
   put "$f" "share/os/edid/$(basename "$f")" 0644
 done
 
+# Signed: the public key, from the secret key, so a first install can trust this repo's
+# releases from then on (os/install.sh). A fork's own key gives its own public key.
+if [ -n "$KEY" ]; then
+  minisign -R -s "$KEY" -p "$TMP/minisign.pub" </dev/null >/dev/null || die "can't get the public key from $KEY"
+  put "$TMP/minisign.pub" share/keys/minisign.pub 0644
+fi
+
 FIRMWARE=()
 if [ -n "$TEENSY" ]; then
   if [ -z "$TEENSY_VERSION" ]; then
@@ -136,7 +143,7 @@ manifest = {
     "channel": e["CHANNEL"],
     "arch": "arm64",
     "date": e["DATE"],
-    "commits": {"pq35-carpi": e["PQ_COMMIT"], "livi": e["LIVI_COMMIT"], "sdlink": e["SDLINK_COMMIT"]},
+    "commits": {"rnse-carpi": e["PQ_COMMIT"], "livi": e["LIVI_COMMIT"], "sdlink": e["SDLINK_COMMIT"]},
     "min_os_profile": int(e["MIN_PROFILE"]),
     "files": files,
     "firmware": [{"target": fw[i], "path": fw[i + 1], "version": fw[i + 2]} for i in range(0, len(fw), 3)],

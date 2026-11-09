@@ -1,6 +1,6 @@
 # Cross-build for the Pi 5 (aarch64, Pi OS Trixie) on an x86_64 host.
 # Based on LIVI's own cross-build container (livi/scripts/linux-arm64/Containerfile),
-# plus what pq35-carpi, sdlink and scripts/bundle.sh need.
+# plus what rnse-carpi, sdlink and scripts/bundle.sh need.
 FROM docker.io/library/debian:trixie-slim
 RUN dpkg --add-architecture arm64 \
  && apt-get update \

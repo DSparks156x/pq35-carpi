@@ -1,6 +1,6 @@
-# LIVI (the pq35-carpi fork), from the installed bundle. User service, like carpid.
+# LIVI (the rnse-carpi fork), from the installed bundle. User service, like carpid.
 [Unit]
-Description=LIVI (pq35-carpi fork)
+Description=LIVI (rnse-carpi fork)
 After=carpid.service
 # A crash makes a capture (deploy/carpi-capture@.service).
 OnFailure=carpi-capture@%n.service

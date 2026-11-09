@@ -9,7 +9,7 @@ The contract between CI (`scripts/bundle.sh`, `.github/workflows/release.yml`) a
 | Channel | Made by | `version` | Example |
 |---|---|---|---|
 | `stable` | tag `vX.Y.Z` | the tag without the `v` | `1.2.0` |
-| `beta` | push to `main` | `beta-<YYYYMMDD>-<sha7>`, date of the pq35-carpi commit (UTC) | `beta-20261107-e7e3f15` |
+| `beta` | push to `main` | `beta-<YYYYMMDD>-<sha7>`, date of the rnse-carpi commit (UTC) | `beta-20261107-e7e3f15` |
 | `dev` | any other branch, a PR, a local build | `dev-<sha7>` | `dev-e7e3f15` |
 
 `version` only uses `[A-Za-z0-9._-]`, because it is also the directory name under `/opt/carpi/releases/`.
@@ -52,6 +52,7 @@ share/udev/99-carpi-uinput.rules
 share/systemd/system/carpi-move-nvme.service   Move to NVMe's root unit (os/install.sh)
 share/os/move-nvme.sh               its script
 share/sdlink/run/...                sdlink pi/run, as-is (scripts, units, avsd.env)
+share/keys/minisign.pub             signed bundles only: the repo's public key (os/install.sh)
 firmware/teensy/sdemu.hex           only if the build had a Teensy image
 ```
 
@@ -69,7 +70,7 @@ Every binary in `bin/` is an aarch64 ELF built on Debian Trixie (glibc 2.41).
   "arch": "arm64",
   "date": "2026-11-07T22:27:41Z",
   "commits": {
-    "pq35-carpi": "e7e3f15c0a8d0d0b1f3f4d2a5c9e1b7a6d3c2b10",
+    "rnse-carpi": "e7e3f15c0a8d0d0b1f3f4d2a5c9e1b7a6d3c2b10",
     "livi": "1a4f05e73af7bdb189a30937ef65ea4c3a9009e4",
     "sdlink": "4044227cd05b518ed5097a385c1a762ab15816a6"
   },
@@ -89,8 +90,8 @@ Every binary in `bin/` is an aarch64 ELF built on Debian Trixie (glibc 2.41).
 | `version` | string | see above |
 | `channel` | string | `stable`, `beta` or `dev` |
 | `arch` | string | `arm64` |
-| `date` | string | commit time of pq35-carpi HEAD, RFC 3339 UTC |
-| `commits` | object | full 40-hex commit of each repo: `pq35-carpi`, `livi`, `sdlink` |
+| `date` | string | commit time of rnse-carpi HEAD, RFC 3339 UTC |
+| `commits` | object | full 40-hex commit of each repo: `rnse-carpi`, `livi`, `sdlink` |
 | `min_os_profile` | integer | lowest `PROFILE_VERSION` in `/etc/carpi-profile` this bundle runs on (`os/profile.sh`) |
 | `files` | array | every file in the tarball except `manifest.json` and its `.minisig`, sorted by `path` |
 | `files[].path` | string | as in the tarball |
@@ -110,6 +111,6 @@ Readers ignore fields they don't know. A tarball entry that isn't in `files` (or
 
 The files are covered through their hashes in the manifest, so verify order is: signature on `manifest.json`, then every file against it.
 
-Key: the secret key is the repo secret `MINISIGN_KEY`, the whole secret key file made with `minisign -G -W` (no password; CI can't type one). Each fork makes its own. The device trusts only a public key it already has (`/etc/carpi/minisign.pub`, put there at first install); it never trusts a key that arrives in a bundle.
+Key: the secret key is the repo secret `MINISIGN_KEY`, the whole secret key file made with `minisign -G -W` (no password; CI can't type one). Each fork makes its own. The device trusts only a public key it already has (`/etc/carpi/minisign.pub`); the updater never takes a key from a bundle. The one exception is the first install: `scripts/bundle.sh --key` puts the public key, recreated from the secret key (`minisign -R`), in a signed bundle as `share/keys/minisign.pub`, and `os/install.sh` installs it when the device has none. That first bundle comes over HTTPS from the repo the card was made for. From then on every update must be signed by that key.
 
 An unsigned bundle (no `.minisig`) is only for direct deploy; whether to accept one is the updater's call (suggested: only with an explicit flag).

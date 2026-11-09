@@ -1,5 +1,5 @@
 //! Typed helpers for the other read-only services, plus DTC clear.
-//! Refs: RNS-E-Hudiy `docs/research/diagnostics.md` (pq35-carpi) section 1, KWP table.
+//! Refs: RNS-E-Hudiy `docs/research/diagnostics.md` (rnse-carpi) section 1, KWP table.
 
 use crate::request::{ExclusiveToken, Request, RequestError};
 

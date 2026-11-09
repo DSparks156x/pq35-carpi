@@ -6,7 +6,7 @@
 //! - `[jazdw]` `references/tp2diag references/VW-TP-2.0.txt` (jazdw.net/tp20). Docs,
 //!   reverse engineered, not official.
 //! - `[oldtp2]` RNS-E-Hudiy `flasher/vag_protocols/tp2.py`. Code that ran on the car.
-//! - `[dis]` pq35-carpi `docs/research/dis.md` section 1. A3 bench.
+//! - `[dis]` rnse-carpi `docs/research/dis.md` section 1. A3 bench.
 
 use std::time::Duration;
 

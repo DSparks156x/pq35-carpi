@@ -1,6 +1,6 @@
 Required Notice: Copyright 2026 Drew Sparks
 
-pq35-carpi is licensed under the PolyForm Noncommercial License 1.0.0 (LICENSE.md).
+rnse-carpi is licensed under the PolyForm Noncommercial License 1.0.0 (LICENSE.md).
 Commercial use needs Drew's permission.
 
 Exception: crates/carpi-proto is MIT OR Apache-2.0, so the GPL LIVI fork can link it.

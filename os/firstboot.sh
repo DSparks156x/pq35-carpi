@@ -41,7 +41,7 @@ r = s.get("release") or {}
 for k, v in {
     "CARPI_USER": s.get("user", "pi"),
     "CARPI_TZ": s.get("timezone", ""),
-    "CARPI_REPO": r.get("repo", "DSparks156x/pq35-carpi"),
+    "CARPI_REPO": r.get("repo", "DSparks156x/rnse-carpi"),
     "CARPI_CHANNEL": r.get("channel", "stable"),
     "CARPI_VERSION": r.get("version") or "",
 }.items():

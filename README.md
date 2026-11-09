@@ -1,4 +1,4 @@
-# pq35-carpi
+# rnse-carpi
 
 Car daemon for PQ35/46 cars with an RNS-E and a Pi, built around a LIVI fork. Replaces RNS-E-Hudiy.
 

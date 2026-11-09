@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Parser)]
-#[command(about = "pq35-carpi developer tasks")]
+#[command(about = "rnse-carpi developer tasks")]
 struct Args {
     #[command(subcommand)]
     cmd: Cmd,
@@ -267,7 +267,7 @@ fn dev_manifest(
     m["version"] = version.into();
     m["channel"] = "dev".into();
     m["date"] = date.into();
-    m["commits"]["pq35-carpi"] = sha.into();
+    m["commits"]["rnse-carpi"] = sha.into();
     let files = m["files"]
         .as_array_mut()
         .context("installed manifest has no files")?;
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn dev_manifest_swaps_binaries_and_keeps_the_rest() {
         let base = r#"{"format_version":1,"version":"beta-20261107-e7e3f15","channel":"beta",
-            "arch":"arm64","date":"x","commits":{"pq35-carpi":"old","livi":"l"},
+            "arch":"arm64","date":"x","commits":{"rnse-carpi":"old","livi":"l"},
             "min_os_profile":1,"firmware":[],
             "files":[{"path":"bin/LIVI","sha256":"aa","size":1,"mode":"0755"},
                      {"path":"bin/carpid","sha256":"bb","size":2,"mode":"0755"}]}"#;
@@ -415,7 +415,7 @@ mod tests {
         assert_eq!(m["version"], "dev-1234567");
         assert_eq!(m["channel"], "dev");
         assert_eq!(m["commits"]["livi"], "l");
-        assert_eq!(m["commits"]["pq35-carpi"], "1234567abc");
+        assert_eq!(m["commits"]["rnse-carpi"], "1234567abc");
         let paths: Vec<_> = m["files"]
             .as_array()
             .unwrap()

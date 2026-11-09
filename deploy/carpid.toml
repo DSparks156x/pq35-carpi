@@ -118,7 +118,7 @@ protect_downloads = false
 
 # Updates (carpi-update reads this too). See docs/DEPLOY.md section 3.
 [update]
-repo = "DSparks156x/pq35-carpi"
+repo = "DSparks156x/rnse-carpi"
 channel = "stable"                # or "beta"
 
 # A/V over SD: the settings API edits env (only the keys it knows; comments

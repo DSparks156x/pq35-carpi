@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(version, about = "pq35-carpi debug tool")]
+#[command(version, about = "rnse-carpi debug tool")]
 struct Args {
     /// carpid socket (default: $XDG_RUNTIME_DIR/carpid.sock).
     #[arg(long, global = true)]

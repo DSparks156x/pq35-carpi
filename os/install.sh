@@ -106,6 +106,16 @@ if command -v wayvnc >/dev/null && [ ! -e "$VNC/config" ]; then
   chown "$USERNAME:$GROUP" "$VNC/config"
 fi
 
+# 3b. Signing: a signed bundle carries its repo's public key. The first one seen becomes the key
+#     every later update must be signed with (carpi-update reads /etc/carpi/minisign.pub). An
+#     unsigned bundle leaves the device on checksums only. Changing repos to a fork with its
+#     own key: replace or remove that file by hand (docs/FORKING.md).
+PUB=/etc/carpi/minisign.pub
+if [ ! -e $PUB ] && [ -f "$S/keys/minisign.pub" ]; then
+  say "trusting this repo's signing key ($PUB)"
+  install -D -o root -g root -m 0644 "$S/keys/minisign.pub" $PUB
+fi
+
 # 4. Enable the units (before the apply, so its restart and the next boot both start them).
 as_user systemctl --user daemon-reload
 for u in carpid.service livi.service avsd-chain.service wayvnc.service; do

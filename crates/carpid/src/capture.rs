@@ -635,7 +635,7 @@ fn copy_configs(dir: &Path, files: &[(PathBuf, String)]) -> Vec<String> {
     out
 }
 
-/// `version (channel), pq35-carpi <sha>, livi <sha>, sdlink <sha>`.
+/// `version (channel), rnse-carpi <sha>, livi <sha>, sdlink <sha>`.
 pub(crate) fn release(manifest: &Path) -> String {
     let Some(m) = std::fs::read(manifest)
         .ok()
@@ -791,7 +791,7 @@ mod tests {
         let manifest = t.path().join("manifest.json");
         std::fs::write(
             &manifest,
-            r#"{"version":"1.2.3","channel":"beta","commits":{"pq35-carpi":"0123456789abcdef"}}"#,
+            r#"{"version":"1.2.3","channel":"beta","commits":{"rnse-carpi":"0123456789abcdef"}}"#,
         )
         .unwrap();
         let setup = Setup {
@@ -872,7 +872,7 @@ mod tests {
         assert!(info.contains("2026-11-08T10:00:00 (200 ms old)"), "{info}");
         assert!(info.contains("238600 km (200 ms old)"), "{info}");
         assert!(
-            info.contains("1.2.3 (beta), pq35-carpi 0123456789"),
+            info.contains("1.2.3 (beta), rnse-carpi 0123456789"),
             "{info}"
         );
         let values: serde_json::Value =

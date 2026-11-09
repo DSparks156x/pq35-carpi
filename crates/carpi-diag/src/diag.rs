@@ -1,6 +1,6 @@
 //! The diag engine: channels, scheduler, modes, jobs. See the crate docs.
 //!
-//! Refs: `[research]` pq35-carpi `docs/research/diagnostics.md`; `[trace]` as in
+//! Refs: `[research]` rnse-carpi `docs/research/diagnostics.md`; `[trace]` as in
 //! [`crate::catalog`].
 
 use crate::catalog::{Catalog, Provider};

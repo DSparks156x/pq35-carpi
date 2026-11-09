@@ -84,7 +84,7 @@ use std::path::{Path, PathBuf};
 /// bind = "0.0.0.0:5003"
 ///
 /// [update]             # read by carpi-update too; see docs/DEPLOY.md
-/// repo = "DSparks156x/pq35-carpi"
+/// repo = "DSparks156x/rnse-carpi"
 /// channel = "stable"   # or "beta"
 ///
 /// [avsd]               # A/V over SD: the settings API edits its env file

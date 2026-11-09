@@ -12,11 +12,11 @@ Goals (Drew, 2026-11-07):
 
 ## 1. One bundle, one version
 
-pq35-carpi is the superproject. It pins the LIVI fork (`livi/`) and sdlink (`sdlink/`) as submodules, so one pq35-carpi commit names exactly one set of everything. CI turns that commit into a single **bundle**:
+rnse-carpi is the superproject. It pins the LIVI fork (`livi/`) and sdlink (`sdlink/`) as submodules, so one rnse-carpi commit names exactly one set of everything. CI turns that commit into a single **bundle**:
 
 ```
 carpi-<version>-arm64.tar.zst
-  manifest.json      versions + commits of pq35-carpi, LIVI, sdlink; channel;
+  manifest.json      versions + commits of rnse-carpi, LIVI, sdlink; channel;
                      sha256 of every file; minimum OS profile
   bin/               carpid, carpi, LIVI binaries, sdlink Pi-side binaries
   firmware/          Teensy image, RNS-E decoder sector(s), each with its own
@@ -28,19 +28,19 @@ manifest.json.minisig
 
 The exact layout and `manifest.json` schema are in [BUNDLE.md](BUNDLE.md). Differences from the sketch above: `manifest.json` and its `.minisig` sit at the top of the tarball and are also published next to it, so a device can check a release before downloading it; `firmware/` only has the Teensy image when one is passed in, since CI doesn't run PlatformIO yet, and no RNS-E sectors (see Decisions).
 
-The device only ever talks to one repo's releases, so a fork of pq35-carpi is a complete product.
+The device only ever talks to one repo's releases, so a fork of rnse-carpi is a complete product.
 
 ## 2. CI (GitHub Actions)
 
 - **Runner**: `ubuntu-24.04-arm` (native arm64; free for public repos). Builds run inside a `debian:trixie` container so glibc and library versions match Pi OS Trixie.
 - **Caches**:
-  - `Swatinem/rust-cache`, keyed on each workspace's `Cargo.lock` and toolchain. pq35-carpi and LIVI are separate workspaces with separate caches; LIVI's pinned beta toolchain is part of its key.
+  - `Swatinem/rust-cache`, keyed on each workspace's `Cargo.lock` and toolchain. rnse-carpi and LIVI are separate workspaces with separate caches; LIVI's pinned beta toolchain is part of its key.
   - The apt package cache.
   - sccache backed by the GitHub Actions cache, so unchanged crates don't rebuild even when a lockfile moves.
 - **Jobs**:
   1. Test: the existing x86 fmt, clippy and test run.
   2. Build bundle on arm64.
-  3. Sign the manifest. The minisign key lives in repo secrets (`MINISIGN_KEY`, made with `minisign -G -W`), and each fork uses its own. Without it the bundle is built unsigned, with a warning.
+  3. Sign the manifest. The minisign key lives in repo secrets (`MINISIGN_KEY`, made with `minisign -G -W`), and each fork uses its own. Without it the bundle is built unsigned, with a warning. A signed bundle also carries the public key, which the first install trusts (BUNDLE.md, Signature). Forking: [FORKING.md](FORKING.md).
   4. Publish.
 - **What triggers what**:
 
@@ -66,13 +66,13 @@ A separate small binary, not part of carpid, because it has to replace carpid. c
   6. Health check: carpid answers, LIVI core is up, frames flow. If the check fails within 180 s, swap back and restart. This is the same pattern as sdlink's guard.
 - **Firmware**: the Teensy image is flashed only when its version changed, behind its own confirmation in the UI. RNS-E sectors are not updated from the Pi until sdlink supports partial updates (see Decisions).
 - **User config is never touched**: config files live in `~/.config/carpi`, `~/.config/LIVI` and so on. New defaults ship in `share/` for reference. No migrations unless Drew asks.
-- **Source**: `[update] repo = "DSparks156x/pq35-carpi"` and `channel = "stable" | "beta"`. Pointing at a fork is one line.
+- **Source**: `[update] repo = "DSparks156x/rnse-carpi"` and `channel = "stable" | "beta"`. Pointing at a fork is one line.
 
 As built: `carpi-update check | fetch [--force] | apply [--file F] [--allow-unsigned] [--reuse-current] | rollback | status`, with `--root` (default `/opt/carpi`) and `--profile` (default `/etc/carpi-profile`) for tests. It reads `[update]` and `[api]` from carpid's config:
 
 ```toml
 [update]
-repo = "DSparks156x/pq35-carpi"
+repo = "DSparks156x/rnse-carpi"
 channel = "stable"                          # or "beta" (beta also takes stable releases)
 # pubkey = "/etc/carpi/minisign.pub"        # bundles must be signed by it when it exists
 # restart_user = ["carpid.service"]         # systemctl --user restart
@@ -109,7 +109,7 @@ As built:
 
 ## 5. Direct deploy from the PC
 
-`carpi deploy` (an xtask in pq35-carpi) for development:
+`carpi deploy` (an xtask in rnse-carpi) for development:
 
 - **Source** is one of:
   - a CI artifact for any branch or PR (`gh run download`), the default;
@@ -126,7 +126,7 @@ As built, `cargo xtask deploy`:
 
 ## 6. OS profile
 
-The base image isn't in the bundle. It's a versioned script in pq35-carpi, `os/profile.sh`, that turns a fresh Pi OS Trixie into a carpi device:
+The base image isn't in the bundle. It's a versioned script in rnse-carpi, `os/profile.sh`, that turns a fresh Pi OS Trixie into a carpi device:
 - packages;
 - config.txt lines (hat-specific: CarPiHat vs Drew's hat);
 - networkd CAN config;
@@ -156,12 +156,13 @@ cargo xtask image --boot E:\ --tz America/Chicago      # a card or NVMe already 
 - **Bundle**: `--bundle FILE`, `--from-ci BRANCH|RUN-ID`, default the CI bundle of the current branch.
 - **Writes** cloud-init's `user-data`, `network-config` and `meta-data` and a `carpi/` folder (bundle, carpi-update, `firstboot.sh`, `profile.sh`, `install.sh`, `setup.env`) into the boot partition. From an image it writes a new `<name>-carpi.img`; flash that with Imager and no OS customisation.
 - **First boot**: cloud-init makes the user and joins the Wi-Fi, then `os/firstboot.sh` waits for the network, runs `profile.sh` (which also sets up the kiosk session), then `install.sh`, and reboots. Its log is `/var/log/carpi-firstboot.log`, also copied to `carpi/firstboot.log` on the boot partition. On a failure it doesn't reboot: ssh in, fix, re-run it.
-- **`os/install.sh --bundle F [--updater P]`**: the first install, also usable on any profiled Pi. Puts in what's missing and nothing else: `carpid.toml`, the user units (carpid, LIVI, the A/V chain, wayvnc), `~/avsd`, the governor unit, Move to NVMe's root unit and its script (`/usr/local/lib/carpi/move-nvme.sh`, root-owned, refreshed when the bundle's differs), wayvnc's config. Enables them, then `carpi-update apply`. LIVI installs its own hotspot unit and udev rule when it runs.
+- **`os/install.sh --bundle F [--updater P]`**: the first install, also usable on any profiled Pi. Puts in what's missing and nothing else: `carpid.toml`, the user units (carpid, LIVI, the A/V chain, wayvnc), `~/avsd`, the governor unit, Move to NVMe's root unit and its script (`/usr/local/lib/carpi/move-nvme.sh`, root-owned, refreshed when the bundle's differs), wayvnc's config, and the signing key from a signed bundle (`/etc/carpi/minisign.pub`). Enables them, then `carpi-update apply`. LIVI installs its own hotspot unit and udev rule when it runs.
 - **Not done yet**: the Lite image, a desktop on leaving LIVI, an offline first boot. Untested on a real card so far.
 
 ## Decisions (Drew, 2026-11-07)
 
-- `DSparks156x/pq35-carpi` on GitHub, public.
+- `DSparks156x/rnse-carpi` on GitHub, public (was `pq35-carpi`; renamed 2026-11-09 with `rnse-livi`, `rnse-sdlink` and `rnse-carpi-image`).
+- Releases are signed (`MINISIGN_KEY`, set 2026-11-09). Drew's secret key is kept off the repo.
 - Beta = every push to `main`; stable = `vX.Y.Z` tags.
 - No speed gating on updates.
 - Teensy firmware updates behind their own confirmation.

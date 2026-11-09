@@ -1,8 +1,8 @@
-# pq35-carpi foundation plan
+# rnse-carpi foundation plan
 
 Status: **draft, not yet agreed.** No code until Drew signs this off.
 
-pq35-carpi replaces everything `RNS-E-Hudiy` does, built around a LIVI fork instead of Hudiy. The old repo is reference only, for what's proven on the car. Nothing gets ported.
+rnse-carpi replaces everything `RNS-E-Hudiy` does, built around a LIVI fork instead of Hudiy. The old repo is reference only, for what's proven on the car. Nothing gets ported.
 
 Target: PQ35/46 cars on ICAN (TT 8J, A3 8P, R8, Q3 should mostly work as written), RNS-E 193 on Drew's SD-link firmware (R56B lineage), Pi 5, Android Auto. CAN IDs and car facts live in one place, not scattered through code, but we don't make every knob configurable.
 
@@ -16,7 +16,7 @@ Three repos:
 
 | Repo | What | License |
 |---|---|---|
-| `pq35-carpi` (this) | Car daemon, tools, simulators, install. Submodules the other two. | PolyForm Noncommercial 1.0.0, except `carpi-proto` (MIT/Apache) |
+| `rnse-carpi` (this) | Car daemon, tools, simulators, install. Submodules the other two. | PolyForm Noncommercial 1.0.0, except `carpi-proto` (MIT/Apache) |
 | LIVI fork | AA/CarPlay head unit plus our Slint pages and a bridge module. Submodule at `livi/`. | GPL-3.0 + LIVI attribution (not ours to restrict) |
 | sdlink | Encoder, avlink, Teensy firmware, RNS-E decoder sectors. Submodule at `sdlink/`. | Drew's call |
 
@@ -416,9 +416,9 @@ Each step ends with something running on the car or bench, read-only first.
 
 Drew's decisions (2026-11-07):
 
-- **Repo**: `pq35-carpi`, sibling of `RNS-E-Hudiy`, local only.
+- **Repo**: `rnse-carpi`, sibling of `RNS-E-Hudiy`, local only.
 - **Audience**: works as written on A3/TT/R8/Q3. CAN IDs in one place, no blanket configurability. Others fork for distant relatives.
-- **License**: PolyForm Noncommercial 1.0.0 for pq35-carpi, MIT/Apache for `carpi-proto`. Page logic stays thin in the GPL fork.
+- **License**: PolyForm Noncommercial 1.0.0 for rnse-carpi, MIT/Apache for `carpi-proto`. Page logic stays thin in the GPL fork.
 - **RNS-E firmware**:
   - Not r21 any more. The SD-link firmware (about R56B) has similar commands, and `RNSE hacking/CAN_PROTOCOL.md` is close enough. Firmware can be changed to suit.
   - Non-PCBBC firmwares always redirect the DIS (0x7B2–0x7B5).

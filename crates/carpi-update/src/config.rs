@@ -33,7 +33,7 @@ pub struct Update {
 impl Default for Update {
     fn default() -> Self {
         Update {
-            repo: "DSparks156x/pq35-carpi".into(),
+            repo: "DSparks156x/rnse-carpi".into(),
             channel: "stable".into(),
             pubkey: "/etc/carpi/minisign.pub".into(),
             restart_user: vec!["carpid.service".into()],

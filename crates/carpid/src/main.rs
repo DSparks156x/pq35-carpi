@@ -45,7 +45,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
 #[derive(Parser)]
-#[command(version, about = "pq35-carpi car daemon")]
+#[command(version, about = "rnse-carpi car daemon")]
 struct Args {
     /// Config file. Without one, ICAN and diag are both on can0.
     #[arg(long, default_value = "/etc/carpi/carpid.toml")]

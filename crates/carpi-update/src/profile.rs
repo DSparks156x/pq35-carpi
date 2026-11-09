@@ -33,7 +33,7 @@ pub fn check(needs: u32, have: Option<u32>) -> Result<(), String> {
         Some(h) if h >= needs => Ok(()),
         Some(h) => Err(format!(
             "this bundle needs OS profile {needs}, the device has {h}. \
-             Run os/profile.sh from the bundle's pq35-carpi commit first."
+             Run os/profile.sh from the bundle's rnse-carpi commit first."
         )),
         None => Err(format!(
             "this bundle needs OS profile {needs} and the device has none \

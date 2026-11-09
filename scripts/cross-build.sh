@@ -45,7 +45,7 @@ docker run --rm \
     want() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 
     if want pq; then
-      echo "== pq35-carpi"
+      echo "== rnse-carpi"
       rustup toolchain install stable --profile minimal >/dev/null
       rustup target add --toolchain stable $T >/dev/null
       CARGO_TARGET_DIR=/target/pq cargo +stable build --release --locked --target $T \

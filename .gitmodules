@@ -1,7 +1,7 @@
 [submodule "livi"]
 	path = livi
-	url = https://github.com/DSparks156x/LIVI.git
+	url = https://github.com/DSparks156x/rnse-livi.git
 	branch = carpi
 [submodule "sdlink"]
 	path = sdlink
-	url = https://github.com/DSparks156x/sdlink.git
+	url = https://github.com/DSparks156x/rnse-sdlink.git

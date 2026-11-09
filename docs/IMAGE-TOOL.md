@@ -6,7 +6,7 @@ A tool that turns a stock Raspberry Pi OS Trixie card into a carpi: it asks how 
 
 - **A web page**, built and published by the repo's GitHub Action (GitHub Pages). Nothing to install, every OS.
 - **Flashing stays with Raspberry Pi Imager** (stock Trixie, no customisation). The page then writes its few files onto the card's boot partition: in Chrome and Edge straight onto the mounted drive (File System Access API); elsewhere it hands over a zip to copy onto it.
-- **The page carries no bundle.** First boot downloads the chosen release (stable, beta or an exact version) from pq35-carpi's GitHub releases: it already needs the internet for packages. So the page stays small and never fights GitHub's download rules.
+- **The page carries no bundle.** First boot downloads the chosen release (stable, beta or an exact version) from rnse-carpi's GitHub releases: it already needs the internet for packages. So the page stays small and never fights GitHub's download rules.
 - **Presets**: the answers save as a file (`my-tt.json`) to load next time.
 - **What it writes**: cloud-init `user-data`, `network-config`, `meta-data`, and `carpi/`: `setup.json` (the answers), `firstboot.sh`. firstboot fetches the bundle, then runs `profile.sh` and `install.sh` from it with the answers.
 - The repo's Action also builds a command-line version of the same writer (from `xtask image`) for scripting.
@@ -66,7 +66,7 @@ A Remote access screen: the file portal's address; Start VNC now; VNC at startup
 
 1. Firstboot that fetches the bundle itself and reads `setup.json`; the options as profile/install steps.
 2. The web page, its preset files and writer; the Action that publishes it (and the CLI).
-3. Remote access screen (pq35-carpi + fork). Done.
+3. Remote access screen (rnse-carpi + fork). Done.
 4. Setup screen and Move to NVMe. Built; not run on a Pi yet.
 5. Drew's NVMe through that path; grind the boot time; the trimming becomes a profile step and an option.
 

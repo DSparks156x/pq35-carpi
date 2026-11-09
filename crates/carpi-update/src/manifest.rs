@@ -217,7 +217,7 @@ pub mod tests {
             "channel": "beta",
             "arch": "arm64",
             "date": "2026-11-07T22:27:41Z",
-            "commits": { "pq35-carpi": "e7e3f15c0a8d0d0b1f3f4d2a5c9e1b7a6d3c2b10" },
+            "commits": { "rnse-carpi": "e7e3f15c0a8d0d0b1f3f4d2a5c9e1b7a6d3c2b10" },
             "min_os_profile": profile,
             "files": files,
             "firmware": [],

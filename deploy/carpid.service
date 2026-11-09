@@ -3,7 +3,7 @@
 #   loginctl enable-linger $USER
 # Installed from the bundle's share/systemd/user by os/install.sh.
 [Unit]
-Description=pq35-carpi car daemon
+Description=rnse-carpi car daemon
 After=network.target
 
 [Service]
