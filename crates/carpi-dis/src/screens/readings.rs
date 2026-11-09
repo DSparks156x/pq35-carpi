@@ -18,9 +18,9 @@
 //! tail clear in the same group. Icons and units never change within a page.
 
 use super::Screen;
-use crate::font::{Font, audscii};
 use crate::cmd::{Ink, Op, text_flags};
 use crate::font::TEXT_H;
+use crate::font::{Font, audscii};
 use crate::helpers::{CentredField, Ctx, QuickThenRefineIcon, TextSlot};
 use crate::icons::Art;
 use crate::pack::{Group, PackError, Packer};
@@ -305,7 +305,8 @@ impl ReadingsScreen {
                     .map(|d| format_value(v, d))
                     .find(|t| {
                         let b = audscii(t);
-                        cx.metrics.width(f.slot.font, &b) <= f.slot.width_px() && b.len() <= cx.text_cap()
+                        cx.metrics.width(f.slot.font, &b) <= f.slot.width_px()
+                            && b.len() <= cx.text_cap()
                     })
                     .unwrap_or_else(|| format_value(v, dp))
             })
@@ -356,7 +357,10 @@ impl ReadingsScreen {
             }
         } else if let Some((_, rect)) = self.inverted.take() {
             // Back to normal: the fill's clear rides with the plain run.
-            let mut g = self.title.draw(m, "title", x, b).map_or_else(Vec::new, |g| g.ops);
+            let mut g = self
+                .title
+                .draw(m, "title", x, b)
+                .map_or_else(Vec::new, |g| g.ops);
             g.insert(0, Op::Clear(rect));
             out.push(Group::new("title", g));
         } else {

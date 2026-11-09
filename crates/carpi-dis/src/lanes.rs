@@ -75,7 +75,9 @@ pub fn strip_in(lanes: &[Lane], w: usize, h: usize, pitch: usize, stock: bool) -
     let y0 = h.saturating_sub(AH) / 2;
     for (i, lane) in lanes.iter().enumerate() {
         let Some(a) = shown(lane) else { continue };
-        let Some(m) = mask_in(&a.shape, stock) else { continue };
+        let Some(m) = mask_in(&a.shape, stock) else {
+            continue;
+        };
         let cx = x0 + i * pitch + pitch.saturating_sub(AW) / 2;
         for (y, row) in m.iter().enumerate() {
             for x in 0..AW {
@@ -109,8 +111,15 @@ mod tests {
     #[test]
     fn every_shape_has_ink() {
         for s in [
-            "straight", "slight_left", "slight_right", "normal_left", "normal_right",
-            "sharp_left", "sharp_right", "uturn_left", "uturn_right",
+            "straight",
+            "slight_left",
+            "slight_right",
+            "normal_left",
+            "normal_right",
+            "sharp_left",
+            "sharp_right",
+            "uturn_left",
+            "uturn_right",
         ] {
             assert!(mask(s).is_some_and(|m| m.iter().any(|r| *r != 0)), "{s}");
         }

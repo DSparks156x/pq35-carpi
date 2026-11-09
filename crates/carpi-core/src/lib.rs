@@ -206,12 +206,13 @@ impl Car {
                 self.diag_subscribe(&want, PERIOD, now)
             };
             if !want.is_empty() {
-                tracing::info!("dis: polling {} diag values for the readings page", ids.len());
+                tracing::info!(
+                    "dis: polling {} diag values for the readings page",
+                    ids.len()
+                );
             }
             self.dis_subs = (want, ids, Some(now));
-        } else if !self.dis_subs.1.is_empty()
-            && self.dis_subs.2.is_none_or(|t| now >= t + PERIOD)
-        {
+        } else if !self.dis_subs.1.is_empty() && self.dis_subs.2.is_none_or(|t| now >= t + PERIOD) {
             let ids = self.dis_subs.1.clone();
             self.diag_renew(&ids, PERIOD, now);
             self.dis_subs.2 = Some(now);

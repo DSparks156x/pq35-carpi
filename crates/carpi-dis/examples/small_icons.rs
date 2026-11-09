@@ -23,12 +23,36 @@ use std::path::{Path, PathBuf};
 /// Lane shapes we need, the SVG for each, and the 72 px icon it matches.
 const SHAPES: [(&str, &str, Maneuver); 9] = [
     ("straight", "maneuver_straight.svg", Maneuver::Straight),
-    ("slight_right", "maneuver_turn_slight_right.svg", Maneuver::Slight(Side::Right)),
-    ("slight_left", "maneuver_turn_slight_left.svg", Maneuver::Slight(Side::Left)),
-    ("normal_right", "maneuver_turn_normal_right.svg", Maneuver::Turn(Side::Right)),
-    ("normal_left", "maneuver_turn_normal_left.svg", Maneuver::Turn(Side::Left)),
-    ("sharp_right", "maneuver_turn_sharp_right.svg", Maneuver::Sharp(Side::Right)),
-    ("sharp_left", "maneuver_turn_sharp_left.svg", Maneuver::Sharp(Side::Left)),
+    (
+        "slight_right",
+        "maneuver_turn_slight_right.svg",
+        Maneuver::Slight(Side::Right),
+    ),
+    (
+        "slight_left",
+        "maneuver_turn_slight_left.svg",
+        Maneuver::Slight(Side::Left),
+    ),
+    (
+        "normal_right",
+        "maneuver_turn_normal_right.svg",
+        Maneuver::Turn(Side::Right),
+    ),
+    (
+        "normal_left",
+        "maneuver_turn_normal_left.svg",
+        Maneuver::Turn(Side::Left),
+    ),
+    (
+        "sharp_right",
+        "maneuver_turn_sharp_right.svg",
+        Maneuver::Sharp(Side::Right),
+    ),
+    (
+        "sharp_left",
+        "maneuver_turn_sharp_left.svg",
+        Maneuver::Sharp(Side::Left),
+    ),
     ("uturn_left", "maneuver_u_turn_left.svg", Maneuver::UTurn),
     ("uturn_right", "maneuver_u_turn_right.svg", Maneuver::UTurn),
 ];
@@ -42,8 +66,15 @@ struct Fit {
 /// Coverage 0..1 of `tree` at `scale` and offset into a `size` square.
 fn render(tree: &usvg::Tree, size: u32, scale: f32, dx: f32, dy: f32) -> Vec<f32> {
     let mut pm = Pixmap::new(size, size).expect("pixmap");
-    resvg::render(tree, Transform::from_row(scale, 0.0, 0.0, scale, dx, dy), &mut pm.as_mut());
-    pm.pixels().iter().map(|p| f32::from(p.alpha()) / 255.0).collect()
+    resvg::render(
+        tree,
+        Transform::from_row(scale, 0.0, 0.0, scale, dx, dy),
+        &mut pm.as_mut(),
+    );
+    pm.pixels()
+        .iter()
+        .map(|p| f32::from(p.alpha()) / 255.0)
+        .collect()
 }
 
 /// Search scale and phase for the crispest render that fits the box.
@@ -58,8 +89,10 @@ fn fit(tree: &usvg::Tree, size: u32) -> Fit {
         for py in 0..8 {
             for px in 0..8 {
                 // Centre, then nudge by 1/8 px phases.
-                let dx = (size as f32 - bw * scale) / 2.0 - bb.left() * scale + (px as f32 - 3.5) / 8.0;
-                let dy = (size as f32 - bh * scale) / 2.0 - bb.top() * scale + (py as f32 - 3.5) / 8.0;
+                let dx =
+                    (size as f32 - bw * scale) / 2.0 - bb.left() * scale + (px as f32 - 3.5) / 8.0;
+                let dy =
+                    (size as f32 - bh * scale) / 2.0 - bb.top() * scale + (py as f32 - 3.5) / 8.0;
                 let cov = render(tree, size, scale, dx, dy);
                 // Crispness: how far each pixel sits from fully on or off.
                 let fuzz: f32 = cov.iter().map(|c| c.min(1.0 - c)).sum::<f32>() / cov.len() as f32;
@@ -81,7 +114,11 @@ fn fit(tree: &usvg::Tree, size: u32) -> Fit {
 fn put(img: &mut RgbImage, px: &[bool], size: u32, x0: u32, y0: u32, s: u32) {
     for y in 0..size {
         for x in 0..size {
-            let c = if px[(y * size + x) as usize] { Rgb([240, 244, 255]) } else { Rgb([0, 0, 0]) };
+            let c = if px[(y * size + x) as usize] {
+                Rgb([240, 244, 255])
+            } else {
+                Rgb([0, 0, 0])
+            };
             for d in 0..s * s {
                 img.put_pixel(x0 + x * s + d % s, y0 + y * s + d / s, c);
             }
@@ -91,7 +128,10 @@ fn put(img: &mut RgbImage, px: &[bool], size: u32, x0: u32, y0: u32, s: u32) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    assert!(args.len() >= 2, "usage: small_icons <svg dir> <out dir> [sizes...]");
+    assert!(
+        args.len() >= 2,
+        "usage: small_icons <svg dir> <out dir> [sizes...]"
+    );
     let (dir, out) = (PathBuf::from(&args[0]), PathBuf::from(&args[1]));
     let mut rust: Option<(u32, PathBuf)> = None;
     let mut rest = Vec::new();
@@ -104,7 +144,11 @@ fn main() {
             rest.push(a.parse().expect("size"));
         }
     }
-    let sizes: Vec<u32> = if rest.is_empty() { vec![14, 16, 18, 20] } else { rest };
+    let sizes: Vec<u32> = if rest.is_empty() {
+        vec![14, 16, 18, 20]
+    } else {
+        rest
+    };
     let mut data_rows = String::new();
     std::fs::create_dir_all(&out).expect("out dir");
     let s = 4;
@@ -126,25 +170,38 @@ fn main() {
             let f = fit(&tree, z);
             put(&mut img, &f.px, z, x, y, s);
             x += cell(z);
-            let txt: String = f
-                .px
-                .chunks(z as usize)
-                .map(|r| r.iter().map(|p| if *p { '#' } else { '.' }).collect::<String>() + "\n")
-                .collect();
-            std::fs::write(out.join(format!("{name}_{z}.txt")), txt).expect("mask");
-            if rust.as_ref().is_some_and(|(rz, _)| *rz == z) {
-                let rows: Vec<String> = f
-                    .px
-                    .chunks(z as usize)
+            let txt: String =
+                f.px.chunks(z as usize)
                     .map(|r| {
-                        let v = r.iter().enumerate().fold(0u32, |v, (x, p)| v | (u32::from(*p) << (31 - x)));
-                        format!("0x{v:08X}")
+                        r.iter()
+                            .map(|p| if *p { '#' } else { '.' })
+                            .collect::<String>()
+                            + "\n"
                     })
                     .collect();
-                data_rows += &format!("    (\"{name}\", [{}]),
-", rows.join(", "));
+            std::fs::write(out.join(format!("{name}_{z}.txt")), txt).expect("mask");
+            if rust.as_ref().is_some_and(|(rz, _)| *rz == z) {
+                let rows: Vec<String> =
+                    f.px.chunks(z as usize)
+                        .map(|r| {
+                            let v = r
+                                .iter()
+                                .enumerate()
+                                .fold(0u32, |v, (x, p)| v | (u32::from(*p) << (31 - x)));
+                            format!("0x{v:08X}")
+                        })
+                        .collect();
+                data_rows += &format!(
+                    "    (\"{name}\", [{}]),
+",
+                    rows.join(", ")
+                );
             }
-            eprintln!("{name} {z}px: scale {:.3} (stroke {:.2} px)", f.scale, 2.5 * f.scale);
+            eprintln!(
+                "{name} {z}px: scale {:.3} (stroke {:.2} px)",
+                f.scale,
+                2.5 * f.scale
+            );
         }
     }
     if let Some((z, file)) = rust {

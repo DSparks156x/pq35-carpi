@@ -331,7 +331,9 @@ fn new_cover_flashes_full_centre_then_back_to_media() {
         let a = Art {
             w: 128,
             h: 96,
-            px: (0..128 * 96).map(|i| (i as u64 + id) % 5 == 0).collect(),
+            px: (0..128 * 96)
+                .map(|i| (i as u64 + id).is_multiple_of(5))
+                .collect(),
         };
         Some((id, a))
     };
@@ -379,7 +381,13 @@ fn egg_plays_over_media_then_hands_back() {
     let frames = (0..6)
         .map(|i| {
             let rows = (0..48)
-                .map(|y| if (y + i * 3) % 7 == 0 { [0xF0u8; 8] } else { [0u8; 8] })
+                .map(|y| {
+                    if (y + i * 3) % 7 == 0 {
+                        [0xF0u8; 8]
+                    } else {
+                        [0u8; 8]
+                    }
+                })
                 .collect();
             (rows, Duration::from_millis(100))
         })

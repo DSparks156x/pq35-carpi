@@ -80,7 +80,7 @@ impl Rig {
             for o in self.car.drain_outputs() {
                 if let Output::Send { frame, .. } = o {
                     if frame.id == 0x363 || frame.id == 0x365 {
-                        self.top.push(frame.clone());
+                        self.top.push(frame);
                     }
                     self.cl.on_frame(self.now, &frame);
                 }
@@ -212,8 +212,16 @@ fn top_lines_skip_the_centre_and_leave_line_2_to_the_cluster() {
     assert_eq!(r.text("dis.shown").as_deref(), Some("readings"));
     assert_eq!(r.text("dis.top_text").as_deref(), Some("A Long Song Title"));
     assert!(r.top.iter().any(|f| f.id == 0x363));
-    assert!(!r.top.iter().any(|f| f.id == 0x365), "line 2 is the cluster's");
-    let l1: Vec<_> = r.top.iter().filter(|f| f.id == 0x363).map(|f| f.data().to_vec()).collect();
+    assert!(
+        !r.top.iter().any(|f| f.id == 0x365),
+        "line 2 is the cluster's"
+    );
+    let l1: Vec<_> = r
+        .top
+        .iter()
+        .filter(|f| f.id == 0x363)
+        .map(|f| f.data().to_vec())
+        .collect();
     assert!(l1.windows(2).any(|w| w[0] != w[1]), "line 1 marquees");
 }
 
@@ -224,7 +232,11 @@ fn top_lines_skip_media_when_the_centre_shows_it() {
     play(&mut r, "Song");
     r.run(Duration::from_secs(5));
     assert_eq!(r.text("dis.shown").as_deref(), Some("media"));
-    assert_eq!(r.text("dis.top_text"), None, "media is in the centre already");
+    assert_eq!(
+        r.text("dis.top_text"),
+        None,
+        "media is in the centre already"
+    );
 }
 
 #[test]
@@ -322,7 +334,11 @@ fn album_art_reaches_the_cluster() {
     r.run(Duration::from_secs(6));
     assert_eq!(r.text("dis.shown").as_deref(), Some("media"));
     // The thumbnail went out: opaque 55 rows inside the art rect.
-    let n = r.cl.drawn.iter().filter(|m| m.windows(2).any(|w| w[0] == 0x55)).count();
+    let n =
+        r.cl.drawn
+            .iter()
+            .filter(|m| m.windows(2).any(|w| w[0] == 0x55))
+            .count();
     assert!(n > 0, "no bitmap sent");
     // A new cover while media is up flashes the full cover.
     let mut other = png.clone();

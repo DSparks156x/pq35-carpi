@@ -288,9 +288,9 @@ pub const STOCK_INFO_ICON: Rect = Rect::new(0, 0, 40, 38);
 /// area, road at y=41). Any info on puts the ROM arrow in the fancy layout.
 pub fn pure_stock(cfg: &NavConfig) -> bool {
     cfg.style == NavStyle::Stock
-            && !cfg.show_distance
-            && !(cfg.pocket && (cfg.show_eta || cfg.show_time_left || cfg.show_dest_distance))
-            && cfg.lanes == LaneLayout::Off
+        && !cfg.show_distance
+        && !(cfg.pocket && (cfg.show_eta || cfg.show_time_left || cfg.show_dest_distance))
+        && cfg.lanes == LaneLayout::Off
 }
 
 /// The stock ROM object for a maneuver: `(type, direction)`, see `stock_nav`.
@@ -328,7 +328,11 @@ fn stock_records((t, d): (u8, u8)) -> Vec<Op> {
     let recs = crate::stock_nav::OBJECTS
         .iter()
         .find(|(ot, od, _)| *ot == t && *od == d)
-        .or_else(|| crate::stock_nav::OBJECTS.iter().find(|(ot, _, _)| *ot == 0x03))
+        .or_else(|| {
+            crate::stock_nav::OBJECTS
+                .iter()
+                .find(|(ot, _, _)| *ot == 0x03)
+        })
         .map_or(&[][..], |(_, _, r)| *r);
     let mut out = Vec::new();
     let mut i = 0;
@@ -355,7 +359,10 @@ fn stock_placed(obj: (u8, u8)) -> (Vec<Op>, Art) {
     // Ink in centre px.
     let mut ink = Vec::new();
     for op in &recs {
-        if let Op::Text { x, y, flags, bytes, .. } = op {
+        if let Op::Text {
+            x, y, flags, bytes, ..
+        } = op
+        {
             let font = Font::from_flags(*flags);
             for (k, b) in bytes.iter().enumerate() {
                 for gy in 0..crate::glyphs::H {
@@ -372,9 +379,9 @@ fn stock_placed(obj: (u8, u8)) -> (Vec<Op>, Art) {
             }
         }
     }
-    let (minx, maxx) = ink
-        .iter()
-        .fold((i32::MAX, i32::MIN), |(a, b), (x, _)| (a.min(*x), b.max(*x)));
+    let (minx, maxx) = ink.iter().fold((i32::MAX, i32::MIN), |(a, b), (x, _)| {
+        (a.min(*x), b.max(*x))
+    });
     let maxy = ink.iter().map(|(_, y)| *y).max().unwrap_or(0);
     // Whole logical steps: centre on x=40 px, bottom at most y=75 px.
     let dx = ((80 - (minx + maxx + 1)) as f32 / 4.0).round() as i32;
@@ -529,7 +536,11 @@ impl NavScreen {
                 let cycle = (a + b).as_nanos().max(1);
                 let into = (now - since).as_nanos() % cycle;
                 let lanes = into < a.as_nanos();
-                let left = if lanes { a.as_nanos() - into } else { cycle - into };
+                let left = if lanes {
+                    a.as_nanos() - into
+                } else {
+                    cycle - into
+                };
                 self.want_wake(now + Duration::from_nanos(left as u64));
                 lanes
             }
@@ -627,7 +638,11 @@ impl NavScreen {
     /// Pocket: the current page's widest form that fits beside the icon.
     fn pocket_groups(&mut self, now: Instant, cx: &Ctx) -> Vec<Group> {
         let m = &cx.metrics;
-        let pages = if self.cfg.pocket { pocket_pages(&self.input, &self.cfg) } else { Vec::new() };
+        let pages = if self.cfg.pocket {
+            pocket_pages(&self.input, &self.cfg)
+        } else {
+            Vec::new()
+        };
         let left = pocket_left(&self.current_art());
         let room = u16::from(POCKET_RIGHT - left) * 2;
         let fitting: Vec<Vec<u8>> = pages
@@ -747,7 +762,10 @@ mod tests {
     fn imperial_and_12h() {
         assert_eq!(format_distance_in(Some(100.0), true), ("350".into(), "ft"));
         assert_eq!(format_distance_in(Some(500.0), true), ("0.3".into(), "mi"));
-        assert_eq!(format_distance_in(Some(20_000.0), true), ("12".into(), "mi"));
+        assert_eq!(
+            format_distance_in(Some(20_000.0), true),
+            ("12".into(), "mi")
+        );
         let i = NavInput {
             distance_unit: Some("mi".into()),
             ..Default::default()

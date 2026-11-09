@@ -13,7 +13,9 @@ pub struct Mask {
 
 impl Mask {
     pub fn get(&self, x: usize, y: usize) -> bool {
-        self.rows.get(y).is_some_and(|r| x < 16 && r & (0x8000 >> x) != 0)
+        self.rows
+            .get(y)
+            .is_some_and(|r| x < 16 && r & (0x8000 >> x) != 0)
     }
 }
 

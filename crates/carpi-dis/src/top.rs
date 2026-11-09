@@ -140,7 +140,9 @@ impl TopLines {
         let (m1, m2) = self.lines.get_or_insert_with(|| (Marquee::default(), None));
         m1.set(now, line1, Duration::ZERO);
         match line2 {
-            Some(t) => m2.get_or_insert_with(Marquee::default).set(now, t, LINE2_OFFSET),
+            Some(t) => m2
+                .get_or_insert_with(Marquee::default)
+                .set(now, t, LINE2_OFFSET),
             None => *m2 = None,
         }
         self.want = None;
@@ -171,14 +173,16 @@ impl TopLines {
             let c2 = m2.as_ref().map(|m| m.cells(now));
             let mut sent = false;
             if self.sent1 != Some(c1) {
-                self.out.push_back(Frame::new(TOP1_ID, &c1).expect("8 bytes"));
+                self.out
+                    .push_back(Frame::new(TOP1_ID, &c1).expect("8 bytes"));
                 self.sent1 = Some(c1);
                 sent = true;
             }
             if let Some(c2) = c2
                 && self.sent2 != Some(c2)
             {
-                self.out.push_back(Frame::new(TOP2_ID, &c2).expect("8 bytes"));
+                self.out
+                    .push_back(Frame::new(TOP2_ID, &c2).expect("8 bytes"));
                 self.sent2 = Some(c2);
                 sent = true;
             }
@@ -202,11 +206,14 @@ impl TopLines {
     pub fn next_deadline(&self) -> Option<Instant> {
         if let Some((m1, m2)) = &self.lines {
             let now = self.last_tx?;
-            return [m1.next_step(now), m2.as_ref().and_then(|m| m.next_step(now))]
-                .into_iter()
-                .flatten()
-                .min()
-                .map(|t| t.max(now + MIN_GAP));
+            return [
+                m1.next_step(now),
+                m2.as_ref().and_then(|m| m.next_step(now)),
+            ]
+            .into_iter()
+            .flatten()
+            .min()
+            .map(|t| t.max(now + MIN_GAP));
         }
         match (self.want, self.last_tx) {
             (Some(w), Some(t)) if self.sent != Some(w) => Some(t + MIN_GAP),

@@ -262,9 +262,9 @@ impl Screen for CallScreen {
             .active_since
             .map(|s| s + Duration::from_secs(self.shown_secs + 1));
         [tick, self.name.next_deadline(&cx.metrics)]
-        .into_iter()
-        .flatten()
-        .min()
+            .into_iter()
+            .flatten()
+            .min()
     }
 }
 

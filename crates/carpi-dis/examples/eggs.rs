@@ -36,7 +36,9 @@ fn main() {
             "--dither" => {
                 let v = val();
                 p.dither = match v.split_once(':') {
-                    Some(("atkinson", d)) => Dither::Atkinson { diffusion: d.parse().expect("diffusion") },
+                    Some(("atkinson", d)) => Dither::Atkinson {
+                        diffusion: d.parse().expect("diffusion"),
+                    },
                     None if v == "fs" => Dither::FloydSteinberg,
                     None if v == "threshold" => Dither::Threshold,
                     _ => Dither::Atkinson { diffusion: 0.85 },

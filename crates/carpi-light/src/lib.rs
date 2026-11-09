@@ -398,10 +398,25 @@ mod tests {
         let now = Instant::now();
         let mut s = carpi_state::Store::new();
         let t = Duration::from_secs(5);
-        s.set("ignition.kl15", Some(carpi_state::Value::Bool(false)), now, t);
-        s.set("ignition.zas.kl15", Some(carpi_state::Value::Bool(true)), now, t);
+        s.set(
+            "ignition.kl15",
+            Some(carpi_state::Value::Bool(false)),
+            now,
+            t,
+        );
+        s.set(
+            "ignition.zas.kl15",
+            Some(carpi_state::Value::Bool(true)),
+            now,
+            t,
+        );
         assert_eq!(Inputs::from_store(&s, now).kl15, Some(true));
-        s.set("ignition.zas.kl15", Some(carpi_state::Value::Bool(false)), now, t);
+        s.set(
+            "ignition.zas.kl15",
+            Some(carpi_state::Value::Bool(false)),
+            now,
+            t,
+        );
         assert_eq!(Inputs::from_store(&s, now).kl15, Some(false));
     }
 

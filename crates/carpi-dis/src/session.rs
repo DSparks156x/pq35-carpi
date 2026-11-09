@@ -308,7 +308,10 @@ impl Session {
             }
             Window::Busy if self.busy_reclaim.is_some_and(|t| now >= t) => {
                 self.busy_reclaim = None;
-                if self.busy_since.is_some_and(|t| now - t >= self.cfg.busy_relink) {
+                if self
+                    .busy_since
+                    .is_some_and(|t| now - t >= self.cfg.busy_relink)
+                {
                     self.busy_since = None;
                     self.link.close(now);
                     self.drain(now);

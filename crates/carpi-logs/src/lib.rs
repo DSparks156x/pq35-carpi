@@ -444,7 +444,7 @@ mod tests {
         ] {
             assert_eq!(EntryId::parse(s), None, "{s}");
         }
-        assert_eq!(want.unwrap().slug(), "2026-11-08-03");
+        assert_eq!(want.map(|w| w.slug()).as_deref(), Some("2026-11-08-03"));
     }
 
     #[test]

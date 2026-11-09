@@ -34,7 +34,9 @@ fn params(args: &[String]) -> CoverParams {
             "--boost" => p.saturation_boost = f(),
             "--dither" => {
                 p.dither = match v.split_once(':') {
-                    Some(("atkinson", d)) => Dither::Atkinson { diffusion: d.parse().expect("diffusion") },
+                    Some(("atkinson", d)) => Dither::Atkinson {
+                        diffusion: d.parse().expect("diffusion"),
+                    },
                     None if v == "atkinson" => Dither::Atkinson { diffusion: 0.85 },
                     None if v == "threshold" => Dither::Threshold,
                     _ => Dither::FloydSteinberg,
@@ -64,7 +66,11 @@ fn bits(a: &Art) -> Vec<u8> {
 fn put_art(sheet: &mut RgbImage, a: &Art, x0: u32, y0: u32) {
     for y in 0..a.h as u32 {
         for x in 0..a.w as u32 {
-            let c = if a.get(x as usize, y as usize) { Rgb([235, 240, 255]) } else { Rgb([0, 0, 0]) };
+            let c = if a.get(x as usize, y as usize) {
+                Rgb([235, 240, 255])
+            } else {
+                Rgb([0, 0, 0])
+            };
             for dy in 0..S {
                 for dx in 0..S {
                     sheet.put_pixel(x0 + x * S + dx, y0 + y * S + dy, c);
@@ -85,7 +91,10 @@ fn main() {
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|f| {
             matches!(
-                f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                f.extension()
+                    .and_then(|e| e.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
                 Some("png" | "jpg" | "jpeg")
             )
         })
@@ -125,9 +134,12 @@ fn main() {
         for (kind, a) in [("thumb", &thumb), ("centre", &centre)] {
             let mut t = RgbImage::from_pixel(a.w as u32 * S, a.h as u32 * S, Rgb([0, 0, 0]));
             put_art(&mut t, a, 0, 0);
-            t.save(out.join(format!("{stem}.{kind}.png"))).expect("tile");
+            t.save(out.join(format!("{stem}.{kind}.png")))
+                .expect("tile");
         }
-        let write = |kind: &str, a: &Art| std::fs::write(out.join(format!("{stem}.{kind}.bin")), bits(a)).expect("write");
+        let write = |kind: &str, a: &Art| {
+            std::fs::write(out.join(format!("{stem}.{kind}.bin")), bits(a)).expect("write")
+        };
         write("thumb", &thumb);
         write("cover", &centre);
         write("full", &full);

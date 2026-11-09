@@ -255,13 +255,25 @@ fn readings_focus_inverts_title_in_one_group() {
     s.set_focus(true);
     let on = update_only(&mut s, t0, &cx, f.regs);
     assert_eq!(on.messages.len(), 1);
-    let recs: Vec<u8> = records(&on.messages[0].bytes).unwrap().iter().map(|r| r[0]).collect();
+    let recs: Vec<u8> = records(&on.messages[0].bytes)
+        .unwrap()
+        .iter()
+        .map(|r| r[0])
+        .collect();
     // clear, fill, black text (and the clip restore / commit around them).
-    assert!(recs.windows(3).any(|w| w == [0x52, 0x52, 0x57]), "{recs:02X?}");
+    assert!(
+        recs.windows(3).any(|w| w == [0x52, 0x52, 0x57]),
+        "{recs:02X?}"
+    );
     s.set_focus(false);
     let off = update_only(&mut s, t0, &cx, on.regs);
     assert_eq!(off.messages.len(), 1);
-    assert!(update_only(&mut s, t0, &cx, off.regs).messages.iter().all(|m| m.bytes == [0x39]));
+    assert!(
+        update_only(&mut s, t0, &cx, off.regs)
+            .messages
+            .iter()
+            .all(|m| m.bytes == [0x39])
+    );
 }
 
 /// Records in the frame other than the trailing commit.
@@ -304,7 +316,10 @@ fn media_input(pos_s: u64, playing: bool) -> carpi_dis::screens::media::MediaInp
 #[test]
 fn media_layouts_enter_tick_and_seek() {
     use carpi_dis::screens::media::{MediaLayout, MediaScreen};
-    for (layout, name) in [(MediaLayout::Stack, "media_stack"), (MediaLayout::Art, "media_art")] {
+    for (layout, name) in [
+        (MediaLayout::Stack, "media_stack"),
+        (MediaLayout::Art, "media_art"),
+    ] {
         let cx = Ctx::new(Profile::WHITE);
         let t0 = Instant::now();
         let mut s = MediaScreen::new(layout);
@@ -367,7 +382,10 @@ fn call_ringing_inverts_then_active_ticks() {
         .flat_map(|m| records(&m.bytes).unwrap().into_iter().map(<[u8]>::to_vec))
         .collect();
     assert_eq!(recs.iter().filter(|r| r[0] == 0x57).count(), 1);
-    assert!(!recs.iter().any(|r| r[0] == 0x52 && r[2] & 3 == 2), "{recs:02X?}");
+    assert!(
+        !recs.iter().any(|r| r[0] == 0x52 && r[2] & 3 == 2),
+        "{recs:02X?}"
+    );
 }
 
 #[test]

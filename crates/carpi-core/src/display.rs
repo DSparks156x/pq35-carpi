@@ -13,14 +13,16 @@
 //! - Session state and errors land in the store as `dis.*` for the pages.
 
 use carpi_can::Frame;
-use carpi_dis::screens::call::CallInput;
 use carpi_dis::icons::Art;
 use carpi_dis::image::{CoverParams, cover};
+use carpi_dis::screens::call::CallInput;
 use carpi_dis::screens::media::{ART as MEDIA_ART, MediaInput, MediaLayout};
 use carpi_dis::screens::nav::{
     Clock, LaneLayout, NavConfig, NavInput, NavStyle, Units, format_distance_in,
 };
-use carpi_dis::screens::readings::{ReadingCell, ReadingSpec, ReadingsInput, ReadingsPage, unit_for};
+use carpi_dis::screens::readings::{
+    ReadingCell, ReadingSpec, ReadingsInput, ReadingsPage, unit_for,
+};
 use carpi_dis::session::{Phase, Window};
 use carpi_dis::top::TopLines;
 use carpi_dis::{Dis, DisConfig, ScreenId, SessionEvent};
@@ -276,9 +278,10 @@ fn readings_pages(setup: &DisSetup) -> Vec<ReadingsPage> {
                     icon: c.icon.clone(),
                     // The catalog knows units the key's name doesn't say
                     // (engine.maf_gs is g/s).
-                    unit: c.unit.clone().or_else(|| {
-                        Some(key_unit(&c.key).to_string()).filter(|u| !u.is_empty())
-                    }),
+                    unit: c
+                        .unit
+                        .clone()
+                        .or_else(|| Some(key_unit(&c.key).to_string()).filter(|u| !u.is_empty())),
                 })
                 .collect(),
         })
@@ -287,7 +290,9 @@ fn readings_pages(setup: &DisSetup) -> Vec<ReadingsPage> {
 
 /// The old DIS client's lines (Drew's config), now with their unit.
 pub fn default_accel() -> Vec<String> {
-    ["0-60mph", "0-30mph", "40-70mph", "speed"].map(String::from).to_vec()
+    ["0-60mph", "0-30mph", "40-70mph", "speed"]
+        .map(String::from)
+        .to_vec()
 }
 
 fn accel(setup: &DisSetup) -> carpi_dis::screens::accel::AccelConfig {
@@ -487,10 +492,18 @@ pub fn top_lines(
             return None;
         }
         let (v, unit) = format_distance_in(store.get_num("nav.distance_m", now), imperial);
-        let dist = if unit.is_empty() { v } else { format!("{v} {unit}") };
+        let dist = if unit.is_empty() {
+            v
+        } else {
+            format!("{v} {unit}")
+        };
         let road = text(store, "nav.road", now).unwrap_or_default();
         Some(TopText {
-            alone: if road.is_empty() { dist.clone() } else { format!("{dist} {road}") },
+            alone: if road.is_empty() {
+                dist.clone()
+            } else {
+                format!("{dist} {road}")
+            },
             line1: dist,
             line2: road,
         })
@@ -594,7 +607,8 @@ impl Display {
                     decimals: r.decimals,
                 })
                 .collect();
-            self.dis.set_readings_pages(now, readings_pages(&setup), specs);
+            self.dis
+                .set_readings_pages(now, readings_pages(&setup), specs);
             self.readings = None;
             self.setup = setup;
             tracing::info!("dis: readings pages updated in place");
@@ -680,7 +694,14 @@ impl Display {
         }
         self.picked = screen;
         self.user_page = true;
-        tracing::info!("dis: key {k:?} -> {screen:?} {}", if screen == ScreenId::Readings { format!("page {}", page + 1) } else { String::new() });
+        tracing::info!(
+            "dis: key {k:?} -> {screen:?} {}",
+            if screen == ScreenId::Readings {
+                format!("page {}", page + 1)
+            } else {
+                String::new()
+            }
+        );
         self.dis.set_user_page(now, Some(screen));
     }
 

@@ -19,9 +19,9 @@
 use super::Screen;
 use crate::cmd::{Dir, Ink, Op, Rop, text_flags};
 use crate::font::{Font, TEXT_H, audscii};
-use crate::proto::{FULL, Rect};
 use crate::helpers::{Ctx, TextSlot};
 use crate::pack::Group;
+use crate::proto::{FULL, Rect};
 use std::time::{Duration, Instant};
 
 pub const ROWS: [u8; 4] = [13, 22, 31, 40];
@@ -47,7 +47,12 @@ pub enum Leg {
 }
 
 /// Speed units a range can be typed in, as km/h per unit.
-const SPEED_UNITS: &[(&str, f64)] = &[("mph", 1.609_344), ("kmh", 1.0), ("km/h", 1.0), ("kph", 1.0)];
+const SPEED_UNITS: &[(&str, f64)] = &[
+    ("mph", 1.609_344),
+    ("kmh", 1.0),
+    ("km/h", 1.0),
+    ("kph", 1.0),
+];
 /// Distance units, as metres per unit.
 const DIST_UNITS: &[(&str, f64)] = &[
     ("mi", 1609.344),
@@ -82,7 +87,12 @@ fn split_unit(s: &str) -> (&str, &str) {
 /// speed unit (mph?) when it names one; a range without one is in the
 /// display unit ([`accel_config`]).
 pub fn parse_leg(text: &str) -> Result<(Leg, Option<bool>), String> {
-    let s: String = text.trim().to_ascii_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    let s: String = text
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     if s.is_empty() {
         return Err("empty".into());
     }
@@ -120,7 +130,9 @@ pub fn parse_leg(text: &str) -> Result<(Leg, Option<bool>), String> {
         ));
     }
     let Some(v) = number(num) else {
-        return Err(format!("{text:?}: not a range (0-60mph), a distance (1/4mi) or speed"));
+        return Err(format!(
+            "{text:?}: not a range (0-60mph), a distance (1/4mi) or speed"
+        ));
     };
     match DIST_UNITS.iter().find(|(n, _)| *n == unit) {
         Some((n, per)) if v > 0.0 => Ok((
@@ -147,7 +159,10 @@ pub fn accel_config(lines: &[String], default_mph: bool) -> (AccelConfig, Vec<St
         .take(4)
         .filter_map(|l| parse_leg(l).map_err(|e| errors.push(e)).ok())
         .collect();
-    let speed_unit = parsed.iter().find(|(l, _)| *l == Leg::Speed).and_then(|(_, u)| *u);
+    let speed_unit = parsed
+        .iter()
+        .find(|(l, _)| *l == Leg::Speed)
+        .and_then(|(_, u)| *u);
     let range_unit = parsed
         .iter()
         .find(|(l, _)| matches!(l, Leg::Range { .. }))
@@ -163,7 +178,11 @@ pub fn accel_config(lines: &[String], default_mph: bool) -> (AccelConfig, Vec<St
                     (false, true) => 1.0 / 1.609_344,
                     _ => 1.0,
                 };
-                Leg::Range { from: from * k, to: to * k, label }
+                Leg::Range {
+                    from: from * k,
+                    to: to * k,
+                    label,
+                }
             }
             other => other,
         })
@@ -300,7 +319,11 @@ impl AccelTimer {
         }
         // Time at which speed crossed `x` between the two samples.
         let cross = |x: f64| {
-            let f = if v != v0 { ((x - v0) / (v - v0)).clamp(0.0, 1.0) } else { 0.0 };
+            let f = if v != v0 {
+                ((x - v0) / (v - v0)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             t0 + Duration::from_secs_f64(dt * f)
         };
         if v < 1.0 {
@@ -333,7 +356,8 @@ impl AccelTimer {
                 }
                 (Leg::Distance { .. }, LegState::Waiting) => {
                     if v0 < 1.0 && v >= 1.0 {
-                        let (start, start_dist) = last_zero.unwrap_or((cross(0.0), dist - mps * dt));
+                        let (start, start_dist) =
+                            last_zero.unwrap_or((cross(0.0), dist - mps * dt));
                         *st = LegState::Running {
                             start,
                             start_dt: dt,
@@ -342,7 +366,15 @@ impl AccelTimer {
                         };
                     }
                 }
-                (_, LegState::Running { start, start_dt, start_dist, peak }) => {
+                (
+                    _,
+                    LegState::Running {
+                        start,
+                        start_dt,
+                        start_dist,
+                        peak,
+                    },
+                ) => {
                     let peak = peak.max(v);
                     let end = match leg {
                         Leg::Range { to, .. } if v >= *to => Some(cross(*to)),
@@ -358,13 +390,18 @@ impl AccelTimer {
                     } else if v < peak - 5.0 {
                         LegState::Aborted
                     } else {
-                        LegState::Running { start, start_dt, start_dist, peak }
+                        LegState::Running {
+                            start,
+                            start_dt,
+                            start_dist,
+                            peak,
+                        }
                     };
                 }
-                (Leg::Range { from, .. }, LegState::Done { .. } | LegState::Aborted) => {
-                    if v < *from {
-                        *st = LegState::Waiting;
-                    }
+                (Leg::Range { from, .. }, LegState::Done { .. } | LegState::Aborted)
+                    if v < *from =>
+                {
+                    *st = LegState::Waiting;
                 }
                 _ => {}
             }
@@ -373,8 +410,14 @@ impl AccelTimer {
     }
 
     pub fn header(&self) -> String {
-        let running = self.states.iter().any(|s| matches!(s, LegState::Running { .. }));
-        let done = self.states.iter().any(|s| matches!(s, LegState::Done { .. }));
+        let running = self
+            .states
+            .iter()
+            .any(|s| matches!(s, LegState::Running { .. }));
+        let done = self
+            .states
+            .iter()
+            .any(|s| matches!(s, LegState::Done { .. }));
         let word = if self.speed() < 1.0 {
             "Ready"
         } else if running {
@@ -413,7 +456,9 @@ impl AccelTimer {
     }
 
     pub fn running(&self) -> bool {
-        self.states.iter().any(|s| matches!(s, LegState::Running { .. }))
+        self.states
+            .iter()
+            .any(|s| matches!(s, LegState::Running { .. }))
     }
 }
 
@@ -433,8 +478,14 @@ impl AccelScreen {
         AccelScreen {
             timer: AccelTimer::new(cfg),
             header: TextSlot::new(HEADER_Y, 0, 64, Font::Prop),
-            labels: ROWS.iter().map(|y| TextSlot::new(*y, 1, 30, Font::Prop)).collect(),
-            values: ROWS.iter().map(|y| TextSlot::new(*y, 30, 63, Font::Prop)).collect(),
+            labels: ROWS
+                .iter()
+                .map(|y| TextSlot::new(*y, 1, 30, Font::Prop))
+                .collect(),
+            values: ROWS
+                .iter()
+                .map(|y| TextSlot::new(*y, 30, 63, Font::Prop))
+                .collect(),
             inverted: vec![false; 4],
             ticked: None,
         }
@@ -445,6 +496,8 @@ impl AccelScreen {
         self.timer.sample(t, v);
     }
 
+    // Labels, values and rows are indexed together.
+    #[allow(clippy::needless_range_loop)]
     fn groups(&mut self, now: Instant, cx: &Ctx, labels: bool) -> Vec<Group> {
         let m = &cx.metrics;
         self.ticked = Some(now);
@@ -489,7 +542,8 @@ impl AccelScreen {
             } else {
                 (63 - (m.width(Font::Prop, &v).div_ceil(2) as u8).min(63)).max(left)
             };
-            let flash = matches!(self.timer.states[i], LegState::Done { at, .. } if now < at + FLASH);
+            let flash =
+                matches!(self.timer.states[i], LegState::Done { at, .. } if now < at + FLASH);
             if flash && !self.inverted[i] {
                 // Whole row: fill, then label and value in black, one group.
                 let row = Rect::new(0, ROWS[i] - 1, 64, TEXT_H);
@@ -498,8 +552,20 @@ impl AccelScreen {
                     "leg-done",
                     vec![
                         Op::Fill(row),
-                        Op::Text { clip: row, x: 1, y: 1, flags: black, bytes: l },
-                        Op::Text { clip: row, x: vx, y: 1, flags: black, bytes: v },
+                        Op::Text {
+                            clip: row,
+                            x: 1,
+                            y: 1,
+                            flags: black,
+                            bytes: l,
+                        },
+                        Op::Text {
+                            clip: row,
+                            x: vx,
+                            y: 1,
+                            flags: black,
+                            bytes: v,
+                        },
                     ],
                 ));
                 self.inverted[i] = true;
@@ -518,9 +584,17 @@ impl AccelScreen {
                 self.values[i].reset();
             }
             if labels || !ops.is_empty() {
-                ops.extend(self.labels[i].draw(m, "label", 1, l).map_or_else(Vec::new, |g| g.ops));
+                ops.extend(
+                    self.labels[i]
+                        .draw(m, "label", 1, l)
+                        .map_or_else(Vec::new, |g| g.ops),
+                );
             }
-            ops.extend(self.values[i].draw(m, "value", vx, v).map_or_else(Vec::new, |g| g.ops));
+            ops.extend(
+                self.values[i]
+                    .draw(m, "value", vx, v)
+                    .map_or_else(Vec::new, |g| g.ops),
+            );
             if !ops.is_empty() {
                 out.push(Group::new("leg", ops));
             }
@@ -543,7 +617,11 @@ impl Screen for AccelScreen {
     }
 
     fn next_deadline(&self, _cx: &Ctx) -> Option<Instant> {
-        let tick = self.timer.running().then(|| self.ticked.map(|t| t + TICK)).flatten();
+        let tick = self
+            .timer
+            .running()
+            .then(|| self.ticked.map(|t| t + TICK))
+            .flatten();
         let unflash = self
             .timer
             .states
@@ -563,16 +641,32 @@ mod tests {
     #[test]
     fn typed_lines_with_units() {
         let p = |s: &str| parse_leg(s).unwrap();
-        assert_eq!(p("0-60mph"), (Leg::Range { from: 0.0, to: 60.0, label: "0-60".into() }, Some(true)));
+        assert_eq!(
+            p("0-60mph"),
+            (
+                Leg::Range {
+                    from: 0.0,
+                    to: 60.0,
+                    label: "0-60".into()
+                },
+                Some(true)
+            )
+        );
         assert_eq!(p("50-100 km/h").1, Some(false));
         assert_eq!(p("0-60").1, None);
         assert_eq!(p("speed"), (Leg::Speed, None));
-        let Leg::Distance { m, label } = p("1/4mi").0 else { panic!() };
+        let Leg::Distance { m, label } = p("1/4mi").0 else {
+            panic!()
+        };
         assert!((m - 402.336).abs() < 1e-6);
         assert_eq!(label, "1/4mi");
-        let Leg::Distance { m, .. } = p("1000ft").0 else { panic!() };
+        let Leg::Distance { m, .. } = p("1000ft").0 else {
+            panic!()
+        };
         assert!((m - 304.8).abs() < 1e-6);
-        let Leg::Distance { m, .. } = p("100m").0 else { panic!() };
+        let Leg::Distance { m, .. } = p("100m").0 else {
+            panic!()
+        };
         assert_eq!(m, 100.0);
         assert!(parse_leg("1000").unwrap_err().contains("add a unit"));
         assert!(parse_leg("60-0mph").is_err());
@@ -586,7 +680,9 @@ mod tests {
         let (c, e) = accel_config(&lines(&["0-60mph", "50-100kmh", "1/4mi", "bogus"]), false);
         assert!(c.imperial);
         assert_eq!(e.len(), 1);
-        let Leg::Range { from, to, label } = &c.legs[1] else { panic!() };
+        let Leg::Range { from, to, label } = &c.legs[1] else {
+            panic!()
+        };
         assert!((from - 31.0686).abs() < 1e-3 && (to - 62.1371).abs() < 1e-3);
         assert_eq!(label, "50-100");
         // No units anywhere: the default.
@@ -619,7 +715,10 @@ mod tests {
             LegState::Done { secs, .. } => assert!((secs - 2.0).abs() < 0.01, "{secs}"),
             s => panic!("{s:?}"),
         }
-        assert!(a.header().starts_with("Timing"), "quarter mile still running");
+        assert!(
+            a.header().starts_with("Timing"),
+            "quarter mile still running"
+        );
         // Lift: 5 below the peak aborts the quarter mile.
         a.sample(t0 + Duration::from_secs_f64(8.1), 130.0);
         assert_eq!(a.states[2], LegState::Aborted);

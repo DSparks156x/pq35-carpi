@@ -36,7 +36,9 @@ fn render_at(s: &mut dyn Screen, t0: Instant, at: &[Duration]) -> Fb {
     let mut fb = Fb::new(cx.metrics);
     let mut regs = Registers::default();
     let mut enter = true;
-    let times: Vec<Instant> = std::iter::once(t0).chain(at.iter().map(|d| t0 + *d)).collect();
+    let times: Vec<Instant> = std::iter::once(t0)
+        .chain(at.iter().map(|d| t0 + *d))
+        .collect();
     for now in times {
         for _ in 0..2000 {
             let f = build_frame(s, now, &cx, regs, enter).expect("pack");
@@ -63,7 +65,10 @@ fn text(img: &mut RgbImage, x0: u32, y0: u32, s: &str, font: Font, scale: u32) {
             for gx in 0..glyphs::W {
                 if row & (0x8000 >> gx) != 0 {
                     for d in 0..scale * scale {
-                        let (px, py) = (x + gx as u32 * scale + d % scale, y0 + gy as u32 * scale + d / scale);
+                        let (px, py) = (
+                            x + gx as u32 * scale + d % scale,
+                            y0 + gy as u32 * scale + d / scale,
+                        );
                         if px < img.width() && py < img.height() {
                             img.put_pixel(px, py, LIT);
                         }
@@ -83,7 +88,11 @@ struct Tile {
 
 fn sheet(tiles: &[Tile], cols: u32, out: &Path) {
     let (tw, th) = (PX_W as u32 * S, PX_H as u32 * S);
-    let top = if tiles.iter().any(|t| t.top.is_some()) { TOP_H * 2 + 8 } else { 0 };
+    let top = if tiles.iter().any(|t| t.top.is_some()) {
+        TOP_H * 2 + 8
+    } else {
+        0
+    };
     let (cw, ch) = (tw + 24, th + top + 40);
     let rows = (tiles.len() as u32).div_ceil(cols);
     let mut img = RgbImage::from_pixel(cw * cols, ch * rows, BG);
@@ -110,7 +119,11 @@ fn sheet(tiles: &[Tile], cols: u32, out: &Path) {
         let px = t.fb.pixels();
         for py in 0..PX_H as u32 {
             for pxx in 0..PX_W as u32 {
-                let c = if px[(py as usize) * PX_W + pxx as usize] { LIT } else { DARK };
+                let c = if px[(py as usize) * PX_W + pxx as usize] {
+                    LIT
+                } else {
+                    DARK
+                };
                 for d in 0..S * S {
                     img.put_pixel(x0 + pxx * S + d % S, y + py * S + d / S, c);
                 }
@@ -144,7 +157,9 @@ fn nav(layout: LaneLayout, input: NavInput, t: f64) -> Fb {
     });
     let t0 = Instant::now();
     s.set(t0, input);
-    let steps: Vec<Duration> = (1..=(t * 2.0) as u32).map(|k| Duration::from_millis(500 * u64::from(k))).collect();
+    let steps: Vec<Duration> = (1..=(t * 2.0) as u32)
+        .map(|k| Duration::from_millis(500 * u64::from(k)))
+        .collect();
     render_at(&mut s, t0, &steps)
 }
 
@@ -206,14 +221,46 @@ fn nav_lanes(out: &Path) {
     let top = Some(("One More".to_string(), "4.5\u{B0}C".to_string()));
     let f = LaneLayout::Flip;
     let tiles = vec![
-        Tile { label: "800 m, pocket: ETA".into(), fb: nav(f, far.clone(), 0.0), top: top.clone() },
-        Tile { label: "pocket after 3 s: time".into(), fb: nav(f, far.clone(), 3.0), top: top.clone() },
-        Tile { label: "pocket after 6 s: distance".into(), fb: nav(f, far, 6.0), top: top.clone() },
-        Tile { label: "straight: narrow pocket".into(), fb: nav(f, straight, 0.0), top: top.clone() },
-        Tile { label: "250 m, flip: lanes 4 s".into(), fb: nav(f, right.clone(), 0.0), top: top.clone() },
-        Tile { label: "flip: road 2 s".into(), fb: nav(f, right, 4.5), top: top.clone() },
-        Tile { label: "5 lanes".into(), fb: nav(f, left5, 0.0), top: top.clone() },
-        Tile { label: "roundabout: pocket".into(), fb: nav(f, roundabout, 0.0), top },
+        Tile {
+            label: "800 m, pocket: ETA".into(),
+            fb: nav(f, far.clone(), 0.0),
+            top: top.clone(),
+        },
+        Tile {
+            label: "pocket after 3 s: time".into(),
+            fb: nav(f, far.clone(), 3.0),
+            top: top.clone(),
+        },
+        Tile {
+            label: "pocket after 6 s: distance".into(),
+            fb: nav(f, far, 6.0),
+            top: top.clone(),
+        },
+        Tile {
+            label: "straight: narrow pocket".into(),
+            fb: nav(f, straight, 0.0),
+            top: top.clone(),
+        },
+        Tile {
+            label: "250 m, flip: lanes 4 s".into(),
+            fb: nav(f, right.clone(), 0.0),
+            top: top.clone(),
+        },
+        Tile {
+            label: "flip: road 2 s".into(),
+            fb: nav(f, right, 4.5),
+            top: top.clone(),
+        },
+        Tile {
+            label: "5 lanes".into(),
+            fb: nav(f, left5, 0.0),
+            top: top.clone(),
+        },
+        Tile {
+            label: "roundabout: pocket".into(),
+            fb: nav(f, roundabout, 0.0),
+            top,
+        },
     ];
     sheet(&tiles, 4, &out.join("nav_lanes.png"));
 }
@@ -234,10 +281,28 @@ fn nav_stock(out: &Path) {
         ..Default::default()
     };
     let cases = [
-        ("turn right", m("turn", Some("right"), None, 250.0, "Ring Road")),
-        ("slight left", m("slight_turn", Some("left"), None, 600.0, "A38 Bristol Road")),
-        ("roundabout, 3rd exit", m("roundabout_enter_and_exit", Some("right"), Some(270), 400.0, "Ring Road")),
-        ("u-turn", m("u_turn", Some("left"), None, 150.0, "Back Lane")),
+        (
+            "turn right",
+            m("turn", Some("right"), None, 250.0, "Ring Road"),
+        ),
+        (
+            "slight left",
+            m("slight_turn", Some("left"), None, 600.0, "A38 Bristol Road"),
+        ),
+        (
+            "roundabout, 3rd exit",
+            m(
+                "roundabout_enter_and_exit",
+                Some("right"),
+                Some(270),
+                400.0,
+                "Ring Road",
+            ),
+        ),
+        (
+            "u-turn",
+            m("u_turn", Some("left"), None, 150.0, "Back Lane"),
+        ),
         ("fork right", m("fork", Some("right"), None, 900.0, "M5")),
         ("straight", m("straight", None, None, 3000.0, "M5")),
         (
@@ -301,22 +366,71 @@ fn media(out: &Path) {
     use carpi_dis::image::{CoverParams, cover};
     use carpi_dis::screens::cover::CoverScreen;
     use carpi_dis::screens::media::{ART, MediaInput, MediaLayout, MediaScreen};
-    let dir = PathBuf::from(r"C:\Users\raccoon\Documents\carstuff\RNS-E-Hudiy\tools\dis_image_tester\albumcovers");
+    let dir = PathBuf::from(
+        r"C:\Users\raccoon\Documents\carstuff\RNS-E-Hudiy\tools\dis_image_tester\albumcovers",
+    );
     // (file, title, artist, album, position s, length s, playing)
     let tracks = [
-        ("Daft_Punk-Discovery.png", "One More Time", "Daft Punk", "Discovery", 83, 320, true),
-        ("FooFighters-TheColourAndTheShape.jpg", "Everlong", "Foo Fighters", "The Colour and the Shape", 151, 250, true),
-        ("MeteoraLinkinPark.jpg", "Numb", "Linkin Park", "Meteora", 40, 187, false),
-        ("NirvanaNevermindalbumcover.jpg", "Smells Like Teen Spirit", "Nirvana", "Nevermind", 212, 301, true),
+        (
+            "Daft_Punk-Discovery.png",
+            "One More Time",
+            "Daft Punk",
+            "Discovery",
+            83,
+            320,
+            true,
+        ),
+        (
+            "FooFighters-TheColourAndTheShape.jpg",
+            "Everlong",
+            "Foo Fighters",
+            "The Colour and the Shape",
+            151,
+            250,
+            true,
+        ),
+        (
+            "MeteoraLinkinPark.jpg",
+            "Numb",
+            "Linkin Park",
+            "Meteora",
+            40,
+            187,
+            false,
+        ),
+        (
+            "NirvanaNevermindalbumcover.jpg",
+            "Smells Like Teen Spirit",
+            "Nirvana",
+            "Nevermind",
+            212,
+            301,
+            true,
+        ),
         ("Levels.jpg", "Levels", "Avicii", "Levels", 15, 199, true),
-        ("Spotify Three Days Grace - One-X.jpg", "Animal I Have Become", "Three Days Grace", "One-X", 120, 231, true),
+        (
+            "Spotify Three Days Grace - One-X.jpg",
+            "Animal I Have Become",
+            "Three Days Grace",
+            "One-X",
+            120,
+            231,
+            true,
+        ),
     ];
     let p = CoverParams::default();
     let mut tiles = Vec::new();
     for (i, (file, title, artist, album, pos, len, playing)) in tracks.iter().enumerate() {
         let img = image::open(dir.join(file)).expect("cover").to_rgb8();
         let (w, h) = (img.width() as usize, img.height() as usize);
-        let thumb = cover(img.as_raw(), w, h, usize::from(ART.w) * 2, usize::from(ART.h) * 2, &p);
+        let thumb = cover(
+            img.as_raw(),
+            w,
+            h,
+            usize::from(ART.w) * 2,
+            usize::from(ART.h) * 2,
+            &p,
+        );
         let full = cover(img.as_raw(), w, h, 128, 96, &p);
         let input = MediaInput {
             title: Some((*title).into()),
@@ -388,8 +502,26 @@ fn readings(out: &Path) {
         },
     ];
     let inputs = [
-        [Some(64.0), Some(2850.0), Some(195.0), Some(221.0), Some(14.1), Some(11.4), Some(88.0), Some(14.7)],
-        [Some(195.0), Some(221.0), Some(88.0), Some(41.0), Some(130.0), Some(176.0), None, Some(70.0)],
+        [
+            Some(64.0),
+            Some(2850.0),
+            Some(195.0),
+            Some(221.0),
+            Some(14.1),
+            Some(11.4),
+            Some(88.0),
+            Some(14.7),
+        ],
+        [
+            Some(195.0),
+            Some(221.0),
+            Some(88.0),
+            Some(41.0),
+            Some(130.0),
+            Some(176.0),
+            None,
+            Some(70.0),
+        ],
     ];
     let mut tiles = Vec::new();
     for (page, values) in inputs.iter().enumerate() {

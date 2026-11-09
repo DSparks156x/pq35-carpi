@@ -20,7 +20,9 @@ pub enum Dither {
     FloydSteinberg,
     /// Atkinson's 6-neighbour pattern; `diffusion` is the share of the error
     /// passed on (0.75 classic, 0.85 the old default, 1.0 FS-like).
-    Atkinson { diffusion: f32 },
+    Atkinson {
+        diffusion: f32,
+    },
     Threshold,
 }
 

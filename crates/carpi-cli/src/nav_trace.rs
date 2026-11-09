@@ -10,6 +10,8 @@
 //! `nav.lanes` is written as JSON rather than a string, and the turn icon as its
 //! size only (`nav.icon_png_base64_len`).
 
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use carpi_proto::{Reading, Value};
 use serde_json::{Map, Value as Json, json};
 use std::collections::BTreeMap;

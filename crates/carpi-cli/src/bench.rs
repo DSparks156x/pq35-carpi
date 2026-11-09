@@ -325,7 +325,6 @@ pub fn nav_at(t: Duration) -> NavInput {
         distance_unit: Some("mi".into()),
         time_to_destination_s: Some((900.0 - s).max(0.0)),
         destination_distance_m: Some((12_400.0 - s * SPEED_MS).max(0.0)),
-        ..Default::default()
     }
 }
 
@@ -891,7 +890,10 @@ mod tests {
         assert_eq!(c.road.as_deref(), Some("A38 Bristol Road"));
         // Wraps after six legs (the trip info keeps counting down).
         let w = nav_at(Duration::from_secs(120));
-        assert_eq!((&w.maneuver, w.distance_m, &w.road, &w.lanes), (&a.maneuver, a.distance_m, &a.road, &a.lanes));
+        assert_eq!(
+            (&w.maneuver, w.distance_m, &w.road, &w.lanes),
+            (&a.maneuver, a.distance_m, &a.road, &a.lanes)
+        );
     }
 
     #[test]

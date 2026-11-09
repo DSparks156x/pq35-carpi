@@ -170,7 +170,9 @@ impl MediaScreen {
             return Vec::new();
         }
         match &self.input.art {
-            Some((id, art)) if art.w == usize::from(ART.w) * 2 && art.h == usize::from(ART.h) * 2 => {
+            Some((id, art))
+                if art.w == usize::from(ART.w) * 2 && art.h == usize::from(ART.h) * 2 =>
+            {
                 // A new cover redraws the whole rect (Draw-mode base), so
                 // nothing of the old one survives; skip blank rows only on enter.
                 let (id, art) = (*id, art.clone());

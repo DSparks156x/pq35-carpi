@@ -22,7 +22,9 @@ pub const LOGICAL: (usize, usize) = (64, 48);
 /// 64x48 logical art doubled to 128x96 px.
 pub fn double(a: &Art) -> Art {
     let (w, h) = (a.w * 2, a.h * 2);
-    let px = (0..w * h).map(|i| a.get((i % w) / 2, (i / w) / 2)).collect();
+    let px = (0..w * h)
+        .map(|i| a.get((i % w) / 2, (i / w) / 2))
+        .collect();
     Art { w, h, px }
 }
 

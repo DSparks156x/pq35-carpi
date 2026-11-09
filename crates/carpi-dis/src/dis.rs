@@ -203,7 +203,12 @@ impl Dis {
 
     /// New readings pages from the settings, without restarting the session:
     /// the readings page on screen redraws with them.
-    pub fn set_readings_pages(&mut self, now: Instant, pages: Vec<ReadingsPage>, specs: Vec<ReadingSpec>) {
+    pub fn set_readings_pages(
+        &mut self,
+        now: Instant,
+        pages: Vec<ReadingsPage>,
+        specs: Vec<ReadingSpec>,
+    ) {
         let next = if pages.is_empty() {
             ReadingsScreen::new(specs)
         } else {
@@ -253,7 +258,7 @@ impl Dis {
     }
 
     /// DIS focus (the wheel drives the DIS): the readings page name and the
-/// call actions invert. Nothing else is ever inverted.
+    /// call actions invert. Nothing else is ever inverted.
     pub fn set_focus(&mut self, now: Instant, on: bool) {
         self.readings.set_focus(on);
         self.call.set_focus(on);
@@ -303,7 +308,11 @@ impl Dis {
     /// feed it at the bus rate, not throttled). Converted to mph if the accel
     /// test is imperial.
     pub fn set_speed(&mut self, now: Instant, kmh: f64) {
-        let v = if self.accel.timer.cfg.imperial { kmh / 1.609_344 } else { kmh };
+        let v = if self.accel.timer.cfg.imperial {
+            kmh / 1.609_344
+        } else {
+            kmh
+        };
         self.accel.sample(now, v);
         if self.shown.is_some_and(|(id, _)| id == ScreenId::Accel) {
             self.step(now);
@@ -346,7 +355,8 @@ impl Dis {
     /// Call state. Any call outranks media and user pages (not nav maneuvers).
     pub fn set_call(&mut self, now: Instant, c: CallInput) {
         self.in_call = c.state.is_some();
-        self.arbiter.set(Class::Call, c.state.is_some() && self.claims[1].0);
+        self.arbiter
+            .set(Class::Call, c.state.is_some() && self.claims[1].0);
         self.content_changed(1, c.state.is_some(), ScreenId::Call);
         self.call.set(now, c);
         self.step(now);
@@ -444,7 +454,9 @@ impl Dis {
             self.session.next_deadline(),
             self.arbiter.next_deadline(now),
             screen,
-            self.flash.as_ref().map(|f| f.hold_until.unwrap_or(f.cap_at)),
+            self.flash
+                .as_ref()
+                .map(|f| f.hold_until.unwrap_or(f.cap_at)),
         ]
         .into_iter()
         .flatten()

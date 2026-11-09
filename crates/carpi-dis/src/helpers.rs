@@ -137,7 +137,12 @@ impl TextSlot {
 
     /// Draw `bytes` centred. Old ink outside the new run is cleared in the same
     /// group.
-    pub fn draw_centred(&mut self, m: &Metrics, tag: &'static str, bytes: Vec<u8>) -> Option<Group> {
+    pub fn draw_centred(
+        &mut self,
+        m: &Metrics,
+        tag: &'static str,
+        bytes: Vec<u8>,
+    ) -> Option<Group> {
         let x = self.centre_x(m, &bytes);
         self.draw(m, tag, x, bytes)
     }
