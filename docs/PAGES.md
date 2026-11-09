@@ -201,10 +201,10 @@ LIVI has no on-screen keyboard and no way to join a Wi-Fi network. The update ne
 
 ### Keyboards (fork, livi-ui)
 
-- **One overlay, two layouts.** A sheet over whatever asked for text: the field on top, keys below. LIVI's own text fields open it when they start editing (keys_ui's `StartEditing` on a `Focused::Text` field), and so do ours.
-- **Knob layout** (default): letters in rows of 10, alphabetical by default (QWERTY in the setting), a last row of ⇧ (one capital), 123/#+, space, ⌫, Show/Hide, Done. Knob walks every key in reading order and wraps; Up/Down jump a row keeping the column; push types; Prev/Next held move the cursor; Return deletes; Return held closes without saving. Keys are tappable too.
+- **One overlay, two layouts.** A sheet over whatever asked for text: the field on top, keys below. LIVI's own text fields (its Settings' text screens: car name, Wi-Fi password) open it when their screen opens and when the field is pushed (keys_ui's `StartEditing`); Done commits through LIVI's own text commit, so LIVI's checks still apply (a turned-down value brings the keyboard back with a toast saying why). Our fields open it too.
+- **Knob layout**: letters in rows of 10, alphabetical by default (QWERTY in the setting), a last row of ⇧ (one capital), 123/#+, space, ⌫, Show/Hide, Done. Knob walks every key in reading order and wraps; Up/Down jump a row keeping the column; push types; Prev/Next held move the cursor; Return deletes; Return held closes without saving. Keys are tappable too.
 - **Touch layout**: phone-style QWERTY, ~64 px keys, 123 page, Show/Hide, an action key named for the job (Join, Save). Faceplate Return still deletes.
-- **Setting**: LIVI Settings, General: On-screen keyboard: Knob / Touch / Off (Off: only a real keyboard types). Knob keyboard letters: Alphabetical / QWERTY. Show passwords while typing.
+- **Setting**: Car Integration, Controls: On-screen keyboard: Auto / Knob / Touch / Off. Auto (default) opens the touch layout while a touch screen is attached to the main display (LIVI's display list, updated as touch devices come and go), else the knob one. Off: our fields still open the knob layout for a real keyboard to type into; LIVI's fields work as upstream. Knob keyboard letters: Alphabetical / QWERTY. Show passwords while typing.
 - **Who uses it first**: Wi-Fi password and name, accel test lines (typed with units), readings page names, portal PIN (instead of the digit screen), LIVI's hotspot password.
 
 ### Wi-Fi networks (carpid + fork)
