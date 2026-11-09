@@ -194,6 +194,38 @@ Car Integration
 
 All of these apply live, or are listed in `restart_needed`.
 
+## 5b. Keyboards and Wi-Fi networks (Drew, 2026-11-08)
+
+LIVI has no on-screen keyboard and no way to join a Wi-Fi network. The update needs a known network to fall back to when the hotspot drops (DEPLOY.md section 4), so both come together. Mockup: claude.ai/artifact/4bVjmpo5F5qB1tH94u4ZR3 ("keebs look good").
+
+### Keyboards (fork, livi-ui)
+
+- **One overlay, two layouts.** A sheet over whatever asked for text: the field on top, keys below. LIVI's own text fields open it when they start editing (keys_ui's `StartEditing` on a `Focused::Text` field), and so do ours.
+- **Knob layout** (default): letters in rows of 10, alphabetical by default (QWERTY in the setting), a last row of ⇧ (one capital), 123/#+, space, ⌫, Show/Hide, Done. Knob walks every key in reading order and wraps; Up/Down jump a row keeping the column; push types; Prev/Next held move the cursor; Return deletes; Return held closes without saving. Keys are tappable too.
+- **Touch layout**: phone-style QWERTY, ~64 px keys, 123 page, Show/Hide, an action key named for the job (Join, Save). Faceplate Return still deletes.
+- **Setting**: LIVI Settings, General: On-screen keyboard: Knob / Touch / Off (Off: only a real keyboard types). Knob keyboard letters: Alphabetical / QWERTY. Show passwords while typing.
+- **Who uses it first**: Wi-Fi password and name, accel test lines (typed with units), readings page names, portal PIN (instead of the digit screen), LIVI's hotspot password.
+
+### Wi-Fi networks (carpid + fork)
+
+- **carpid owns it**, through NetworkManager (`nmcli`), the same way it reads `nmcli general` for the update. API: `Request::Wifi { action: list | add | forget | test }`.
+  - list: saved client networks (name, security, autoconnect, last used) and whether one is connected.
+  - add: name, password (or open), hidden or not. Saved as a NetworkManager profile with autoconnect, so the update's step 3 finds it.
+  - forget: deletes the profile.
+  - test: the update's dance without the download: hotspot down, join, report, hotspot back.
+- **The one radio**: `wlan0` is the hotspot while LIVI runs, so the Pi can't join a network (or scan properly) with it up. Adding saves; joining happens in the update or in test.
+- **Scan** (Drew): Add a network drops the hotspot about 10 s to list nearby networks, then brings it back; the phone link drops meanwhile, and the screen says so before it starts. A name can still be typed for a hidden network. Action `scan` in the API.
+- **Profile**: a polkit rule so the car user (a lingering session, not an "active" one) may change NetworkManager's system connections. Passwords live in the profile as NetworkManager keeps them (root-only files).
+- **UI** (Drew): in LIVI's own Settings, General, Wi-Fi, beside the hotspot settings: Saved networks. Each with Forget and Test; Add a network scans, then opens the keyboard for the password (or the name, for a hidden one). Car Integration, Updates links to it.
+- **Phone portal**: the same list and add form, for adding a network from a phone on the hotspot.
+
+### Order
+
+1. carpid Wi-Fi API and the polkit rule, with tests against a fake nmcli.
+2. The keyboard overlay in the fork, both layouts, and the setting; LIVI's own text fields use it.
+3. Wi-Fi networks screen and portal form.
+4. Typed accel lines, page names and the PIN move to the keyboard.
+
 ## 6. Order
 
 1. Captures (3) and the portal's day/zip view (5). This is what Drew asked for first.
