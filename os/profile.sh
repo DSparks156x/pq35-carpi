@@ -156,10 +156,12 @@ for d in /opt/carpi /opt/carpi/releases; do
 done
 
 # 7. Journal on disk, capped, so a capture after a crash still has the minutes before it.
-#    The car user reads every unit's journal through the adm group.
+#    The car user reads every unit's journal through the adm group. Synced every 10 s: the car
+#    can cut power without a shutdown, and journald's default 5 min loses the whole drive.
 if put_file /etc/systemd/journald.conf.d/carpi.conf "[Journal]
 Storage=persistent
-SystemMaxUse=200M"; then
+SystemMaxUse=200M
+SyncIntervalSec=10s"; then
   do_ systemctl restart systemd-journald
 fi
 if ! id -nG "$USERNAME" | tr ' ' '\n' | grep -qx adm; then
