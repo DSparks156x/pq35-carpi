@@ -1,9 +1,6 @@
 # rnse-carpi
-
-Car daemon for PQ35/46 cars with an RNS-E and a Pi, built around a LIVI fork. Replaces RNS-E-Hudiy.
-
-The plan is [docs/PLAN.md](docs/PLAN.md); the cluster display design is [docs/DIS.md](docs/DIS.md).
-
+A full stack to run Android Auto/Carplay and cleanly integrate into the CanBus of an old RNS-E equipped pq35 audi. ie, a Mk2 TT or an A3 8P. Including a full DIS display driver (top lines and center) for white clusters (and probably red clusters still), and pulls basically any data possible from ICAN directly. also has a tp2/kwp2000 diag driver to grab measuring blocks off ECU/TCU/Haldex and display. oh. and diagnostics. 
+Setup helper at https://cowpowersystems.com/carpi
 ## Status
 
 `carpid` listens on the configured CAN interfaces, decodes ICAN into a value store, watches the NM ring, keeps a rolling capture and answers a local API. It also:
