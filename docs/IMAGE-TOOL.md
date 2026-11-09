@@ -50,6 +50,13 @@ On or off from the start (`[dis] enabled`); still a setting afterwards.
 ### Touch screen
 Not asked: detected on the fly. The on-screen keyboard defaults to touch when a touch screen is attached.
 
+## NVMe and post-setup (Drew: most people have no M.2 USB enclosure)
+
+The page finishes an SD card. Everything after first boot happens on the head unit, in a **Setup** screen at the top of Car Integration that shows until it's dismissed: the time zone, the phone, Wi-Fi networks, DIS, VNC at startup, and:
+
+- **Move to NVMe**, when an NVMe drive is fitted and the Pi runs from the SD. It copies the running system onto the NVMe (fresh partitions filling the drive, the files copied over, the new partition IDs in `cmdline.txt` and `fstab`), sets the boot order to NVMe first (`rpi-eeprom-config`), and reboots onto it. Everything set up so far comes along: pairing, networks, settings. The SD stays a rescue card: with it in, the Pi still boots the NVMe; without the NVMe it boots the SD.
+- It runs as a root unit (`carpi-move-nvme.service`) that carpid may start (polkit rule from the profile), and carpid streams its progress as a job like an update. The hotspot stays up; the phone can't be used meanwhile (the disk is busy) and the screen says so.
+
 ## Remote access (Car Integration tab)
 
 A Remote access screen: the file portal's address; Start VNC now; VNC at startup (on by default for setup; off makes boot faster). ssh is always on. carpid starts, stops, enables and disables the wayvnc user unit through the settings API.
@@ -58,8 +65,9 @@ A Remote access screen: the file portal's address; Start VNC now; VNC at startup
 
 1. Firstboot that fetches the bundle itself and reads `setup.json`; the options as profile/install steps.
 2. The web page, its preset files and writer; the Action that publishes it (and the CLI).
-3. Remote access screen (pq35-carpi + fork).
-4. Install on the NVMe; grind the boot time; the trimming becomes a profile step and an option.
+3. Remote access screen (pq35-carpi + fork). Done.
+4. Setup screen and Move to NVMe.
+5. Drew's NVMe through that path; grind the boot time; the trimming becomes a profile step and an option.
 
 ## Reference
 
