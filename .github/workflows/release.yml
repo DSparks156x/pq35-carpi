@@ -93,7 +93,11 @@ jobs:
           # LIVI's pinned toolchain, from livi/rust-toolchain.toml.
           cd livi && "$HOME/.cargo/bin/rustup" toolchain install
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      # The compile cache is a speed-up only: when GitHub can't hand out sccache (a 504 on its
+      # download, seen 2026-11-09), build without it.
+      - id: sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
 
       # One cache per workspace. rust-cache keys on Cargo.lock and the rustc in the repo root
       # (stable); LIVI's key adds its pinned toolchain file.
@@ -112,7 +116,7 @@ jobs:
 
       - name: build rnse-carpi
         env:
-          RUSTC_WRAPPER: sccache
+          RUSTC_WRAPPER: ${{ steps.sccache.outcome == 'success' && 'sccache' || '' }}
           SCCACHE_GHA_ENABLED: 'true'
         run: |
           pkgs=(-p carpid -p carpi-cli)
@@ -122,7 +126,7 @@ jobs:
       - name: build LIVI
         working-directory: livi/native
         env:
-          RUSTC_WRAPPER: sccache
+          RUSTC_WRAPPER: ${{ steps.sccache.outcome == 'success' && 'sccache' || '' }}
           SCCACHE_GHA_ENABLED: 'true'
         run: |
           # LIVI stamps GITHUB_SHA otherwise, which is rnse-carpi's.
@@ -132,6 +136,7 @@ jobs:
         run: make -C sdlink -j"$(nproc)"
 
       - name: sccache stats
+        if: steps.sccache.outcome == 'success'
         run: sccache --show-stats
 
       - name: bundle
