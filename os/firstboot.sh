@@ -27,6 +27,36 @@ finish() {
 }
 fail() { finish "FAILED: $*"; exit 1; }
 
+# Release discovery uses HTTPS, so wait for the system clock to be synchronized first. Keep this
+# self-contained: firstboot.sh is also copied to the boot partition and run independently.
+wait_for_clock_sync() {
+  local timeout=${CARPI_CLOCK_SYNC_TIMEOUT:-180} interval=${CARPI_CLOCK_SYNC_INTERVAL:-3} waited=0
+  if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes; then
+    say "system clock is already synchronized"
+    return 0
+  fi
+
+  say "enabling network time and starting the time synchronization service"
+  timedatectl set-ntp true 2>/dev/null || true
+  # timedatectl normally starts the configured NTP client; explicitly start timesyncd where present.
+  if systemctl list-unit-files systemd-timesyncd.service --no-legend 2>/dev/null | grep -q systemd-timesyncd; then
+    systemctl start systemd-timesyncd.service 2>/dev/null || true
+  fi
+
+  say "waiting up to ${timeout}s for the system clock to synchronize"
+  while [ "$waited" -lt "$timeout" ]; do
+    sleep "$interval"
+    waited=$((waited + interval))
+    if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes; then
+      say "system clock synchronized after ${waited}s"
+      return 0
+    fi
+  done
+  say "system clock did not synchronize after ${timeout}s"
+  say "check network access and NTP service (timedatectl status), then rerun firstboot"
+  return 1
+}
+
 say "start $(date -Is)"
 [ -e $DONE ] && { finish "already done ($DONE)"; exit 0; }
 
@@ -68,6 +98,7 @@ done
 mkdir -p $WORK
 BUNDLE=$(ls "$D"/*.tar.zst 2>/dev/null | head -1)
 if [ -z "$BUNDLE" ]; then
+  wait_for_clock_sync || fail "clock is not synchronized; HTTPS release lookup cannot be trusted"
   say "finding the ${CARPI_VERSION:-$CARPI_CHANNEL} release of $CARPI_REPO"
   URL=$(python3 - "$CARPI_REPO" "$CARPI_CHANNEL" "$CARPI_VERSION" <<'EOF'
 import json, sys, urllib.request

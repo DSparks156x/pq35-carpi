@@ -60,6 +60,9 @@ SHARE=$(mktemp -d)
 trap 'rm -rf "$SHARE"' EXIT
 tar --zstd -C "$SHARE" -xf "$BUNDLE" share
 S=$SHARE/share
+# install -D owns the copied files, but creates missing parents as root. The user manager
+# must be able to create default.target.wants/ here when enabling its units.
+install -d -o "$USERNAME" -g "$GROUP" -m 0755 "$HOME_/.config/systemd" "$UNITS"
 put_missing "$S/config/carpid.toml" "$HOME_/.config/carpi/carpid.toml"
 for u in "$S"/systemd/user/*.service; do put_missing "$u" "$UNITS/$(basename "$u")"; done
 put_missing "$S/sdlink/run/avsd-chain.service" "$UNITS/avsd-chain.service"
