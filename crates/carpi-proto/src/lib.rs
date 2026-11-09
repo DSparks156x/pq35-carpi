@@ -258,6 +258,9 @@ pub struct Settings {
     pub dis: DisSettings,
     /// The key binding table, every row. See [`Binding`].
     pub bindings: Vec<Binding>,
+    /// `[input] bindings` is in carpid.toml; false means the built-in table.
+    #[serde(default)]
+    pub bindings_custom: bool,
     pub portal_pin_set: bool,
     #[serde(default)]
     pub logs: LogsSettings,
@@ -869,6 +872,10 @@ pub struct SettingsPatch {
     /// Replaces the whole table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bindings: Option<Vec<Binding>>,
+    /// Drops `[input] bindings` so the built-in table applies. Wins over
+    /// `bindings`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bindings_reset: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portal_pin: Option<PinChange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -15,6 +15,7 @@
 mod act;
 mod api;
 mod avsd;
+mod avsd_status;
 pub mod capture;
 mod clock;
 mod commands;
@@ -85,6 +86,8 @@ pub enum Msg {
     ConnClosed(u64),
     /// The ring's last `Duration` and the value store, for a capture.
     Snapshot(Duration, oneshot::Sender<capture::Snapshot>),
+    /// Values from outside the car, unknown after the timeout.
+    Values(Vec<(String, Option<carpi_state::Value>)>, Duration),
 }
 
 /// What the main loop owns besides the car model.
@@ -247,6 +250,7 @@ async fn main() -> anyhow::Result<()> {
             captures.clone(),
             runmark::state_dir(),
         );
+        avsd_status::spawn(cfg.avsd.unit.clone(), tx.clone());
     }
 
     let (portal_status, status_rx) = watch::channel(carpi_portal::Status {
@@ -437,6 +441,7 @@ impl Daemon {
                 }
             }
             Msg::ConnClosed(conn) => car.conn_closed(conn, now),
+            Msg::Values(values, timeout) => car.set_values(values, timeout, now),
             Msg::Snapshot(back, reply) => {
                 let _ = reply.send(capture::Snapshot::take(car, back, now));
             }

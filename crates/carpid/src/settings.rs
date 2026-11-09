@@ -125,6 +125,7 @@ pub fn get(cfg: &Config) -> Settings {
                 action: r.action,
             })
             .collect(),
+        bindings_custom: cfg.input.bindings.is_some(),
         portal_pin_set: cfg
             .portal
             .as_ref()
@@ -573,7 +574,11 @@ pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
             doc["dis"]["nav_lanes"] = value(snake(&v));
         }
     }
-    if let Some(b) = &patch.bindings {
+    if patch.bindings_reset {
+        if let Some(t) = doc.get_mut("input").and_then(Item::as_table_like_mut) {
+            t.remove("bindings");
+        }
+    } else if let Some(b) = &patch.bindings {
         table(&mut doc, "input")?;
         doc["input"]["bindings"] = array(b.iter().map(|b| {
             let mut t = InlineTable::new();
@@ -726,6 +731,21 @@ mod tests {
         )
         .unwrap();
         assert!(!get(&cfg).portal_pin_set);
+
+        // Reset: the built-in table again, the rest of [input] kept.
+        assert!(get(&cfg).bindings_custom);
+        let cfg = set(
+            &p,
+            &SettingsPatch {
+                bindings_reset: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let reset = get(&cfg);
+        assert!(!reset.bindings_custom);
+        assert_eq!(reset.bindings, before.bindings);
+        assert!(!std::fs::read_to_string(&p).unwrap().contains("bindings ="));
     }
 
     #[test]

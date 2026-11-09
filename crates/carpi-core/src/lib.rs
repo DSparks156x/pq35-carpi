@@ -314,6 +314,19 @@ impl Car {
         &self.store
     }
 
+    /// Values from outside the car (the A/V-over-SD stream), unknown after
+    /// `timeout` without another set.
+    pub fn set_values(
+        &mut self,
+        values: Vec<(String, Option<Value>)>,
+        timeout: Duration,
+        now: Instant,
+    ) {
+        for (name, value) in values {
+            self.store.set(&name, value, now, timeout);
+        }
+    }
+
     /// Feeds one received frame from interface `idx`.
     pub fn ingest(&mut self, idx: usize, rx: &RxFrame) -> Option<BusEvent> {
         let iface = &mut self.ifaces[idx];
