@@ -6,7 +6,7 @@ Setup helper at https://cowpowersystems.com/carpi
 `carpid` listens on the configured CAN interfaces, decodes ICAN into a value store, watches the NM ring, keeps a rolling capture and answers a local API. It also:
 
 - keeps the RNS-E source label and panel brightness (`BA`/`BB` on 0x7B0), re-sent when the RNS-E comes back, through the TX gate;
-- runs one light model for night mode and panel brightness (the PLAN 2.6 model, curve and learning are not built yet; its settings and `light.ambient`, `light.panel_pct`, sun-load values are);
+- runs one light model for night mode and panel brightness, including curves, learned points and settings for ambient sources;
 - turns wheel and faceplate keys into LIVI keys (uinput) while the RNS-E is on TV;
 - drives the cluster display (`carpi-dis`): nav from the LIVI bridge and a 2x4 readings page, with DIS keys picking the page, plus the 0x363/0x365 top lines while on TV;
 - runs diagnostics (`carpi-diag`) on the `diag` bus: API subscriptions to catalog values become polled group reads, plus install list and DTC read/clear jobs (clear needs `confirm: true`);
@@ -16,7 +16,9 @@ Setup helper at https://cowpowersystems.com/carpi
 
 Sending, the cluster display and powering off are **off by default** (`[tx] enabled`, `[dis] enabled`, `[power] shutdown` in `deploy/carpid.toml`); until then the daemon logs what it would have done. Every frame goes through the TX gate.
 
-Untested on the car: the DIS session and screens in carpid (simulator only), diag polling rates and channel concurrency. In progress: the LIVI fork's pages.
+DIS and diagnostics passed a functional car test on 2026-11-09, as did SDLink video/audio. Ignition, wake/sleep and shutdown remain unconfirmed. Diagnostic rates/concurrency and longer driving sessions need additional coverage. LIVI's Data, Diagnostics and Car Integration pages are implemented.
+
+Current acceptance work and remaining features: [ROADMAP.md](docs/ROADMAP.md).
 
 ## Build
 
@@ -27,9 +29,7 @@ cargo build --release -p carpid -p carpi-cli
 
 Releases are built by GitHub Actions (`.github/workflows/release.yml`), not on the Pi: an arm64 Debian Trixie build of carpid, carpi, LIVI (`livi/`) and the sdlink Pi side (`sdlink/`), packed by `scripts/bundle.sh` into one bundle ([docs/BUNDLE.md](docs/BUNDLE.md)). A push to `main` makes a beta pre-release, a `vX.Y.Z` tag a stable release, anything else a workflow artifact. Clone with `--recurse-submodules`. Design: [docs/DEPLOY.md](docs/DEPLOY.md).
 
-A fresh Pi OS Trixie card is set up with `sudo os/profile.sh`.
-
-By hand, for now: build natively on the Pi and copy `target/release/carpid` and `target/release/carpi` to `~/.local/bin`, then install `deploy/carpid.service` and `deploy/carpid.toml` (instructions in the unit file).
+For a fresh install, flash Raspberry Pi OS Trixie 64-bit with the desktop, then use the [setup page](https://cowpowersystems.com/carpi/). First boot downloads the selected release and applies the answers automatically; see [IMAGE-TOOL.md](docs/IMAGE-TOOL.md). The next acceptance run is to verify the complete process without manual repairs. Developer deployment is covered in [DEPLOY.md](docs/DEPLOY.md).
 
 ## Use
 
