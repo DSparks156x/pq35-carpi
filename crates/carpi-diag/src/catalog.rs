@@ -3,7 +3,7 @@
 //! A Rust table, not a TOML file: the compiler checks every row, there's no
 //! file to ship out of step with the binary, and a sans-IO crate shouldn't
 //! read files. Per-ECU group tables (keyed by `1A 9B` part number) can become
-//! data later. The table itself is in [`seed`](self::seed()), ~400 rows: every
+//! data later. The table itself is in [`seed`](self::seed()), ~830 rows: every
 //! value carpi-signals emits, and the old project's diag values.
 //!
 //! Each value has a label and a place (category, sub-group) for the picker
@@ -19,12 +19,16 @@
 //!   engine answered groups 3 and 113 with formulas whose units match the
 //!   `[pdf]` meaning (rpm, g/s, %, deg / rpm, %, %, mbar). Meaning is still from
 //!   the PDF; the trace only shows the unit lines up.
-//! - `[awd]` "Measuring Groups - AWD - 22.pdf" via `vehicle_data/consumer_definitions.py`.
-//!   The PDF is headed 22 (VCDS address); the old code polled TP2 0x0A. The
-//!   install list should settle it; until then 0x0A is a guess.
-//! - `[trans]` "Measuring Groups - Transmission - 02.pdf" via
-//!   `consumer_definitions.py`: DSG groups 6-8, 11-14, 16, 19 on TP2 0x02, as
-//!   the old code polled it. No trace from Drew's DSG yet.
+//! - `[awd]` "Measuring Groups - AWD - 22" (owner's PDF, then the full sheet in
+//!   owner's "Measuring Groups.xlsx"). VCDS 22 is TP2 0x0A on the install list.
+//! - `[trans]` "Measuring Groups - Transmission - 02" (same sources): DSG on
+//!   TP2 0x02. No trace from Drew's DSG yet.
+//! - `[bcm]` "Measuring Groups - Central Electronic - 09" sheet of
+//!   "Measuring Groups.xlsx". VCDS 09 is the BCM, TP2 0x20. No trace yet.
+//!
+//! Sheet rows with no label are left out. Where a sheet repeats a meaning
+//! (selector lever position in groups 2-7, say), it is one value with every
+//! location.
 
 use carpi_kwp::group::{self, Record};
 use carpi_state::Value;
@@ -41,6 +45,8 @@ pub enum Basis {
     AwdPdf,
     /// `[trans]`. Guessed for Drew's DSG.
     TransmissionPdf,
+    /// `[bcm]`. Guessed for Drew's BCM.
+    CentralPdf,
     /// Tests and hand-made tables.
     Custom,
 }
@@ -196,6 +202,13 @@ impl ValueDef {
         }
         self
     }
+    /// Central electronics `[bcm]` locations.
+    pub fn bcm(mut self, locs: &[(u8, u8)]) -> Self {
+        for &(group, field) in locs {
+            self = self.diag(CENTRAL_ELECTRICS, group, field, Basis::CentralPdf);
+        }
+        self
+    }
     /// Haldex `[awd]` locations.
     pub fn awd(mut self, locs: &[(u8, u8)]) -> Self {
         for &(group, field) in locs {
@@ -306,10 +319,12 @@ impl Catalog {
 
 /// TP2 ID of the engine. Proven `[trace]`.
 pub const ENGINE: u8 = 0x01;
-/// TP2 ID the old code used for the DSG. Not checked against the install list.
+/// TP2 ID of the DSG (VCDS 02), from the install list.
 pub const TRANSMISSION: u8 = 0x02;
-/// TP2 ID the old code used for the Haldex. Guess, see `[awd]`.
+/// TP2 ID of the Haldex (VCDS 22), from the install list.
 pub const HALDEX: u8 = 0x0A;
+/// TP2 ID of the central electronics / BCM (VCDS 09), from the install list.
+pub const CENTRAL_ELECTRICS: u8 = 0x20;
 /// Engine groups seen in `[trace]`.
 const TRACE_GROUPS: [u8; 2] = [3, 113];
 
@@ -328,7 +343,7 @@ mod tests {
     #[test]
     fn seed_is_valid() {
         let c = Catalog::seed();
-        assert!(c.len() >= 400);
+        assert!(c.len() >= 800);
         assert_eq!(c.get("engine.rpm").unwrap().ican_name(), Some("engine.rpm"));
         assert!(c.get("engine.maf_gs").unwrap().ican_name().is_none());
     }
@@ -413,6 +428,23 @@ mod tests {
             Basis::TransmissionPdf
         ));
         assert!(has("awd.oil_temp_c", HALDEX, Basis::AwdPdf));
+        assert!(has("awd.pump_current", HALDEX, Basis::AwdPdf));
+        assert!(has(
+            "trans.lever_position",
+            TRANSMISSION,
+            Basis::TransmissionPdf
+        ));
+        assert!(has(
+            "bcm.quiescent_total_v",
+            CENTRAL_ELECTRICS,
+            Basis::CentralPdf
+        ));
+        assert!(has(
+            "bcm.lamp_brake_high",
+            CENTRAL_ELECTRICS,
+            Basis::CentralPdf
+        ));
+        assert!(c.get("bcm.comfort_hist_10_log").unwrap().is_diag());
         // Oil temperature now has ICAN 0x555 first, so it's never polled.
         assert_eq!(
             c.get("engine.oil_temp_c").unwrap().ican_name(),

@@ -6,7 +6,7 @@
 //! Diag rows: every location the old catalog had except its tentative
 //! group 11 fields 5-7. Labels are the old catalog's.
 //!
-//! Every diag location is `[pdf]` / `[trans]` / `[awd]`: from VCDS-style
+//! Every diag location is `[pdf]` / `[trans]` / `[awd]` / `[bcm]`: from VCDS-style
 //! PDFs, not keyed to Drew's ECU part number. Groups 3 and 113 on the
 //! engine are `[trace]` (the unit lines up). Unit checks catch most wrong
 //! guesses: a field that decodes to another unit decodes to nothing.
@@ -2027,6 +2027,846 @@ pub(super) fn seed() -> Vec<ValueDef> {
         )
         .trans(&[(19, 4)]),
         v(
+            "trans.lever_position",
+            "Selector lever position",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1)]),
+        v(
+            "trans.lever_plausible",
+            "Selector lever position (plausibility)",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(2, 2), (3, 2)]),
+        v(
+            "trans.lever_error",
+            "Selector lever error byte",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(2, 3)]),
+        v(
+            "trans.gear_mode",
+            "Selected gear or driving mode",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(2, 4)]),
+        v(
+            "trans.tip_up",
+            "Tiptronic upshift",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(3, 3)]),
+        v(
+            "trans.tip_down",
+            "Tiptronic downshift",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(3, 4)]),
+        v(
+            "trans.direction",
+            "Driving direction",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(4, 2)]),
+        v(
+            "trans.start_enabled",
+            "Starting enabled",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(5, 2)]),
+        v(
+            "trans.kickdown",
+            "Kick-down switch",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(10, 2)]),
+        v(
+            "trans.brake_light_switch",
+            "Brake light switch (F)",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(1, 1)]),
+        v(
+            "trans.brake_test_switch",
+            "Brake test switch",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(1, 2)]),
+        v(
+            "trans.shiftlock_status",
+            "Shift lock status (DSG)",
+            Reported,
+            Transmission,
+            "Lever",
+        )
+        .trans(&[(1, 3)]),
+        v(
+            "trans.vehicle_speed",
+            "Vehicle speed (DSG)",
+            Reported,
+            Transmission,
+            "Speeds",
+        )
+        .trans(&[(1, 4)]),
+        v(
+            "trans.engine_rpm",
+            "Engine speed G28 (DSG)",
+            Reported,
+            Transmission,
+            "Speeds",
+        )
+        .trans(&[(9, 1)]),
+        v(
+            "trans.input_rpm",
+            "Transmission input speed (G182)",
+            Reported,
+            Transmission,
+            "Speeds",
+        )
+        .trans(&[(8, 1), (9, 2)]),
+        v(
+            "trans.output1_rpm",
+            "Transmission output speed 1",
+            Reported,
+            Transmission,
+            "Speeds",
+        )
+        .trans(&[(4, 3), (8, 4), (9, 3)]),
+        v(
+            "trans.output2_rpm",
+            "Transmission output speed 2",
+            Reported,
+            Transmission,
+            "Speeds",
+        )
+        .trans(&[(4, 4), (9, 4)]),
+        v(
+            "trans.pedal_pct",
+            "Accelerator pedal angle (DSG)",
+            Reported,
+            Transmission,
+            "Torque",
+        )
+        .trans(&[(10, 1)]),
+        v(
+            "trans.engine_torque",
+            "Engine torque (DSG)",
+            Reported,
+            Transmission,
+            "Torque",
+        )
+        .trans(&[(10, 3)]),
+        v(
+            "trans.torque_loss",
+            "Engine torque loss (DSG)",
+            Reported,
+            Transmission,
+            "Torque",
+        )
+        .trans(&[(10, 4)]),
+        v(
+            "trans.safety_valve_1",
+            "Safety valve 1 (N233)",
+            Reported,
+            Transmission,
+            "Valves",
+        )
+        .trans(&[(6, 3), (13, 2)]),
+        v(
+            "trans.safety_valve_2",
+            "Safety valve 2 (N371)",
+            Reported,
+            Transmission,
+            "Valves",
+        )
+        .trans(&[(7, 3), (14, 2)]),
+        v(
+            "trans.main_pressure_valve_a",
+            "Main pressure valve current",
+            Reported,
+            Transmission,
+            "Valves",
+        )
+        .trans(&[(6, 4), (7, 4)]),
+        v(
+            "trans.n88",
+            "Solenoid valve 1 (N88)",
+            Reported,
+            Transmission,
+            "Valves",
+        )
+        .trans(&[(13, 3)]),
+        v(
+            "trans.n89",
+            "Solenoid valve 2 (N89)",
+            Reported,
+            Transmission,
+            "Valves",
+        )
+        .trans(&[(13, 4)]),
+        v(
+            "trans.n90",
+            "Solenoid valve 3 (N90)",
+            Reported,
+            Transmission,
+            "Valves",
+        )
+        .trans(&[(14, 3)]),
+        v(
+            "trans.n91",
+            "Solenoid valve 4 (N91)",
+            Reported,
+            Transmission,
+            "Valves",
+        )
+        .trans(&[(14, 4)]),
+        v(
+            "trans.supply1_v",
+            "Transmission supply voltage 1",
+            Reported,
+            Transmission,
+            "Supply",
+        )
+        .trans(&[(5, 3)]),
+        v(
+            "trans.supply2_v",
+            "Transmission supply voltage 2",
+            Reported,
+            Transmission,
+            "Supply",
+        )
+        .trans(&[(5, 4)]),
+        v(
+            "trans.gs_1_3",
+            "Gear selector 1-3",
+            Reported,
+            Transmission,
+            "Gear selectors",
+        )
+        .trans(&[(15, 1)]),
+        v(
+            "trans.gs_2_4",
+            "Gear selector 2-4",
+            Reported,
+            Transmission,
+            "Gear selectors",
+        )
+        .trans(&[(15, 2)]),
+        v(
+            "trans.gs_5_n",
+            "Gear selector 5-N",
+            Reported,
+            Transmission,
+            "Gear selectors",
+        )
+        .trans(&[(15, 3)]),
+        v(
+            "trans.gs_6_r",
+            "Gear selector 6-R",
+            Reported,
+            Transmission,
+            "Gear selectors",
+        )
+        .trans(&[(15, 4)]),
+        v(
+            "trans.sync_1",
+            "Synchronous travel path 1st gear",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(18, 1)]),
+        v(
+            "trans.sync_2",
+            "Synchronous travel path 2nd gear",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(17, 2)]),
+        v(
+            "trans.sync_3",
+            "Synchronous travel path 3rd gear",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(17, 1)]),
+        v(
+            "trans.sync_4",
+            "Synchronous travel path 4th gear",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(18, 2)]),
+        v(
+            "trans.sync_5",
+            "Synchronous travel path 5th gear",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(18, 3)]),
+        v(
+            "trans.sync_6",
+            "Synchronous travel path 6th gear",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(18, 4)]),
+        v(
+            "trans.sync_n",
+            "Synchronous travel path N",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(17, 3)]),
+        v(
+            "trans.sync_r",
+            "Synchronous travel path R",
+            Reported,
+            Transmission,
+            "Synchronizers",
+        )
+        .trans(&[(17, 4)]),
+        v(
+            "trans.adj30_lower_a",
+            "Group 30 lower adjustment A",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(30, 1)]),
+        v(
+            "trans.adj30_lower_b",
+            "Group 30 lower adjustment B",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(30, 2)]),
+        v(
+            "trans.adj30_upper_a",
+            "Group 30 upper adjustment A",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(30, 3)]),
+        v(
+            "trans.adj30_upper_b",
+            "Group 30 upper adjustment B",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(30, 4)]),
+        v(
+            "trans.adj31_lower_a",
+            "Group 31 lower adjustment A",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(31, 1)]),
+        v(
+            "trans.adj31_lower_b",
+            "Group 31 lower adjustment B",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(31, 2)]),
+        v(
+            "trans.adj31_upper_a",
+            "Group 31 upper adjustment A",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(31, 3)]),
+        v(
+            "trans.adj31_upper_b",
+            "Group 31 upper adjustment B",
+            Reported,
+            Transmission,
+            "Adjustment",
+        )
+        .trans(&[(31, 4)]),
+        v(
+            "trans.bus125_engine",
+            "Bus status (125): engine",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(125, 1)]),
+        v(
+            "trans.bus125_brakes",
+            "Bus status (125): brake electronics",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(125, 2)]),
+        v(
+            "trans.bus125_cluster",
+            "Bus status (125): instrument cluster",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(125, 3)]),
+        v(
+            "trans.bus125_lever",
+            "Bus status (125): selector lever",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(125, 4)]),
+        v(
+            "trans.bus126_gateway",
+            "Bus status (126): CAN gateway",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(126, 1)]),
+        v(
+            "trans.bus126_column",
+            "Bus status (126): steering column module",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(126, 2)]),
+        v(
+            "trans.bus225_engine",
+            "Bus status (225): engine",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(225, 1)]),
+        v(
+            "trans.bus225_brakes",
+            "Bus status (225): brake electronics",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(225, 2)]),
+        v(
+            "trans.bus225_cluster",
+            "Bus status (225): instrument cluster",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(225, 3)]),
+        v(
+            "trans.bus225_lever",
+            "Bus status (225): selector lever",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(225, 4)]),
+        v(
+            "trans.bus226_gateway",
+            "Bus status (226): CAN gateway",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(226, 1)]),
+        v(
+            "trans.bus226_column",
+            "Bus status (226): steering column module",
+            Reported,
+            Transmission,
+            "Bus status",
+        )
+        .trans(&[(226, 2)]),
+        v(
+            "trans.fault_id_00",
+            "Internal malfunction ID #0",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(51, 1)]),
+        v(
+            "trans.fault_id_01",
+            "Internal malfunction ID #1",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(51, 2)]),
+        v(
+            "trans.fault_id_02",
+            "Internal malfunction ID #2",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(51, 3)]),
+        v(
+            "trans.fault_id_03",
+            "Internal malfunction ID #3",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(51, 4)]),
+        v(
+            "trans.fault_id_04",
+            "Internal malfunction ID #4",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(52, 1)]),
+        v(
+            "trans.fault_id_05",
+            "Internal malfunction ID #5",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(52, 2)]),
+        v(
+            "trans.fault_id_06",
+            "Internal malfunction ID #6",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(52, 3)]),
+        v(
+            "trans.fault_id_07",
+            "Internal malfunction ID #7",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(52, 4)]),
+        v(
+            "trans.fault_id_08",
+            "Internal malfunction ID #8",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(53, 1)]),
+        v(
+            "trans.fault_id_09",
+            "Internal malfunction ID #9",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(53, 2)]),
+        v(
+            "trans.fault_id_10",
+            "Internal malfunction ID #10",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(53, 3)]),
+        v(
+            "trans.fault_id_11",
+            "Internal malfunction ID #11",
+            Reported,
+            Transmission,
+            "Faults",
+        )
+        .trans(&[(53, 4)]),
+        v(
+            "trans.flash_checksum",
+            "Flash checksum",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(40, 1)]),
+        v(
+            "trans.param_id",
+            "Parameter identifier",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(41, 1)]),
+        v(
+            "trans.sw_a_01",
+            "Software parameter 1 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(42, 1)]),
+        v(
+            "trans.sw_a_02",
+            "Software parameter 2 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(42, 2)]),
+        v(
+            "trans.sw_a_03",
+            "Software parameter 3 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(42, 3)]),
+        v(
+            "trans.sw_a_04",
+            "Software parameter 4 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(42, 4)]),
+        v(
+            "trans.sw_a_05",
+            "Software parameter 5 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(43, 1)]),
+        v(
+            "trans.sw_a_06",
+            "Software parameter 6 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(43, 2)]),
+        v(
+            "trans.sw_a_07",
+            "Software parameter 7 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(43, 3)]),
+        v(
+            "trans.sw_a_08",
+            "Software parameter 8 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(43, 4)]),
+        v(
+            "trans.sw_a_09",
+            "Software parameter 9 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(44, 1)]),
+        v(
+            "trans.sw_a_10",
+            "Software parameter 10 (set A)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(44, 2)]),
+        v(
+            "trans.sw_b_01",
+            "Software parameter 1 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(45, 1)]),
+        v(
+            "trans.sw_b_02",
+            "Software parameter 2 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(45, 2)]),
+        v(
+            "trans.sw_b_03",
+            "Software parameter 3 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(45, 3)]),
+        v(
+            "trans.sw_b_04",
+            "Software parameter 4 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(45, 4)]),
+        v(
+            "trans.sw_b_05",
+            "Software parameter 5 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(46, 1)]),
+        v(
+            "trans.sw_b_06",
+            "Software parameter 6 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(46, 2)]),
+        v(
+            "trans.sw_b_07",
+            "Software parameter 7 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(46, 3)]),
+        v(
+            "trans.sw_b_08",
+            "Software parameter 8 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(46, 4)]),
+        v(
+            "trans.sw_b_09",
+            "Software parameter 9 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(47, 1)]),
+        v(
+            "trans.sw_b_10",
+            "Software parameter 10 (set B)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(47, 2)]),
+        v(
+            "trans.sw_id",
+            "Software identifier",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(48, 1)]),
+        v(
+            "trans.lever_part_no",
+            "Selector lever part number (E313)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(50, 1)]),
+        v(
+            "trans.sv_param",
+            "SV parameter",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(54, 1)]),
+        v(
+            "trans.ident",
+            "Identification",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(80, 1)]),
+        v(
+            "trans.revision",
+            "Revision",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(80, 2)]),
+        v(
+            "trans.production_date",
+            "Production date",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(80, 3)]),
+        v(
+            "trans.test_stand",
+            "Manufacturer & test stand number",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(80, 4)]),
+        v(
+            "trans.serial_no",
+            "Serial number",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(81, 1)]),
+        v(
+            "trans.flash_tool_code",
+            "Flash tool code (FTC)",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(82, 1)]),
+        v(
+            "trans.flash_date",
+            "Flash date",
+            Reported,
+            Transmission,
+            "Module info",
+        )
+        .trans(&[(82, 2)]),
+        v(
             "awd.oil_temp_c",
             "Haldex oil temperature",
             Reported,
@@ -2115,6 +2955,174 @@ pub(super) fn seed() -> Vec<ValueDef> {
             "Status",
         )
         .awd(&[(5, 4)]),
+        v(
+            "awd.timer_temp",
+            "Haldex timer temperature",
+            Reported,
+            Haldex,
+            "Timer",
+        )
+        .awd(&[(2, 1)]),
+        v(
+            "awd.timer_hours",
+            "Haldex timer operating time",
+            Reported,
+            Haldex,
+            "Timer",
+        )
+        .awd(&[(2, 2)]),
+        v(
+            "awd.pump_frequency",
+            "Haldex pump running frequency",
+            Reported,
+            Haldex,
+            "Pump",
+        )
+        .awd(&[(2, 3)]),
+        v(
+            "awd.pump_enabled",
+            "Haldex pump V181 enabled",
+            Reported,
+            Haldex,
+            "Pump",
+        )
+        .awd(&[(4, 1)]),
+        v(
+            "awd.pump_running",
+            "Haldex pump V181 running",
+            Reported,
+            Haldex,
+            "Pump",
+        )
+        .awd(&[(4, 2)]),
+        v(
+            "awd.pump_actuation",
+            "Haldex pump V181 actuation",
+            Reported,
+            Haldex,
+            "Pump",
+        )
+        .awd(&[(4, 3)]),
+        v(
+            "awd.pump_current",
+            "Haldex pump V181 current",
+            Reported,
+            Haldex,
+            "Pump",
+        )
+        .awd(&[(4, 4)]),
+        v(
+            "awd.engine_torque",
+            "Engine torque (Haldex)",
+            Reported,
+            Haldex,
+            "Inputs",
+        )
+        .awd(&[(10, 1)]),
+        v(
+            "awd.vehicle_speed",
+            "Vehicle speed (Haldex)",
+            Reported,
+            Haldex,
+            "Inputs",
+        )
+        .awd(&[(10, 2)]),
+        v(
+            "awd.steering_angle",
+            "Steering angle (Haldex)",
+            Reported,
+            Haldex,
+            "Inputs",
+        )
+        .awd(&[(10, 3)]),
+        v(
+            "awd.specified_pressure",
+            "Haldex specified pressure",
+            Reported,
+            Haldex,
+            "Inputs",
+        )
+        .awd(&[(10, 4)]),
+        v(
+            "awd.plausibility",
+            "Haldex plausibility detection",
+            Reported,
+            Haldex,
+            "Checks",
+        )
+        .awd(&[(6, 1)]),
+        v(
+            "awd.module_error",
+            "Haldex control module error",
+            Reported,
+            Haldex,
+            "Checks",
+        )
+        .awd(&[(6, 4)]),
+        v(
+            "awd.offroad",
+            "Haldex offroad mode",
+            Reported,
+            Haldex,
+            "Checks",
+        )
+        .awd(&[(7, 1)]),
+        v(
+            "awd.coding",
+            "Haldex control module coding",
+            Reported,
+            Haldex,
+            "Module info",
+        )
+        .awd(&[(2, 4), (7, 3)]),
+        v(
+            "awd.manufacturer",
+            "Vehicle manufacturer (Haldex)",
+            Reported,
+            Haldex,
+            "Module info",
+        )
+        .awd(&[(13, 1)]),
+        v(
+            "awd.platform",
+            "Vehicle platform and type (Haldex)",
+            Reported,
+            Haldex,
+            "Module info",
+        )
+        .awd(&[(14, 1)]),
+        v(
+            "awd.valve_curve",
+            "Haldex valve current characteristic",
+            Reported,
+            Haldex,
+            "Module info",
+        )
+        .awd(&[(25, 1)]),
+        v(
+            "awd.flash_ok_count",
+            "Haldex successful flash operations",
+            Reported,
+            Haldex,
+            "Module info",
+        )
+        .awd(&[(75, 1)]),
+        v(
+            "awd.flash_attempts",
+            "Haldex flash attempts",
+            Reported,
+            Haldex,
+            "Module info",
+        )
+        .awd(&[(75, 2)]),
+        v(
+            "awd.inconsistency",
+            "Haldex inconsistency bit",
+            Reported,
+            Haldex,
+            "Module info",
+        )
+        .awd(&[(75, 3)]),
         v(
             "awd.mode",
             "Haldex mode (applied)",
@@ -2784,6 +3792,398 @@ pub(super) fn seed() -> Vec<ValueDef> {
             "ZAS",
         )
         .ican("ignition.zas.kl50"),
+        v(
+            "bcm.load_mgmt",
+            "Load management stage",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(31, 1)]),
+        v(
+            "bcm.kl30_v",
+            "Terminal 30 voltage (BCM)",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(31, 2)]),
+        v(
+            "bcm.generator_load",
+            "Generator load (BCM)",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(31, 3)]),
+        v(
+            "bcm.short_trips",
+            "Short-distance operations",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(31, 4)]),
+        v(
+            "bcm.critical_time",
+            "Load management critical time",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(32, 1)]),
+        v(
+            "bcm.transport_mode_v",
+            "Transport mode no-load voltage",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(32, 2)]),
+        v(
+            "bcm.shutoff_count",
+            "Load shut-off counter",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(32, 3)]),
+        v(
+            "bcm.shutoff_prio_a",
+            "Shut-off priority A (engine on/start)",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(33, 1)]),
+        v(
+            "bcm.shutoff_prio_b",
+            "Shut-off priority B (terminal 15 on)",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(33, 2)]),
+        v(
+            "bcm.shutoff_prio_c",
+            "Shut-off priority C (terminal 15 off)",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(33, 3)]),
+        v(
+            "bcm.shutoff_prio_d",
+            "Shut-off priority D (short circuit)",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(33, 4)]),
+        v(
+            "bcm.shutoff_protect_1",
+            "Max. shut-off protection 1",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(34, 1)]),
+        v(
+            "bcm.shutoff_protect_2",
+            "Max. shut-off protection 2",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(35, 1)]),
+        v(
+            "bcm.quiescent_recent_v",
+            "Quiescent voltage, recent phase",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(36, 1)]),
+        v(
+            "bcm.quiescent_second_v",
+            "Quiescent voltage, second phase",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(36, 2)]),
+        v(
+            "bcm.quiescent_third_v",
+            "Quiescent voltage, third phase",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(36, 3)]),
+        v(
+            "bcm.quiescent_total_v",
+            "Quiescent voltage, all phases",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(36, 4)]),
+        v(
+            "bcm.voltage_diff_mean",
+            "Voltage difference mean value",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(37, 1)]),
+        v(
+            "bcm.battery_disconnects",
+            "Battery disconnect counter",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(37, 2)]),
+        v(
+            "bcm.seat_heat_shutoff",
+            "Seat heating shut-off",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(37, 3)]),
+        v(
+            "bcm.kl30_left_v",
+            "Terminal 30 voltage left",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(38, 1)]),
+        v(
+            "bcm.kl30_right_v",
+            "Terminal 30 voltage right",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(38, 2)]),
+        v(
+            "bcm.kl30_ref_v",
+            "Terminal 30 voltage reference",
+            Reported,
+            Electrical,
+            "Load management",
+        )
+        .bcm(&[(38, 3)]),
+        v(
+            "bcm.kl_s_hw",
+            "S-contact (hardware)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(61, 1)]),
+        v(
+            "bcm.kl_s_zas",
+            "S-contact (CAN in, ZAS)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(61, 3)]),
+        v(
+            "bcm.kl_s_out",
+            "S-contact (CAN out, BCM)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(61, 4)]),
+        v(
+            "bcm.kl15_hw",
+            "Terminal 15 (hardware)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(62, 1)]),
+        v(
+            "bcm.kl15_zas",
+            "Terminal 15 (CAN in, ZAS)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(62, 3)]),
+        v(
+            "bcm.kl15_out",
+            "Terminal 15 (CAN out, BCM)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(62, 4)]),
+        v(
+            "bcm.kl50_hw",
+            "Terminal 50 (hardware)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(63, 1)]),
+        v(
+            "bcm.kl50_fb",
+            "Terminal 50 (feedback)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(63, 2)]),
+        v(
+            "bcm.kl50_zas",
+            "Terminal 50 (CAN in, ZAS)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(63, 3)]),
+        v(
+            "bcm.kl50_out",
+            "Terminal 50 (CAN out, BCM)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(63, 4)]),
+        v(
+            "bcm.pn_hw",
+            "Release P/N (hardware)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(64, 1)]),
+        v(
+            "bcm.pn_zas",
+            "Release P/N (CAN in, ZAS)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(64, 3)]),
+        v(
+            "bcm.pn_out",
+            "Release P/N (CAN out, BCM)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(64, 4)]),
+        v(
+            "bcm.kl75_zas",
+            "Terminal 75 (CAN in, ZAS)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(65, 3)]),
+        v(
+            "bcm.kl75_out",
+            "Terminal 75 (CAN out, BCM)",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(65, 4)]),
+        v(
+            "bcm.kl30g_relay",
+            "Terminal 30G relay",
+            Reported,
+            Electrical,
+            "Terminals (BCM)",
+        )
+        .bcm(&[(54, 3)]),
+        v(
+            "bcm.vehicle_speed",
+            "Vehicle speed (BCM)",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(71, 1), (74, 3)]),
+        v(
+            "bcm.reverse",
+            "Reverse gear engaged (BCM)",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(55, 1)]),
+        v(
+            "bcm.parking_brake",
+            "Parking brake (BCM)",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(74, 1)]),
+        v(
+            "bcm.crash_signal",
+            "Crash signal",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(71, 2)]),
+        v(
+            "bcm.engine_design",
+            "Engine design / automatic start",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(73, 1)]),
+        v(
+            "bcm.special_vehicle",
+            "Special vehicle activation status",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(73, 2)]),
+        v(
+            "bcm.fuel_pump_relay",
+            "Electric fuel pump relay",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(72, 4)]),
+        v(
+            "bcm.solenoid",
+            "Solenoid (BCM)",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(75, 1)]),
+        v(
+            "bcm.reset_count",
+            "BCM reset counter",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(76, 1)]),
+        v(
+            "bcm.reset_cause",
+            "BCM cause of last reset",
+            Reported,
+            Electrical,
+            "BCM inputs",
+        )
+        .bcm(&[(76, 2)]),
         v("body.door_fl_open", "Door FL open", Reported, Body, "Doors").ican("body.door_fl_open"),
         v("body.door_fr_open", "Door FR open", Reported, Body, "Doors").ican("body.door_fr_open"),
         v("body.door_rl_open", "Door RL open", Reported, Body, "Doors").ican("body.door_rl_open"),
@@ -2986,6 +4386,1552 @@ pub(super) fn seed() -> Vec<ValueDef> {
             "Parking",
         )
         .ican("parking.fault"),
+        v(
+            "bcm.driver_key_switch",
+            "Driver door key switch",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(1, 1)]),
+        v(
+            "bcm.driver_lock_switch",
+            "Driver door interior lock switch",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(1, 2)]),
+        v(
+            "bcm.driver_door",
+            "Driver door status",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(1, 3)]),
+        v(
+            "bcm.lock_fb_driver",
+            "Central locking feedback, driver (F220)",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(1, 4)]),
+        v(
+            "bcm.pass_key_switch",
+            "Passenger door key switch",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(2, 1)]),
+        v(
+            "bcm.pass_lock_switch",
+            "Passenger door interior lock switch",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(2, 2)]),
+        v(
+            "bcm.pass_rotary",
+            "Passenger door rotary switch (F3)",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(2, 3)]),
+        v(
+            "bcm.lock_fb_pass",
+            "Central locking feedback, passenger (F221)",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(2, 4)]),
+        v(
+            "bcm.rl_lock_switch",
+            "Rear left door interior lock switch",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(3, 2)]),
+        v(
+            "bcm.rl_rotary",
+            "Rear left door rotary switch (F10)",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(3, 3)]),
+        v(
+            "bcm.lock_fb_rl",
+            "Central locking feedback, rear left (F222)",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(3, 4)]),
+        v(
+            "bcm.rr_lock_switch",
+            "Rear right door interior lock switch",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(4, 2)]),
+        v(
+            "bcm.rr_rotary",
+            "Rear right door rotary switch (F11)",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(4, 3)]),
+        v(
+            "bcm.lock_fb_rr",
+            "Central locking feedback, rear right (F223)",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(4, 4)]),
+        v(
+            "bcm.fuel_door_switch",
+            "Interior fuel door unlock switch",
+            Reported,
+            Body,
+            "Locks (BCM)",
+        )
+        .bcm(&[(6, 4)]),
+        v(
+            "bcm.tailgate_key_switch",
+            "Tailgate key switch",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(5, 1)]),
+        v(
+            "bcm.tailgate_lock_fb",
+            "Central locking feedback, tailgate",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(5, 2)]),
+        v(
+            "bcm.tailgate_prelatch",
+            "Tailgate preliminary latch (F256)",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(5, 3)]),
+        v(
+            "bcm.tailgate_main_latch",
+            "Tailgate main latch (F256)",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(5, 4)]),
+        v(
+            "bcm.rear_lid_unlock_switch",
+            "Rear lid unlock switch",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(6, 3)]),
+        v(
+            "bcm.tailgate_release",
+            "Tailgate release",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(7, 1)]),
+        v(
+            "bcm.tailgate_ext_switch",
+            "Tailgate exterior switch (E234)",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(7, 2)]),
+        v(
+            "bcm.tailgate_2part_switch",
+            "Tailgate 2-part switch (E615)",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(7, 4)]),
+        v(
+            "bcm.closing_aid_left",
+            "Closing aid left motor (V399)",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(11, 1)]),
+        v(
+            "bcm.closing_aid_right",
+            "Closing aid right motor (V398)",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(11, 2)]),
+        v(
+            "bcm.closing_aid_limits",
+            "Closing aid limit switches",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(11, 3)]),
+        v(
+            "bcm.tailgate_f206",
+            "Tailgate switch (F206)",
+            Reported,
+            Body,
+            "Tailgate (BCM)",
+        )
+        .bcm(&[(11, 4)]),
+        v(
+            "bcm.heated_ws_switch",
+            "Heated windscreen switch",
+            Reported,
+            Body,
+            "Heating (BCM)",
+        )
+        .bcm(&[(8, 1)]),
+        v(
+            "bcm.heated_ws_relay",
+            "Heated windscreen relay",
+            Reported,
+            Body,
+            "Heating (BCM)",
+        )
+        .bcm(&[(8, 2)]),
+        v(
+            "bcm.heated_ws_light",
+            "Heated windscreen light",
+            Reported,
+            Body,
+            "Heating (BCM)",
+        )
+        .bcm(&[(8, 3)]),
+        v(
+            "bcm.heated_jets",
+            "Heated washer jets",
+            Reported,
+            Body,
+            "Heating (BCM)",
+        )
+        .bcm(&[(8, 4)]),
+        v(
+            "bcm.rear_defrost_switch",
+            "Rear defrost switch",
+            Reported,
+            Body,
+            "Heating (BCM)",
+        )
+        .bcm(&[(9, 1)]),
+        v(
+            "bcm.rear_defrost_relay",
+            "Rear defrost relay (J9)",
+            Reported,
+            Body,
+            "Heating (BCM)",
+        )
+        .bcm(&[(9, 2)]),
+        v(
+            "bcm.hood_switch",
+            "Hood switch (F266)",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(10, 1)]),
+        v(
+            "bcm.sunroof_enable",
+            "Sunroof enable",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(14, 1)]),
+        v(
+            "bcm.sunroof_operation",
+            "Sunroof operation",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(14, 2)]),
+        v(
+            "bcm.spoiler_position",
+            "Spoiler position",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(81, 1)]),
+        v(
+            "bcm.spoiler_thermal",
+            "Spoiler thermal protection",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(81, 2)]),
+        v(
+            "bcm.spoiler_switch_range",
+            "Spoiler switch range",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(81, 3)]),
+        v(
+            "bcm.spoiler_led",
+            "Spoiler function LED",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(81, 4)]),
+        v(
+            "bcm.roof_open_rest",
+            "Roof open/rested",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(82, 1)]),
+        v(
+            "bcm.roof_closed_rest",
+            "Roof closed/rested",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(82, 2)]),
+        v(
+            "bcm.roof_position",
+            "Roof position",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(82, 3)]),
+        v(
+            "bcm.top_status",
+            "Convertible top status",
+            Reported,
+            Body,
+            "Hood & roof",
+        )
+        .bcm(&[(127, 3)]),
+        v(
+            "bcm.light_sensor_brightness",
+            "Light sensor brightness",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(15, 1)]),
+        v(
+            "bcm.light_sensor_dark",
+            "Light sensor light/dark",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(15, 2)]),
+        v(
+            "bcm.light_sensor_request",
+            "Light sensor requirements",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(15, 3)]),
+        v(
+            "bcm.rain_sensor",
+            "Rain sensor",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(15, 4)]),
+        v(
+            "bcm.wiper_stalk",
+            "Wiper signal, steering column",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(16, 1)]),
+        v(
+            "bcm.front_wiper",
+            "Front wiper",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(16, 2)]),
+        v(
+            "bcm.wiper_end_position",
+            "Wiper end position",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(16, 3)]),
+        v(
+            "bcm.wiper_cycle",
+            "Wiper cycle",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(16, 4)]),
+        v(
+            "bcm.washer_pump_front",
+            "Washer pump (front)",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(72, 1)]),
+        v(
+            "bcm.washer_pump_rear",
+            "Washer pump (rear)",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(72, 2)]),
+        v(
+            "bcm.headlight_washer_relay",
+            "Headlight washer relay",
+            Reported,
+            Body,
+            "Wipers & sensors",
+        )
+        .bcm(&[(72, 3)]),
+        v("bcm.horn", "Horn (H1)", Reported, Body, "Misc (BCM)").bcm(&[(71, 3)]),
+        v(
+            "bcm.garage_door",
+            "Garage door opener",
+            Reported,
+            Body,
+            "Misc (BCM)",
+        )
+        .bcm(&[(71, 4)]),
+        v(
+            "bcm.tilt_x_ref",
+            "Tilt sensor X reference angle",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(17, 1)]),
+        v(
+            "bcm.tilt_x_delta",
+            "Tilt sensor X change in angle",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(17, 2)]),
+        v(
+            "bcm.tilt_y_ref",
+            "Tilt sensor Y reference angle",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(17, 3)]),
+        v(
+            "bcm.tilt_y_delta",
+            "Tilt sensor Y change in angle",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(17, 4)]),
+        v(
+            "bcm.tilt_angle",
+            "Tilt sensor angle",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(125, 1)]),
+        v("bcm.tilt_v", "Tilt sensor voltage", Reported, Body, "Alarm").bcm(&[(125, 2)]),
+        v(
+            "bcm.alarm_horn_src_1",
+            "Alarm horn, 1st alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(18, 1)]),
+        v(
+            "bcm.alarm_horn_src_2",
+            "Alarm horn, 2nd alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(18, 2)]),
+        v(
+            "bcm.alarm_horn_src_3",
+            "Alarm horn, 3rd alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(18, 3)]),
+        v(
+            "bcm.alarm_horn_src_4",
+            "Alarm horn, 4th alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(18, 4)]),
+        v(
+            "bcm.alarm_interior_src_1",
+            "Interior monitoring, 1st alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(19, 1)]),
+        v(
+            "bcm.alarm_interior_src_2",
+            "Interior monitoring, 2nd alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(19, 2)]),
+        v(
+            "bcm.alarm_interior_src_3",
+            "Interior monitoring, 3rd alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(19, 3)]),
+        v(
+            "bcm.alarm_interior_src_4",
+            "Interior monitoring, 4th alarm source",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(19, 4)]),
+        v(
+            "bcm.alarm_1_trigger",
+            "Last alarm source trigger",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(20, 1)]),
+        v(
+            "bcm.alarm_1_date",
+            "Last alarm source date",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(20, 2)]),
+        v(
+            "bcm.alarm_2_trigger",
+            "Second alarm source trigger",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(21, 1)]),
+        v(
+            "bcm.alarm_2_date",
+            "Second alarm source date",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(21, 2)]),
+        v(
+            "bcm.alarm_2_time",
+            "Second alarm source time",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(21, 3)]),
+        v(
+            "bcm.alarm_2_km",
+            "Second alarm source mileage",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(21, 4)]),
+        v(
+            "bcm.alarm_3_trigger",
+            "Third alarm source trigger",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(22, 1)]),
+        v(
+            "bcm.alarm_3_date",
+            "Third alarm source date",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(22, 2)]),
+        v(
+            "bcm.alarm_3_time",
+            "Third alarm source time",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(22, 3)]),
+        v(
+            "bcm.alarm_3_km",
+            "Third alarm source mileage",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(22, 4)]),
+        v(
+            "bcm.alarm_4_trigger",
+            "Fourth alarm source trigger",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(23, 1)]),
+        v(
+            "bcm.alarm_4_date",
+            "Fourth alarm source date",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(23, 2)]),
+        v(
+            "bcm.alarm_4_time",
+            "Fourth alarm source time",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(23, 3)]),
+        v(
+            "bcm.alarm_4_km",
+            "Fourth alarm source mileage",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(23, 4)]),
+        v(
+            "bcm.alarm_sensor_status",
+            "Alarm sensor status",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(25, 1)]),
+        v(
+            "bcm.alarm_recognition",
+            "Alarm recognition",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(25, 2), (26, 2)]),
+        v(
+            "bcm.alarm_sensor_switch",
+            "Alarm sensor switch",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(25, 3)]),
+        v(
+            "bcm.alarm_led",
+            "Alarm LED function",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(25, 4)]),
+        v(
+            "bcm.siren_status",
+            "Alarm siren status",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(26, 1)]),
+        v(
+            "bcm.alarm_horn_active",
+            "Alarm horn active",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(26, 3)]),
+        v(
+            "bcm.alarm_horn_atws",
+            "Alarm horn (ATWS horn)",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(26, 4)]),
+        v(
+            "bcm.siren_battery",
+            "Siren battery condition",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(126, 1)]),
+        v(
+            "bcm.siren_low_v",
+            "Siren low voltage",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(126, 2)]),
+        v(
+            "bcm.alarm_sensor_state_127",
+            "Alarm sensor status (group 127)",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(127, 1)]),
+        v(
+            "bcm.alarm_sensor_low_v",
+            "Alarm sensor low voltage",
+            Reported,
+            Body,
+            "Alarm",
+        )
+        .bcm(&[(127, 2)]),
+        v(
+            "bcm.remote_key_number",
+            "Remote key number",
+            Reported,
+            Body,
+            "Remotes",
+        )
+        .bcm(&[(91, 1)]),
+        v(
+            "bcm.remote_buttons",
+            "Remote control buttons",
+            Reported,
+            Body,
+            "Remotes",
+        )
+        .bcm(&[(91, 2)]),
+        v(
+            "bcm.immo_key_recognition",
+            "Immobilizer key recognition",
+            Reported,
+            Body,
+            "Remotes",
+        )
+        .bcm(&[(91, 3)]),
+        v(
+            "bcm.remotes_adapted",
+            "Number of adapted remotes",
+            Reported,
+            Body,
+            "Remotes",
+        )
+        .bcm(&[(91, 4)]),
+        v(
+            "bcm.remote_fixed_code",
+            "Remote fixed code",
+            Reported,
+            Body,
+            "Remotes",
+        )
+        .bcm(&[(92, 1)]),
+        v(
+            "bcm.remote_in_range",
+            "Remote code in reception range",
+            Reported,
+            Body,
+            "Remotes",
+        )
+        .bcm(&[(92, 2)]),
+        v(
+            "bcm.remote_variable_code",
+            "Remote variable code algorithm",
+            Reported,
+            Body,
+            "Remotes",
+        )
+        .bcm(&[(92, 3)]),
+        v(
+            "bcm.thermal_central_locking",
+            "Central locking thermal protection",
+            Reported,
+            Body,
+            "Thermal protection",
+        )
+        .bcm(&[(83, 1)]),
+        v(
+            "bcm.thermal_rearlid",
+            "Rear lid thermal protection",
+            Reported,
+            Body,
+            "Thermal protection",
+        )
+        .bcm(&[(83, 2)]),
+        v(
+            "bcm.thermal_tank_flap",
+            "Tank flap thermal protection",
+            Reported,
+            Body,
+            "Thermal protection",
+        )
+        .bcm(&[(83, 3)]),
+        v(
+            "bcm.thermal_rear_window",
+            "Rear window thermal protection",
+            Reported,
+            Body,
+            "Thermal protection",
+        )
+        .bcm(&[(83, 4)]),
+        v(
+            "bcm.thermal_lid_right",
+            "Rear lid right thermal protection",
+            Reported,
+            Body,
+            "Thermal protection",
+        )
+        .bcm(&[(84, 1)]),
+        v(
+            "bcm.thermal_lid_left",
+            "Rear lid left thermal protection",
+            Reported,
+            Body,
+            "Thermal protection",
+        )
+        .bcm(&[(84, 2)]),
+        v(
+            "bcm.thermal_closing_aid",
+            "Closing aid thermal protection",
+            Reported,
+            Body,
+            "Thermal protection",
+        )
+        .bcm(&[(84, 3)]),
+        v(
+            "bcm.central_hist_01_entry",
+            "Central lock history I: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(101, 1)]),
+        v(
+            "bcm.central_hist_01_op_a",
+            "Central lock history I: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(101, 2)]),
+        v(
+            "bcm.central_hist_01_op_b",
+            "Central lock history I: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(101, 3)]),
+        v(
+            "bcm.central_hist_01_log",
+            "Central lock history I: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(101, 4)]),
+        v(
+            "bcm.central_hist_02_entry",
+            "Central lock history II: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(102, 1)]),
+        v(
+            "bcm.central_hist_02_op_a",
+            "Central lock history II: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(102, 2)]),
+        v(
+            "bcm.central_hist_02_op_b",
+            "Central lock history II: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(102, 3)]),
+        v(
+            "bcm.central_hist_02_log",
+            "Central lock history II: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(102, 4)]),
+        v(
+            "bcm.central_hist_03_entry",
+            "Central lock history III: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(103, 1)]),
+        v(
+            "bcm.central_hist_03_op_a",
+            "Central lock history III: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(103, 2)]),
+        v(
+            "bcm.central_hist_03_op_b",
+            "Central lock history III: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(103, 3)]),
+        v(
+            "bcm.central_hist_03_log",
+            "Central lock history III: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(103, 4)]),
+        v(
+            "bcm.central_hist_04_entry",
+            "Central lock history IV: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(104, 1)]),
+        v(
+            "bcm.central_hist_04_op_a",
+            "Central lock history IV: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(104, 2)]),
+        v(
+            "bcm.central_hist_04_op_b",
+            "Central lock history IV: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(104, 3)]),
+        v(
+            "bcm.central_hist_04_log",
+            "Central lock history IV: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(104, 4)]),
+        v(
+            "bcm.central_hist_05_entry",
+            "Central lock history V: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(105, 1)]),
+        v(
+            "bcm.central_hist_05_op_a",
+            "Central lock history V: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(105, 2)]),
+        v(
+            "bcm.central_hist_05_op_b",
+            "Central lock history V: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(105, 3)]),
+        v(
+            "bcm.central_hist_05_log",
+            "Central lock history V: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(105, 4)]),
+        v(
+            "bcm.central_hist_06_entry",
+            "Central lock history VI: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(106, 1)]),
+        v(
+            "bcm.central_hist_06_op_a",
+            "Central lock history VI: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(106, 2)]),
+        v(
+            "bcm.central_hist_06_op_b",
+            "Central lock history VI: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(106, 3)]),
+        v(
+            "bcm.central_hist_06_log",
+            "Central lock history VI: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(106, 4)]),
+        v(
+            "bcm.central_hist_07_entry",
+            "Central lock history VII: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(107, 1)]),
+        v(
+            "bcm.central_hist_07_op_a",
+            "Central lock history VII: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(107, 2)]),
+        v(
+            "bcm.central_hist_07_op_b",
+            "Central lock history VII: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(107, 3)]),
+        v(
+            "bcm.central_hist_07_log",
+            "Central lock history VII: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(107, 4)]),
+        v(
+            "bcm.central_hist_08_entry",
+            "Central lock history VIII: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(108, 1)]),
+        v(
+            "bcm.central_hist_08_op_a",
+            "Central lock history VIII: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(108, 2)]),
+        v(
+            "bcm.central_hist_08_op_b",
+            "Central lock history VIII: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(108, 3)]),
+        v(
+            "bcm.central_hist_08_log",
+            "Central lock history VIII: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(108, 4)]),
+        v(
+            "bcm.central_hist_09_entry",
+            "Central lock history IX: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(109, 1)]),
+        v(
+            "bcm.central_hist_09_op_a",
+            "Central lock history IX: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(109, 2)]),
+        v(
+            "bcm.central_hist_09_op_b",
+            "Central lock history IX: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(109, 3)]),
+        v(
+            "bcm.central_hist_09_log",
+            "Central lock history IX: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(109, 4)]),
+        v(
+            "bcm.central_hist_10_entry",
+            "Central lock history X: entry",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(110, 1)]),
+        v(
+            "bcm.central_hist_10_op_a",
+            "Central lock history X: operation A",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(110, 2)]),
+        v(
+            "bcm.central_hist_10_op_b",
+            "Central lock history X: operation B",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(110, 3)]),
+        v(
+            "bcm.central_hist_10_log",
+            "Central lock history X: history",
+            Reported,
+            Body,
+            "Lock history",
+        )
+        .bcm(&[(110, 4)]),
+        v(
+            "bcm.comfort_hist_01_entry",
+            "Comfort history I: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(111, 1)]),
+        v(
+            "bcm.comfort_hist_01_op_a",
+            "Comfort history I: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(111, 2)]),
+        v(
+            "bcm.comfort_hist_01_op_b",
+            "Comfort history I: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(111, 3)]),
+        v(
+            "bcm.comfort_hist_01_log",
+            "Comfort history I: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(111, 4)]),
+        v(
+            "bcm.comfort_hist_02_entry",
+            "Comfort history II: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(112, 1)]),
+        v(
+            "bcm.comfort_hist_02_op_a",
+            "Comfort history II: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(112, 2)]),
+        v(
+            "bcm.comfort_hist_02_op_b",
+            "Comfort history II: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(112, 3)]),
+        v(
+            "bcm.comfort_hist_02_log",
+            "Comfort history II: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(112, 4)]),
+        v(
+            "bcm.comfort_hist_03_entry",
+            "Comfort history III: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(113, 1)]),
+        v(
+            "bcm.comfort_hist_03_op_a",
+            "Comfort history III: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(113, 2)]),
+        v(
+            "bcm.comfort_hist_03_op_b",
+            "Comfort history III: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(113, 3)]),
+        v(
+            "bcm.comfort_hist_03_log",
+            "Comfort history III: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(113, 4)]),
+        v(
+            "bcm.comfort_hist_04_entry",
+            "Comfort history IV: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(114, 1)]),
+        v(
+            "bcm.comfort_hist_04_op_a",
+            "Comfort history IV: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(114, 2)]),
+        v(
+            "bcm.comfort_hist_04_op_b",
+            "Comfort history IV: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(114, 3)]),
+        v(
+            "bcm.comfort_hist_04_log",
+            "Comfort history IV: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(114, 4)]),
+        v(
+            "bcm.comfort_hist_05_entry",
+            "Comfort history V: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(115, 1)]),
+        v(
+            "bcm.comfort_hist_05_op_a",
+            "Comfort history V: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(115, 2)]),
+        v(
+            "bcm.comfort_hist_05_op_b",
+            "Comfort history V: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(115, 3)]),
+        v(
+            "bcm.comfort_hist_05_log",
+            "Comfort history V: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(115, 4)]),
+        v(
+            "bcm.comfort_hist_06_entry",
+            "Comfort history VI: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(116, 1)]),
+        v(
+            "bcm.comfort_hist_06_op_a",
+            "Comfort history VI: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(116, 2)]),
+        v(
+            "bcm.comfort_hist_06_op_b",
+            "Comfort history VI: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(116, 3)]),
+        v(
+            "bcm.comfort_hist_06_log",
+            "Comfort history VI: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(116, 4)]),
+        v(
+            "bcm.comfort_hist_07_entry",
+            "Comfort history VII: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(117, 1)]),
+        v(
+            "bcm.comfort_hist_07_op_a",
+            "Comfort history VII: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(117, 2)]),
+        v(
+            "bcm.comfort_hist_07_op_b",
+            "Comfort history VII: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(117, 3)]),
+        v(
+            "bcm.comfort_hist_07_log",
+            "Comfort history VII: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(117, 4)]),
+        v(
+            "bcm.comfort_hist_08_entry",
+            "Comfort history VIII: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(118, 1)]),
+        v(
+            "bcm.comfort_hist_08_op_a",
+            "Comfort history VIII: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(118, 2)]),
+        v(
+            "bcm.comfort_hist_08_op_b",
+            "Comfort history VIII: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(118, 3)]),
+        v(
+            "bcm.comfort_hist_08_log",
+            "Comfort history VIII: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(118, 4)]),
+        v(
+            "bcm.comfort_hist_09_entry",
+            "Comfort history IX: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(119, 1)]),
+        v(
+            "bcm.comfort_hist_09_op_a",
+            "Comfort history IX: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(119, 2)]),
+        v(
+            "bcm.comfort_hist_09_op_b",
+            "Comfort history IX: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(119, 3)]),
+        v(
+            "bcm.comfort_hist_09_log",
+            "Comfort history IX: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(119, 4)]),
+        v(
+            "bcm.comfort_hist_10_entry",
+            "Comfort history X: entry",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(120, 1)]),
+        v(
+            "bcm.comfort_hist_10_op_a",
+            "Comfort history X: operation A",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(120, 2)]),
+        v(
+            "bcm.comfort_hist_10_op_b",
+            "Comfort history X: operation B",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(120, 3)]),
+        v(
+            "bcm.comfort_hist_10_log",
+            "Comfort history X: history",
+            Reported,
+            Body,
+            "Comfort history",
+        )
+        .bcm(&[(120, 4)]),
+        v(
+            "bcm.info_wiper_motor",
+            "Wiper motor component info",
+            Reported,
+            Body,
+            "Module info (BCM)",
+        )
+        .bcm(&[(93, 1)]),
+        v(
+            "bcm.info_rls",
+            "Rain/light sensor component info",
+            Reported,
+            Body,
+            "Module info (BCM)",
+        )
+        .bcm(&[(94, 1)]),
+        v(
+            "bcm.info_siren",
+            "Siren component info",
+            Reported,
+            Body,
+            "Module info (BCM)",
+        )
+        .bcm(&[(95, 1)]),
+        v(
+            "bcm.info_sensor",
+            "Alarm sensor component info",
+            Reported,
+            Body,
+            "Module info (BCM)",
+        )
+        .bcm(&[(96, 1)]),
+        v(
+            "bcm.info_interior_monitor",
+            "Interior monitoring component info",
+            Reported,
+            Body,
+            "Module info (BCM)",
+        )
+        .bcm(&[(97, 1)]),
         v("lights.side", "Side lights", Reported, Lights, "Exterior").ican("lights.side"),
         v("lights.low_beam", "Low beam", Reported, Lights, "Exterior").ican("lights.low_beam"),
         v(
@@ -3118,6 +6064,438 @@ pub(super) fn seed() -> Vec<ValueDef> {
             "Dimming",
         )
         .ican("light.sun_right_wm2"),
+        v(
+            "bcm.lamp_high_l",
+            "Left high beam",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(40, 1)]),
+        v(
+            "bcm.lamp_high_r",
+            "Right high beam",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(40, 2)]),
+        v(
+            "bcm.lamp_xenon_shutter_l",
+            "Left xenon shutter",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(40, 3)]),
+        v(
+            "bcm.lamp_xenon_shutter_r",
+            "Right xenon shutter",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(40, 4)]),
+        v(
+            "bcm.lamp_low_l",
+            "Left low beam",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(42, 1)]),
+        v(
+            "bcm.lamp_low_r",
+            "Right low beam",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(42, 2)]),
+        v(
+            "bcm.lamp_parking_fl",
+            "Left front parking light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(41, 1)]),
+        v(
+            "bcm.lamp_parking_fr",
+            "Right front parking light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(41, 2)]),
+        v(
+            "bcm.lamp_drl_l",
+            "Left DRL",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(41, 3)]),
+        v(
+            "bcm.lamp_drl_r",
+            "Right DRL",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(41, 4)]),
+        v(
+            "bcm.lamp_fog_l",
+            "Left fog lamp",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(42, 3)]),
+        v(
+            "bcm.lamp_fog_r",
+            "Right fog lamp",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(42, 4)]),
+        v(
+            "bcm.lamp_turn_fl",
+            "Left front turn signal",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(43, 1)]),
+        v(
+            "bcm.lamp_turn_fr",
+            "Right front turn signal",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(43, 2)]),
+        v(
+            "bcm.lamp_turn_rl",
+            "Left rear turn signal",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(43, 3)]),
+        v(
+            "bcm.lamp_turn_rr",
+            "Right rear turn signal",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(43, 4)]),
+        v(
+            "bcm.lamp_turn_side_l",
+            "Left side turn signal",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(44, 1)]),
+        v(
+            "bcm.lamp_turn_side_r",
+            "Right side turn signal",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(44, 2)]),
+        v(
+            "bcm.lamp_brake_l",
+            "Left brake light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(45, 1)]),
+        v(
+            "bcm.lamp_brake_r",
+            "Right brake light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(45, 2)]),
+        v(
+            "bcm.lamp_brake_high",
+            "High-mount brake light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(45, 3)]),
+        v(
+            "bcm.lamp_plate",
+            "License plate light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(45, 4)]),
+        v(
+            "bcm.lamp_reverse_l",
+            "Left reverse light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(46, 1)]),
+        v(
+            "bcm.lamp_reverse_r",
+            "Right reverse light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(46, 2)]),
+        v(
+            "bcm.lamp_tail_l",
+            "Left tail light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(46, 3)]),
+        v(
+            "bcm.lamp_tail_r",
+            "Right tail light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(46, 4)]),
+        v(
+            "bcm.lamp_rear_fog_l",
+            "Left rear fog light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(47, 1)]),
+        v(
+            "bcm.lamp_rear_fog_r",
+            "Right rear fog light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(47, 2)]),
+        v(
+            "bcm.lamp_cornering_l",
+            "Left cornering light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(47, 3)]),
+        v(
+            "bcm.lamp_cornering_r",
+            "Right cornering light",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(47, 4)]),
+        v(
+            "bcm.lamp_footwell",
+            "Footwell lighting",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(48, 1)]),
+        v(
+            "bcm.lamp_interior",
+            "Interior lighting",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(48, 2)]),
+        v(
+            "bcm.lamp_hazards",
+            "Hazard lighting",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(48, 3)]),
+        v(
+            "bcm.hazard_switch_led",
+            "Hazard switch LED",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(48, 4)]),
+        v(
+            "bcm.lamp_trunk",
+            "Trunk lighting",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(74, 4)]),
+        v(
+            "bcm.lamp_engine_bay",
+            "Engine bay lighting",
+            Reported,
+            Lights,
+            "Outputs (BCM)",
+        )
+        .bcm(&[(75, 2)]),
+        v(
+            "bcm.ls_off",
+            "Light switch OFF",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(49, 1)]),
+        v(
+            "bcm.ls_parking",
+            "Light switch parking light",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(49, 2)]),
+        v(
+            "bcm.ls_low_beam",
+            "Light switch low beam",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(49, 3)]),
+        v(
+            "bcm.ls_assist",
+            "Light switch assistance driving lights",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(49, 4)]),
+        v(
+            "bcm.ls_front_fog",
+            "Light switch front fog",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(50, 1)]),
+        v(
+            "bcm.ls_rear_fog",
+            "Light switch rear fog",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(50, 2)]),
+        v(
+            "bcm.ls_rotary",
+            "Rotary light switch position",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(51, 1)]),
+        v(
+            "bcm.drl_status",
+            "Daytime running lights status",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(51, 2)]),
+        v(
+            "bcm.afl_status",
+            "Assistant running light status (AFL)",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(51, 3)]),
+        v(
+            "bcm.light_config",
+            "Light configuration",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(51, 4)]),
+        v(
+            "bcm.brake_switch_hw",
+            "Brake light switch (hardware)",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(50, 3)]),
+        v(
+            "bcm.brake_switch_can",
+            "Brake light switch (CAN)",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(50, 4)]),
+        v(
+            "bcm.coming_home",
+            "Coming home",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(52, 2)]),
+        v(
+            "bcm.leaving_home",
+            "Leaving home",
+            Reported,
+            Lights,
+            "Switches (BCM)",
+        )
+        .bcm(&[(52, 4)]),
+        v(
+            "bcm.kl58d_cluster",
+            "Instrument cluster illumination terminal 58d",
+            Reported,
+            Lights,
+            "Dimming (BCM)",
+        )
+        .bcm(&[(53, 1)]),
+        v(
+            "bcm.kl58d_pwm_range",
+            "Terminal 58d PWM range",
+            Reported,
+            Lights,
+            "Dimming (BCM)",
+        )
+        .bcm(&[(53, 2)]),
+        v(
+            "bcm.kl58d_request",
+            "Illumination request 58d",
+            Reported,
+            Lights,
+            "Dimming (BCM)",
+        )
+        .bcm(&[(53, 3)]),
+        v(
+            "bcm.kl58d_tig_request",
+            "Illumination request 58d TIG",
+            Reported,
+            Lights,
+            "Dimming (BCM)",
+        )
+        .bcm(&[(54, 1)]),
         v("rnse.radio_on", "Radio on", Reported, Rnse, "Radio").ican("rnse.radio_on"),
         v("rnse.mode", "Radio mode", Reported, Rnse, "Radio").ican("rnse.mode"),
         v("rnse.on_tv", "On TV", Reported, Rnse, "Radio").ican("rnse.on_tv"),
