@@ -916,19 +916,19 @@ impl Config {
         }
     }
 
-    /// Default when no file exists: ICAN and diag both on `can0`.
+    /// Default when no file exists: ICAN and diag both on `ican`.
     pub fn fallback() -> Self {
         let mut bus = BTreeMap::new();
         bus.insert(
             "ican".into(),
             Bus {
-                iface: "can0".into(),
+                iface: "ican".into(),
             },
         );
         bus.insert(
             "diag".into(),
             Bus {
-                iface: "can0".into(),
+                iface: "ican".into(),
             },
         );
         Config {
@@ -946,6 +946,24 @@ impl Config {
             avsd: Avsd::default(),
             portal: None,
         }
+    }
+
+    /// Older single-adapter installs may still expose ICAN as `can0`.
+    /// Never guess on a multi-CAN host or change an explicitly selected name.
+    pub fn fallback_to_single_can0(&mut self, can_ifaces: &[String]) -> bool {
+        if self.bus.get("ican").map(|b| b.iface.as_str()) != Some("ican")
+            || can_ifaces.len() != 1
+            || can_ifaces[0] != "can0"
+        {
+            return false;
+        }
+        self.bus.get_mut("ican").unwrap().iface = "can0".into();
+        if let Some(diag) = self.bus.get_mut("diag")
+            && diag.iface == "ican"
+        {
+            diag.iface = "can0".into();
+        }
+        true
     }
 
     /// Interfaces with the roles each carries, in a stable order.
@@ -967,6 +985,64 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_buses_use_stable_ican_name() {
+        let cfg = Config::fallback();
+        assert_eq!(cfg.bus["ican"].iface, "ican");
+        assert_eq!(cfg.bus["diag"].iface, "ican");
+    }
+
+    #[test]
+    fn single_can0_fallback_keeps_shared_diag_with_ican() {
+        let mut cfg = Config::fallback();
+        assert!(cfg.fallback_to_single_can0(&["can0".into()]));
+        assert_eq!(cfg.bus["ican"].iface, "can0");
+        assert_eq!(cfg.bus["diag"].iface, "can0");
+        assert_eq!(cfg.ifaces().len(), 1);
+    }
+
+    #[test]
+    fn single_can0_fallback_preserves_diag_selection() {
+        for diag in [None, Some("candiag"), Some("obd")] {
+            let mut cfg = Config::fallback();
+            match diag {
+                Some(iface) => cfg.bus.get_mut("diag").unwrap().iface = iface.into(),
+                None => {
+                    cfg.bus.remove("diag");
+                }
+            }
+            assert!(cfg.fallback_to_single_can0(&["can0".into()]));
+            assert_eq!(cfg.bus.get("diag").map(|b| b.iface.as_str()), diag);
+        }
+    }
+
+    #[test]
+    fn fallback_does_not_guess_on_other_can_topologies() {
+        for names in [
+            vec![],
+            vec!["ican"],
+            vec!["can1"],
+            vec!["can0", "can1"],
+            vec!["ican", "can0"],
+        ] {
+            let mut cfg = Config::fallback();
+            let names = names.into_iter().map(String::from).collect::<Vec<_>>();
+            assert!(!cfg.fallback_to_single_can0(&names));
+            assert_eq!(cfg.bus["ican"].iface, "ican");
+            assert_eq!(cfg.bus["diag"].iface, "ican");
+        }
+    }
+
+    #[test]
+    fn fallback_preserves_explicit_ican_interface() {
+        for iface in ["can0", "custom"] {
+            let mut cfg = Config::fallback();
+            cfg.bus.get_mut("ican").unwrap().iface = iface.into();
+            assert!(!cfg.fallback_to_single_can0(&["can0".into()]));
+            assert_eq!(cfg.bus["ican"].iface, iface);
+        }
+    }
 
     #[test]
     fn dis_old_auto_names_still_parse() {

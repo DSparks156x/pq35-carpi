@@ -1,16 +1,16 @@
 # carpid config. Copy to ~/.config/carpi/carpid.toml.
 #
 # Buses are named by role. `iface` is whatever the interface is called;
-# naming interfaces with systemd-networkd .link files (e.g. "ican", "obd")
+# naming interfaces with systemd-networkd .link files (e.g. "ican", "candiag")
 # beats relying on can0/can1 numbering.
 
 [bus.ican]
-iface = "can0"
+iface = "ican"
 
 # TT: the gateway routes diagnostics from ICAN, so diag shares it.
 # Cars whose gateway won't: point this at an interface on the OBD port.
 [bus.diag]
-iface = "can0"
+iface = "ican"
 
 # RAM ring of every bus. Always holds at least [logs] capture_minutes.
 [recorder]

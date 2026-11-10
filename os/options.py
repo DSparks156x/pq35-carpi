@@ -169,10 +169,11 @@ def drop_section(text, section):
 def carpid_toml(s, default_text):
     t = default_text
     can = s.get("can") or {}
+    t = edit_section(t, "bus.ican", "iface", '"ican"')
     if can.get("usb_diag"):
         t = edit_section(t, "bus.diag", "iface", '"candiag"')
     elif can.get("ican_is_diag"):
-        t = edit_section(t, "bus.diag", "iface", '"can0"')
+        t = edit_section(t, "bus.diag", "iface", '"ican"')
     else:
         t = drop_section(t, "bus.diag")
     t = edit_section(t, "dis", "enabled", "true" if s.get("dis", True) else "false")

@@ -12,7 +12,7 @@
 # they need (manifest.json min_os_profile, docs/BUNDLE.md).
 set -euo pipefail
 
-PROFILE_VERSION=1
+PROFILE_VERSION=2
 
 HAT=carpihat
 USERNAME=${SUDO_USER:-}
@@ -130,9 +130,20 @@ put_file() {
   [ $DRY = 1 ] || { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
 }
 
-# 3. CAN on can0 through systemd-networkd. Not required for online: no hat, no boot stall.
+# 3. Pin the SPI controller to ican, independent of USB enumeration order.
+# Keep can0 network configuration for legacy single-interface installs.
+do_ rm -f /etc/systemd/network/80-can0.link
+if put_file /etc/systemd/network/70-carpi-ican.link "[Match]
+Driver=mcp251x
+
+[Link]
+Name=ican
+TransmitQueueLength=100"; then
+  say "CAN interface naming takes effect on the next boot"
+  REBOOT=1
+fi
 if put_file /etc/systemd/network/80-can0.network "[Match]
-Name=can0
+Name=ican can0
 
 [Link]
 RequiredForOnline=no
@@ -142,15 +153,8 @@ BitRate=100000
 RestartSec=100ms"; then
   if systemctl is-active -q systemd-networkd; then do_ networkctl reload; fi
 fi
-# The mcp2515's default queue is 10 frames; a DIS burst overflows it (ENOBUFS). Applies from
-# the next boot; set it now too.
-if put_file /etc/systemd/network/80-can0.link "[Match]
-OriginalName=can0
-
-[Link]
-TransmitQueueLength=100"; then
-  do_ ip link set can0 txqueuelen 100 2>/dev/null || true
-fi
+# The mcp2515's default queue is 10 frames; a DIS burst overflows it (ENOBUFS).
+do_ ip link set ican txqueuelen 100 2>/dev/null || true
 if ! systemctl is-enabled -q systemd-networkd 2>/dev/null; then
   say "enabling systemd-networkd"; do_ systemctl enable --now systemd-networkd
 fi
@@ -418,4 +422,4 @@ if [ $DRY = 0 ] && [ -x $DTMERGE ]; then
 fi
 
 say "done, profile $PROFILE_VERSION, hat $HAT, user $USERNAME"
-[ $REBOOT = 0 ] || say "reboot for config.txt / group changes"
+[ $REBOOT = 0 ] || say "reboot for config.txt / group / interface naming changes"

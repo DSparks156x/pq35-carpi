@@ -141,7 +141,7 @@ The base image isn't in the bundle. It's a versioned script in rnse-carpi, `os/p
 
 The bundle manifest names the minimum profile version it needs. The script is what I did by hand to the trial card, written down.
 
-Run it as `sudo os/profile.sh [--hat carpihat|cowcarhat] [--tz Area/City] [--dry-run]`; CarPiHat is the default and Drew's hat has no lines yet. It records `PROFILE_VERSION` and the hat in `/etc/carpi-profile`, and also creates `/opt/carpi/releases` owned by the car user. The CAN network file sets `RequiredForOnline=no` so a car without the hat doesn't stall boot in wait-online.
+Run it as `sudo os/profile.sh [--hat carpihat|cowcarhat] [--tz Area/City] [--dry-run]`; CarPiHat is the default and Drew's hat has no lines yet. It records `PROFILE_VERSION` and the hat in `/etc/carpi-profile`, and also creates `/opt/carpi/releases` owned by the car user. The CAN network file sets `RequiredForOnline=no` so a car without the hat doesn't stall boot in wait-online. Profile 2 names the MCP2515 `ican` by its driver; image setup names a selected gs_usb diagnostic adapter `candiag`. ICAN runs at 100 kbit/s and separate USB diagnostics at 500 kbit/s. Reboot after applying the profile for interface naming to take effect. Existing carpid configs are preserved: change old `iface = "can0"` entries to `"ican"` when adopting the named SPI interface. The daemon can use `can0` when `ican` is absent and `can0` is the only CAN interface; a diagnostic role sharing `ican` follows that fallback, while a separate diagnostic selection is preserved.
 
 ## 7. New card: `cargo xtask image`
 

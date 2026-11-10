@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import types
+import tomllib
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,3 +39,23 @@ with tempfile.TemporaryDirectory() as directory, patch.object(options.os, "chown
         assert path.read_bytes() == before, "rerun overwrote existing settings"
 
 print("480 display defaults, fullscreen, leave-it and existing-settings checks passed")
+
+# Exercise real deployment defaults and preserve the chosen diagnostic routing.
+defaults = (ROOT / "deploy/carpid.toml").read_text()
+for can, expected in [
+    ({}, None),
+    ({"ican_is_diag": True}, "ican"),
+    ({"usb_diag": True}, "candiag"),
+    ({"ican_is_diag": True, "usb_diag": True}, "candiag"),
+]:
+    config = tomllib.loads(options.carpid_toml({"can": can}, defaults))
+    assert config["bus"]["ican"]["iface"] == "ican"
+    assert config["bus"].get("diag", {}).get("iface") == expected
+
+writes = {}
+with patch.object(options, "write", side_effect=lambda p, text: writes.update({p: text})):
+    options.apply_usb_can({"can": {"usb_diag": True}})
+assert "Driver=gs_usb\n" in writes["/etc/systemd/network/70-carpi-candiag.link"]
+assert "Name=candiag\n" in writes["/etc/systemd/network/70-carpi-candiag.link"]
+assert "BitRate=500000\n" in writes["/etc/systemd/network/80-carpi-candiag.network"]
+print("stable CAN names, disabled/shared/separate diag and USB priority checks passed")

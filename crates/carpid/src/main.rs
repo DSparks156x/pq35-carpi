@@ -23,6 +23,7 @@ mod config;
 mod datalog;
 mod decoder;
 mod faults;
+mod netdev;
 mod portal;
 mod remote;
 mod runmark;
@@ -48,7 +49,7 @@ use tracing::{info, warn};
 #[derive(Parser)]
 #[command(version, about = "rnse-carpi car daemon")]
 struct Args {
-    /// Config file. Without one, ICAN and diag are both on can0.
+    /// Config file. Without one, ICAN and diag share ican (can0 on a single-CAN legacy install).
     #[arg(long, default_value = "/etc/carpi/carpid.toml")]
     config: PathBuf,
     /// Play a candump file into the ICAN interface instead of opening sockets.
@@ -136,12 +137,12 @@ async fn main() -> anyhow::Result<()> {
     let started = Instant::now();
 
     let have_file = args.config.exists();
-    let cfg = if have_file {
+    let mut cfg = if have_file {
         config::Config::load(&args.config)
             .with_context(|| format!("loading {}", args.config.display()))?
     } else {
         warn!(
-            "{} not found; using can0 for ican and diag",
+            "{} not found; using ican for ican and diag",
             args.config.display()
         );
         config::Config::fallback()
@@ -153,6 +154,18 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     let replay = args.replay.is_some();
+    if !replay {
+        match netdev::can_interfaces(std::path::Path::new("/sys/class/net")) {
+            Ok(names) => {
+                if cfg.fallback_to_single_can0(&names) {
+                    warn!(
+                        "ican is absent and can0 is the only CAN interface; using can0 for ICAN and any shared diagnostics"
+                    );
+                }
+            }
+            Err(e) => warn!("could not enumerate CAN interfaces; keeping configured names: {e}"),
+        }
+    }
     // Not in replay: a dev run mustn't touch the car's crash marker.
     let (mark, previous) = if replay {
         (None, runmark::Previous::Clean)
@@ -747,7 +760,7 @@ impl Daemon {
             (
                 "TX".into(),
                 (if self.cfg.tx.flashing_mode {
-                    "FLASHING MODE â€” CAN sends inhibited"
+                    "FLASHING MODE — CAN sends inhibited"
                 } else if self.cfg.tx.enabled {
                     "on"
                 } else {
