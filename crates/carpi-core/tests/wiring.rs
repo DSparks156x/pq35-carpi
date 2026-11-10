@@ -115,6 +115,33 @@ impl Rig {
 }
 
 #[test]
+fn decoder_reads_are_bounded_and_go_through_the_ican_gate() {
+    let mut r = Rig::new(false);
+    for address in [0x80BFFFC0, 0x80C20000, 0x80C00001] {
+        assert!(r.car.decoder_read_request(address, r.now).is_err());
+    }
+    assert!(r.car.decoder_read_request(0x80C00000, r.now).is_err());
+    r.run(20);
+    assert!(
+        r.car
+            .decoder_read_request(0x80C00000, r.now)
+            .unwrap_err()
+            .contains("Kl15 off")
+    );
+    r.kl15 = true;
+    r.run(5);
+    for address in [0x80C00000, 0x80C1FFC0] {
+        let (iface, frame) = r.car.decoder_read_request(address, r.now).unwrap();
+        assert_eq!(iface, 0);
+        assert_eq!(frame.id, 0x7B0);
+        assert_eq!(frame.data()[0], 0xB1);
+        assert_eq!(&frame.data()[1..5], &address.to_be_bytes());
+        assert_eq!(&frame.data()[5..], &[64, 0, 0]);
+    }
+    assert_eq!(r.car.gate(0).stats(TxClass::Diag).passed, 2);
+}
+
+#[test]
 fn dis_off_by_default_sends_nothing() {
     let mut r = Rig::new(false);
     r.kl15 = true;

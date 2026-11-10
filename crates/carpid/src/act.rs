@@ -133,6 +133,18 @@ impl Actuators {
         self.shutdown_enabled = on;
     }
 
+    /// Queue a frame already approved by the core gate. Unlike automatic
+    /// outputs, an interactive read must report inhibited or full TX queues.
+    pub fn send_checked(&self, iface: usize, frame: Frame) -> Result<(), String> {
+        self.tx
+            .get(iface)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| "CAN transmission is inhibited or unavailable".to_string())?
+            .sender
+            .try_send(frame)
+            .map_err(|_| "CAN transmit queue is full or closed".into())
+    }
+
     pub fn act(&mut self, out: Output, car: &Car) {
         match out {
             Output::Send { iface, frame } => match self.tx.get(iface).and_then(Option::as_ref) {
@@ -281,7 +293,7 @@ fn car_action(a: carpi_input::CarAction) -> Vec<InputAction> {
     }]
 }
 
-fn tx_allowed(enabled: bool, flashing_mode: bool, replay: bool) -> bool {
+pub(crate) fn tx_allowed(enabled: bool, flashing_mode: bool, replay: bool) -> bool {
     enabled && !flashing_mode && !replay
 }
 

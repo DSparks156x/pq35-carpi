@@ -252,6 +252,8 @@ pub struct Jobs {
     pub hub: Arc<CommandHub>,
     pub updater: PathBuf,
     pub config: PathBuf,
+    pub decoder_interface: Option<String>,
+    decoder_busy: AtomicBool,
 }
 
 impl Jobs {
@@ -262,12 +264,35 @@ impl Jobs {
             hub,
             updater,
             config,
+            decoder_interface: None,
+            decoder_busy: AtomicBool::new(false),
         }
     }
 
     /// A job number, unique across update and diag jobs.
     pub fn next_job(&self) -> u32 {
         self.next.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn start_decoder(
+        self: &Arc<Self>,
+        tx: mpsc::Sender<crate::Msg>,
+        events: mpsc::UnboundedSender<JobEvent>,
+    ) -> Result<u32, String> {
+        let interface = self
+            .decoder_interface
+            .clone()
+            .ok_or("decoder read needs a live ICAN interface")?;
+        if self.decoder_busy.swap(true, Ordering::SeqCst) {
+            return Err("a decoder read is already running".into());
+        }
+        let job = self.next_job();
+        let me = self.clone();
+        tokio::spawn(async move {
+            crate::decoder::run(&interface, tx, &events).await;
+            me.decoder_busy.store(false, Ordering::SeqCst);
+        });
+        Ok(job)
     }
 
     /// Starts a job; its events go to `events` and it ends with `Finished`.

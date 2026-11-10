@@ -144,6 +144,28 @@ impl Car {
         &self.controls.gates[idx]
     }
 
+    /// One read-only SDLink decoder request, through the ICAN diagnostic gate.
+    /// Restrict this entry point to aligned 64-byte B1 reads of sector 96;
+    /// it cannot carry firmware writes or relax the Override opcode policy.
+    pub fn decoder_read_request(
+        &mut self,
+        address: u32,
+        now: Instant,
+    ) -> Result<(usize, carpi_can::Frame), String> {
+        if !(0x80C00000..0x80C20000).contains(&address) || !address.is_multiple_of(64) {
+            return Err("decoder read is outside sector 96".into());
+        }
+        let iface = self.ican_idx().ok_or("no ICAN interface configured")?;
+        let view = self.view(now).ok_or("ICAN state unavailable")?;
+        let a = address.to_be_bytes();
+        let frame =
+            carpi_can::Frame::new(0x7B0, &[0xB1, a[0], a[1], a[2], a[3], 64, 0, 0]).unwrap();
+        self.controls.gates[iface]
+            .check(carpi_gate::TxClass::Diag, &frame, now, &view)
+            .map_err(|e| format!("decoder read refused: {e}"))?;
+        Ok((iface, frame))
+    }
+
     /// The DDP session, for state.
     pub fn dis_session(&self) -> &carpi_dis::Session {
         self.display.session()
@@ -474,6 +496,7 @@ impl Car {
             | Request::Capture { .. }
             | Request::Wifi { .. }
             | Request::Storage { .. }
+            | Request::DecoderCrc
             | Request::Datalog { .. } => Response::Error {
                 message: "subscriptions, commands, jobs, captures and logging are handled per connection"
                     .into(),

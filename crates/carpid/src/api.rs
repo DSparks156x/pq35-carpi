@@ -195,6 +195,19 @@ async fn serve(
                     }
                 }
             }
+            Ok(Request::DecoderCrc) => {
+                let (events, rx) = mpsc::unbounded_channel();
+                match jobs.start_decoder(tx.clone(), events) {
+                    Err(message) => Response::Error { message },
+                    Ok(job) => {
+                        if out_tx.send(Response::JobStarted { job }).await.is_err() {
+                            break;
+                        }
+                        forward_job(job, rx, &out_tx);
+                        continue;
+                    }
+                }
+            }
             Ok(Request::Wifi { action }) => {
                 use carpi_proto::WifiAction as W;
                 let nm = crate::wifi::Real;

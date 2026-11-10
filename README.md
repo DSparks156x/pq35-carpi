@@ -42,6 +42,12 @@ carpi replay some.log     # run a candump file through the decoders offline
 
 `carpid --replay some.log --realtime` plays a capture as if it were the bus.
 
+In LIVI, **Car Integration > A/V over SD > Read decoder** reads flash sector 96 and displays its CRC32
+as the installed RNS-E SDLink image identity. Progress and errors appear on the same page; reading
+the complete 128 KiB over CAN can take several minutes. This only reads the unit and does not compare
+or update firmware. The CRC covers the whole sector, including unused bytes, so different installation
+methods can produce different CRCs for the same decoder code. Keep the ignition on and the RNS-E awake during the read.
+
 ## License
 
 PolyForm Noncommercial 1.0.0 ([LICENSE.md](LICENSE.md), [NOTICE](NOTICE)). `crates/carpi-proto` is MIT OR Apache-2.0 so the GPL LIVI fork can link it.

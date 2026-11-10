@@ -21,6 +21,7 @@ mod clock;
 mod commands;
 mod config;
 mod datalog;
+mod decoder;
 mod faults;
 mod portal;
 mod remote;
@@ -91,6 +92,8 @@ pub enum Msg {
     Snapshot(Duration, oneshot::Sender<capture::Snapshot>),
     /// Values from outside the car, unknown after the timeout.
     Values(Vec<(String, Option<carpi_state::Value>)>, Duration),
+    /// Only aligned sector 96 B1 reads, approved through the live gate.
+    DecoderRead(u32, oneshot::Sender<Result<(), String>>),
 }
 
 /// What the main loop owns besides the car model.
@@ -198,11 +201,18 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(read_port(idx, spec.name.clone(), port, tx.clone()));
     }
 
-    let jobs = std::sync::Arc::new(update::Jobs::new(
+    let mut jobs = update::Jobs::new(
         Default::default(),
         cfg.update.updater.clone(),
         args.config.clone(),
-    ));
+    );
+    if !replay {
+        jobs.decoder_interface = ifaces
+            .iter()
+            .find(|i| i.has_role(carpi_core::ROLE_ICAN))
+            .map(|i| i.name.clone());
+    }
+    let jobs = std::sync::Arc::new(jobs);
     act.set_hub(jobs.hub.clone());
     let captures = capture::Captures::new(
         capture::Setup::new(&cfg, &args.config),
@@ -357,6 +367,22 @@ impl Daemon {
     fn handle(&mut self, car: &mut Car, msg: Msg, ifaces: &[carpi_core::IfaceSpec]) {
         let now = Instant::now();
         match msg {
+            Msg::DecoderRead(address, reply) => {
+                let result = if !act::tx_allowed(
+                    self.cfg.tx.enabled,
+                    self.cfg.tx.flashing_mode,
+                    self.replay,
+                ) {
+                    Err(
+                        "CAN transmission is inhibited (replay, TX disabled, or flashing mode)"
+                            .into(),
+                    )
+                } else {
+                    car.decoder_read_request(address, now)
+                        .and_then(|(iface, frame)| self.act.send_checked(iface, frame))
+                };
+                let _ = reply.send(result);
+            }
             Msg::Frame(idx, frame) => {
                 if let Some(ev) = car.ingest(idx, &frame) {
                     info!(
@@ -721,7 +747,7 @@ impl Daemon {
             (
                 "TX".into(),
                 (if self.cfg.tx.flashing_mode {
-                    "FLASHING MODE — CAN sends inhibited"
+                    "FLASHING MODE â€” CAN sends inhibited"
                 } else if self.cfg.tx.enabled {
                     "on"
                 } else {

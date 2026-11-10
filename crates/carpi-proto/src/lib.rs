@@ -124,6 +124,9 @@ pub enum Request {
     Storage {
         action: StorageAction,
     },
+    /// Read the installed RNS-E SDLink sector 96 CRC. A job, with byte
+    /// progress and a final CRC in its successful Finished message.
+    DecoderCrc,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
