@@ -281,6 +281,7 @@ fn print(resp: Response) -> anyhow::Result<()> {
         Response::Job { event, .. } => println!("{}", serde_json::to_string(&event)?),
         Response::Datalog { status } => print_datalog(&status),
         Response::Storage { storage } => println!("{}", serde_json::to_string_pretty(&storage)?),
+        Response::Firmware { status } => println!("{}", serde_json::to_string_pretty(&status)?),
         Response::Settings {
             settings,
             restart_needed,

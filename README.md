@@ -42,11 +42,12 @@ carpi replay some.log     # run a candump file through the decoders offline
 
 `carpid --replay some.log --realtime` plays a capture as if it were the bus.
 
-In LIVI, **Car Integration > A/V over SD > Read decoder** reads flash sector 96 and displays its CRC32
-as the installed RNS-E SDLink image identity. Progress and errors appear on the same page; reading
-the complete 128 KiB over CAN can take several minutes. This only reads the unit and does not compare
-or update firmware. The CRC covers the whole sector, including unused bytes, so different installation
-methods can produce different CRCs for the same decoder code. Keep the ignition on and the RNS-E awake during the read.
+In LIVI, **Car Integration > A/V over SD > SDLink firmware** (also under Software Update) shows the RNS-E SDLink module (sector 107) and the Teensy firmware: what is installed, what this release bundles, and whether it's newer. **Check versions** reads the module header and firmware table over CAN (read only) and asks the Teensy its version. **Install** writes the bundled image after a second press to confirm:
+
+- RNS-E: ignition on, engine off. carpid stops the A/V chain, takes the CAN bus, stages the image over CAN (about a minute), commits it (the RNS-E erases sector 107, programs it and restarts, about 25 s), then reads the sector back and checks its CRC, the restart count and that the module runs. Before the commit nothing is written; a failed check stops there. Procedure: sdlink `docs/PI_UPDATER.md`.
+- Teensy: carpid stops the chain, reboots the Teensy into its bootloader, flashes it and checks the version it reports.
+
+The release CI builds both images from sdlink (`.github/workflows/release.yml`, job `firmware`). **Read decoder** on the A/V over SD page still reads the whole sector 107 CRC32 (several minutes).
 
 ## License
 

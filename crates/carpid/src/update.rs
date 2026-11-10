@@ -254,6 +254,8 @@ pub struct Jobs {
     pub config: PathBuf,
     pub decoder_interface: Option<String>,
     decoder_busy: AtomicBool,
+    /// SDLink firmware status and jobs; `None` in tests and replay.
+    pub firmware: Option<Arc<crate::firmware::Firmware>>,
 }
 
 impl Jobs {
@@ -266,6 +268,7 @@ impl Jobs {
             config,
             decoder_interface: None,
             decoder_busy: AtomicBool::new(false),
+            firmware: None,
         }
     }
 
@@ -283,6 +286,9 @@ impl Jobs {
             .decoder_interface
             .clone()
             .ok_or("decoder read needs a live ICAN interface")?;
+        if self.firmware.as_ref().is_some_and(|f| f.busy()) {
+            return Err("a firmware job is running".into());
+        }
         if self.decoder_busy.swap(true, Ordering::SeqCst) {
             return Err("a decoder read is already running".into());
         }
@@ -291,6 +297,54 @@ impl Jobs {
         tokio::spawn(async move {
             crate::decoder::run(&interface, tx, &events).await;
             me.decoder_busy.store(false, Ordering::SeqCst);
+        });
+        Ok(job)
+    }
+
+    /// Firmware status now, without the bus.
+    pub async fn firmware_status(&self) -> Result<carpi_proto::FirmwareStatus, String> {
+        let fw = self
+            .firmware
+            .clone()
+            .ok_or("firmware status needs a live carpid")?;
+        tokio::task::spawn_blocking(move || fw.status())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// A firmware probe or install: one at a time, and not beside a decoder
+    /// read (both use the RNS-E's B1 service).
+    pub fn start_firmware(
+        self: &Arc<Self>,
+        action: carpi_proto::FirmwareAction,
+        tx: mpsc::Sender<crate::Msg>,
+        events: mpsc::UnboundedSender<JobEvent>,
+    ) -> Result<u32, String> {
+        use carpi_proto::FirmwareAction as A;
+        let fw = self
+            .firmware
+            .clone()
+            .ok_or("firmware jobs need a live carpid")?;
+        match action {
+            A::Status => return Err("status is not a job".into()),
+            A::InstallRnse { confirm: false } | A::InstallTeensy { confirm: false } => {
+                return Err("an install needs confirm: true".into());
+            }
+            _ => {}
+        }
+        if self.decoder_busy.load(Ordering::SeqCst) {
+            return Err("a decoder read is running".into());
+        }
+        fw.claim()?;
+        let job = self.next_job();
+        tokio::spawn(async move {
+            match action {
+                A::Probe => fw.probe(tx, &events).await,
+                A::InstallRnse { .. } => fw.install_rnse(tx, &events).await,
+                A::InstallTeensy { .. } => fw.install_teensy(&events).await,
+                A::Status => {}
+            }
+            fw.done();
         });
         Ok(job)
     }

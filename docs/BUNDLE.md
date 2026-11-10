@@ -53,7 +53,11 @@ share/systemd/system/carpi-move-nvme.service   Move to NVMe's root unit (os/inst
 share/os/move-nvme.sh               its script
 share/sdlink/run/...                sdlink pi/run, as-is (scripts, units, avsd.env)
 share/keys/minisign.pub             signed bundles only: the repo's public key (os/install.sh)
-firmware/teensy/sdemu.hex           only if the build had a Teensy image
+share/udev/99-carpi-teensy.rules    the Teensy's bootloader for dialout (firmware install)
+firmware/teensy/sdemu.hex           sdlink teensy (pio run), if the build had one
+firmware/rnse/sector_107.bin        sdlink rnse/module/build.sh: the RNS-E SDLink module, one whole sector
+firmware/rnse/sector_107.bin.sha256
+firmware/rnse/module.json           its build id, stream formats, table version, sha256 and build history
 ```
 
 `share/` holds defaults. The updater never copies them over user config (`~/.config/carpi`, `~/.config/LIVI`).
@@ -79,7 +83,8 @@ Every binary in `bin/` is an aarch64 ELF built on Debian Trixie (glibc 2.41).
     { "path": "bin/carpi", "sha256": "<64 hex>", "size": 4321000, "mode": "0755" }
   ],
   "firmware": [
-    { "target": "teensy", "path": "firmware/teensy/sdemu.hex", "version": "sdemu 0.4 (2026-11-05, touch, live stream, pool 1500)" }
+    { "target": "teensy", "path": "firmware/teensy/sdemu.hex", "version": "sdemu 0.5 (2026-11-10, touch, live stream, pool 1500, version handshake)" },
+    { "target": "rnse", "path": "firmware/rnse/sector_107.bin", "version": "F46C419D", "chain_fmt": [1, 1] }
   ]
 }
 ```
@@ -99,9 +104,12 @@ Every binary in `bin/` is an aarch64 ELF built on Debian Trixie (glibc 2.41).
 | `files[].size` | integer | bytes |
 | `files[].mode` | string | octal, `"0755"` or `"0644"`. Set this, not the tar header's mode |
 | `firmware` | array | may be empty. Each image is also in `files` |
-| `firmware[].target` | string | `teensy` for now |
-| `firmware[].path` | string | the image, listed in `files` |
-| `firmware[].version` | string | compared as a string; flash only when it differs from what's on the device |
+| `firmware[].target` | string | `teensy` or `rnse` |
+| `firmware[].path` | string | the image, listed in `files`. For `rnse`, `module.json` and the `.sha256` sit beside it |
+| `firmware[].version` | string | `teensy`: its `FW_VERSION`. `rnse`: the module's build id |
+| `firmware[].chain_fmt` | `[min, max]` | `rnse` only: the stream formats this release's avlink and encoder send (sdlink `pi/avlink/rnse_ver.h`); carpid won't install a module that plays none of them |
+
+carpid compares and installs firmware from the LIVI firmware screen (`Request::Firmware`, sdlink `docs/PI_UPDATER.md`); `carpi-update apply` only reports it. The RNS-E order comes from `module.json`: same build id, else stream format, else the position in `history` (sdlink `rnse/module/history.txt`). The Teensy's comes from the date and version in its version string.
 
 Readers ignore fields they don't know. A tarball entry that isn't in `files` (or the two manifest files) is an error, and so is a listed file that's missing or has the wrong size or hash.
 

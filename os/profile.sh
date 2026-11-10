@@ -169,6 +169,15 @@ fi
 if ! id -nG "$USERNAME" | tr ' ' '\n' | grep -qx input; then
   say "adding $USERNAME to input"; do_ usermod -aG input "$USERNAME"; REBOOT=1
 fi
+# SDLink Teensy: its serial port and its HalfKay bootloader (firmware install), dialout
+# (same rule as deploy/99-carpi-teensy.rules).
+if put_file /etc/udev/rules.d/99-carpi-teensy.rules \
+  'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="0478", GROUP="dialout", MODE="0660"'; then
+  do_ udevadm control --reload
+fi
+if ! id -nG "$USERNAME" | tr ' ' '\n' | grep -qx dialout; then
+  say "adding $USERNAME to dialout"; do_ usermod -aG dialout "$USERNAME"; REBOOT=1
+fi
 
 # 5. Lingering: user services (carpid, LIVI) start at boot without a login.
 if [ ! -e "/var/lib/systemd/linger/$USERNAME" ]; then

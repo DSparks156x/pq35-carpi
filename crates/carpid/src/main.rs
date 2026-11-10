@@ -23,12 +23,15 @@ mod config;
 mod datalog;
 mod decoder;
 mod faults;
+mod firmware;
 mod netdev;
 mod portal;
 mod remote;
+mod rnse_bus;
 mod runmark;
 mod settings;
 mod storage;
+mod teensy;
 mod update;
 mod wifi;
 
@@ -93,8 +96,17 @@ pub enum Msg {
     Snapshot(Duration, oneshot::Sender<capture::Snapshot>),
     /// Values from outside the car, unknown after the timeout.
     Values(Vec<(String, Option<carpi_state::Value>)>, Duration),
-    /// Only aligned sector 96 B1 reads, approved through the live gate.
-    DecoderRead(u32, oneshot::Sender<Result<(), String>>),
+    /// RNS-E service traffic for the decoder and firmware jobs, through the
+    /// live gate (`carpi_core::rnse_service`).
+    Rnse(RnseOp, oneshot::Sender<Result<(), String>>),
+}
+
+#[derive(Debug)]
+pub enum RnseOp {
+    Send([u8; 8]),
+    /// Take the ICAN bus for an RNS-E write, at most this long.
+    Lease(Duration),
+    Release,
 }
 
 /// What the main loop owns besides the car model.
@@ -224,6 +236,13 @@ async fn main() -> anyhow::Result<()> {
             .iter()
             .find(|i| i.has_role(carpi_core::ROLE_ICAN))
             .map(|i| i.name.clone());
+    }
+    if !replay {
+        jobs.firmware = Some(std::sync::Arc::new(firmware::Firmware::new(
+            PathBuf::from("/opt/carpi/current"),
+            cfg.avsd.unit.clone(),
+            jobs.decoder_interface.clone(),
+        )));
     }
     let jobs = std::sync::Arc::new(jobs);
     act.set_hub(jobs.hub.clone());
@@ -380,19 +399,22 @@ impl Daemon {
     fn handle(&mut self, car: &mut Car, msg: Msg, ifaces: &[carpi_core::IfaceSpec]) {
         let now = Instant::now();
         match msg {
-            Msg::DecoderRead(address, reply) => {
-                let result = if !act::tx_allowed(
-                    self.cfg.tx.enabled,
-                    self.cfg.tx.flashing_mode,
-                    self.replay,
-                ) {
-                    Err(
+            Msg::Rnse(op, reply) => {
+                let allowed =
+                    act::tx_allowed(self.cfg.tx.enabled, self.cfg.tx.flashing_mode, self.replay);
+                let result = match op {
+                    RnseOp::Release => {
+                        car.rnse_release();
+                        Ok(())
+                    }
+                    _ if !allowed => Err(
                         "CAN transmission is inhibited (replay, TX disabled, or flashing mode)"
                             .into(),
-                    )
-                } else {
-                    car.decoder_read_request(address, now)
-                        .and_then(|(iface, frame)| self.act.send_checked(iface, frame))
+                    ),
+                    RnseOp::Lease(max) => car.rnse_lease(max, now),
+                    RnseOp::Send(d) => car
+                        .rnse_service_request(&d, now)
+                        .and_then(|(iface, frame)| self.act.send_checked(iface, frame)),
                 };
                 let _ = reply.send(result);
             }

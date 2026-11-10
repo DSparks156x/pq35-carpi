@@ -124,9 +124,110 @@ pub enum Request {
     Storage {
         action: StorageAction,
     },
-    /// Read the installed RNS-E SDLink sector 96 CRC. A job, with byte
+    /// Read the installed RNS-E SDLink sector 107 CRC. A job, with byte
     /// progress and a final CRC in its successful Finished message.
     DecoderCrc,
+    /// SDLink firmware: what is installed on the RNS-E and the Teensy, what
+    /// this release bundles, and installing it (sdlink docs/PI_UPDATER.md).
+    /// `status` answers [`Response::Firmware`]; the others are jobs like
+    /// `Update`, ending with a [`JobEvent::Firmware`] then `Finished`.
+    Firmware {
+        action: FirmwareAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FirmwareAction {
+    /// What carpid knows now, without touching the bus or the Teensy.
+    Status,
+    /// Reads the RNS-E module header and firmware table over CAN (B1, read
+    /// only) and asks the Teensy its version when the chain isn't using it.
+    Probe,
+    /// Writes the bundled sector 107 image (stages over CAN, one commit,
+    /// the RNS-E restarts). Refused without `confirm`. Ignition on.
+    InstallRnse {
+        #[serde(default)]
+        confirm: bool,
+    },
+    /// Flashes the bundled Teensy image. Refused without `confirm`.
+    InstallTeensy {
+        #[serde(default)]
+        confirm: bool,
+    },
+}
+
+/// A firmware identity: an installed header/announcement or a bundled
+/// manifest. `version` and `build_id` are display strings; order comes from
+/// [`FirmwareTarget::comparison`] only.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FirmwareIdentity {
+    pub version: String,
+    pub build_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirmwareInstalled {
+    /// Not established (no probe yet, a failed probe, nothing connected).
+    #[default]
+    Unknown,
+    /// Read and found without a version: no SDLink module in sector 107.
+    Legacy,
+    Reported(FirmwareIdentity),
+}
+
+/// The bundled image against the installed one, decided by carpid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirmwareComparison {
+    #[default]
+    Unknown,
+    Newer,
+    Same,
+    Older,
+    /// The bundled image can't run on this unit (firmware table).
+    Incompatible,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FirmwareTarget {
+    pub installed: FirmwareInstalled,
+    pub bundled: Option<FirmwareIdentity>,
+    pub comparison: FirmwareComparison,
+    /// One line about the installed side: table, stream formats, where the
+    /// identity came from and when.
+    pub detail: Option<String>,
+    /// `None`: an install can start now. Otherwise why it can't.
+    pub blocked: Option<String>,
+}
+
+/// The stream format in use on the current SDLink connection.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirmwareProtocol {
+    /// The chain isn't running.
+    #[default]
+    Unknown,
+    /// The unit didn't announce a version: the format every unit used
+    /// before the handshake.
+    Legacy,
+    /// The format both ends chose, `"1"`; `"none"` when there is no common
+    /// one and the unit stays stock.
+    Negotiated(String),
+}
+
+/// Reply to [`FirmwareAction::Status`], and the [`JobEvent::Firmware`] of
+/// every firmware job.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FirmwareStatus {
+    pub rnse: FirmwareTarget,
+    pub teensy: FirmwareTarget,
+    pub protocol: FirmwareProtocol,
+    /// A firmware job is running.
+    pub busy: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1208,6 +1309,8 @@ pub enum JobEvent {
     DiagStatus(DiagStatus),
     /// Wi-Fi scan: networks in range, strongest first.
     WifiSeen { networks: Vec<WifiSeen> },
+    /// Firmware jobs: the status after the job's reads or write.
+    Firmware(Box<FirmwareStatus>),
     /// Last event of a job.
     Finished { ok: bool, message: String },
 }
@@ -1368,6 +1471,10 @@ pub enum Response {
     /// Reply to `Storage` `status`.
     Storage {
         storage: StorageStatus,
+    },
+    /// Reply to `Firmware` `status`.
+    Firmware {
+        status: FirmwareStatus,
     },
 }
 

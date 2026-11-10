@@ -7,6 +7,7 @@ pub mod bridge;
 mod control;
 pub mod diagnostics;
 pub mod display;
+pub mod rnse_service;
 
 pub use carpi_diag::{JobId as DiagJobId, SubId as DiagSubId};
 pub use carpi_dis::ScreenId as DisScreen;
@@ -144,26 +145,63 @@ impl Car {
         &self.controls.gates[idx]
     }
 
-    /// One read-only SDLink decoder request, through the ICAN diagnostic gate.
-    /// Restrict this entry point to aligned 64-byte B1 reads of sector 96;
-    /// it cannot carry firmware writes or relax the Override opcode policy.
+    /// One read-only SDLink decoder request: an aligned 64-byte B1 read of
+    /// sector 107, through [`Car::rnse_service_request`].
     pub fn decoder_read_request(
         &mut self,
         address: u32,
         now: Instant,
     ) -> Result<(usize, carpi_can::Frame), String> {
-        if !(0x80C00000..0x80C20000).contains(&address) || !address.is_multiple_of(64) {
-            return Err("decoder read is outside sector 96".into());
+        let sector = rnse_service::SECTOR_XIP..rnse_service::SECTOR_XIP + rnse_service::SECTOR_SIZE;
+        if !sector.contains(&address) || !address.is_multiple_of(64) {
+            return Err("decoder read is outside sector 107".into());
         }
+        self.rnse_service_request(&rnse_service::read(address, 64), now)
+    }
+
+    /// One RNS-E service frame on 0x7B0 ([`rnse_service`]): reads through the
+    /// ICAN `Diag` class (`Lease` while leased), writes only under the lease.
+    pub fn rnse_service_request(
+        &mut self,
+        data: &[u8; 8],
+        now: Instant,
+    ) -> Result<(usize, carpi_can::Frame), String> {
+        let need = rnse_service::classify(data)?;
         let iface = self.ican_idx().ok_or("no ICAN interface configured")?;
         let view = self.view(now).ok_or("ICAN state unavailable")?;
-        let a = address.to_be_bytes();
-        let frame =
-            carpi_can::Frame::new(0x7B0, &[0xB1, a[0], a[1], a[2], a[3], 64, 0, 0]).unwrap();
-        self.controls.gates[iface]
-            .check(carpi_gate::TxClass::Diag, &frame, now, &view)
-            .map_err(|e| format!("decoder read refused: {e}"))?;
+        let gate = &mut self.controls.gates[iface];
+        let class = match (need, gate.leased(now)) {
+            (_, true) => carpi_gate::TxClass::Lease,
+            (rnse_service::Need::Read, false) => carpi_gate::TxClass::Diag,
+            (rnse_service::Need::Lease, false) => {
+                return Err("RNS-E writes need the bus lease".into());
+            }
+        };
+        let frame = rnse_service::frame(data);
+        gate.check(class, &frame, now, &view)
+            .map_err(|e| format!("RNS-E request refused: {e}"))?;
         Ok((iface, frame))
+    }
+
+    /// Takes the ICAN bus for an RNS-E update for at most `max`: every other
+    /// sender is refused until [`Car::rnse_release`] or expiry.
+    pub fn rnse_lease(&mut self, max: Duration, now: Instant) -> Result<(), String> {
+        let iface = self.ican_idx().ok_or("no ICAN interface configured")?;
+        let view = self.view(now).ok_or("ICAN state unavailable")?;
+        self.controls.gates[iface]
+            .take_lease(now, max, &view)
+            .map_err(|e| format!("bus lease refused: {e}"))
+    }
+
+    pub fn rnse_release(&mut self) {
+        if let Some(iface) = self.ican_idx() {
+            self.controls.gates[iface].release_lease();
+        }
+    }
+
+    /// Kl15 as the gates see it now.
+    pub fn kl15(&self, now: Instant) -> Option<bool> {
+        carpi_gate::kl15(&self.store, now)
     }
 
     /// The DDP session, for state.
@@ -497,6 +535,7 @@ impl Car {
             | Request::Wifi { .. }
             | Request::Storage { .. }
             | Request::DecoderCrc
+            | Request::Firmware { .. }
             | Request::Datalog { .. } => Response::Error {
                 message: "subscriptions, commands, jobs, captures and logging are handled per connection"
                     .into(),

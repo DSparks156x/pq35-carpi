@@ -2,7 +2,7 @@
 # Assemble a carpi bundle from built outputs. Format: docs/BUNDLE.md.
 #
 #   scripts/bundle.sh [--version V] [--channel stable|beta|dev] [--out DIR]
-#                     [--pq-bin DIR] [--teensy HEX [--teensy-version STR]] [--key FILE]
+#                     [--pq-bin DIR] [--teensy HEX [--teensy-version STR]] [--rnse DIR] [--key FILE]
 #
 # Expects, relative to the repo root:
 #   target/release/{carpid,carpi[,carpi-update]}   (--pq-bin to point elsewhere)
@@ -10,7 +10,8 @@
 #   livi/assets/linux/*   (LIVI's unit and sudoers templates; bundled with the binaries as livi/...)
 #   sdlink/bin/{rnv3enc,avlink,wlcap}   (make in sdlink)
 #   sdlink/pi/run/*, deploy/*
-# Teensy firmware is optional and only included with --teensy (CI doesn't build PlatformIO yet).
+# Firmware is optional: --teensy HEX (sdlink teensy, pio run) and --rnse DIR (sdlink rnse/out after
+# rnse/module/build.sh: sector_107.bin, its .sha256 and module.json). CI builds both (release.yml).
 # --key signs manifest.json with minisign; the key must be unencrypted (minisign -G -W).
 # Needs: git, python3, sha256sum, tar, zstd, minisign (only with --key).
 set -euo pipefail
@@ -18,7 +19,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 die() { echo "bundle: $*" >&2; exit 1; }
 
-VERSION= CHANNEL=dev OUT=$ROOT/dist PQBIN=$ROOT/target/release TEENSY= TEENSY_VERSION= KEY=
+VERSION= CHANNEL=dev OUT=$ROOT/dist PQBIN=$ROOT/target/release TEENSY= TEENSY_VERSION= RNSE= KEY=
 while [ $# -gt 0 ]; do
   case $1 in
     --version) VERSION=$2; shift 2 ;;
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
     --pq-bin) PQBIN=$2; shift 2 ;;
     --teensy) TEENSY=$2; shift 2 ;;
     --teensy-version) TEENSY_VERSION=$2; shift 2 ;;
+    --rnse) RNSE=$2; shift 2 ;;
     --key) KEY=$2; shift 2 ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -90,6 +92,7 @@ put "$ROOT/deploy/livi.service" share/systemd/user/livi.service 0644
 put "$ROOT/deploy/carpi-capture@.service" share/systemd/user/carpi-capture@.service 0644
 put "$ROOT/deploy/wayvnc.service" share/systemd/user/wayvnc.service 0644
 put "$ROOT/deploy/99-carpi-uinput.rules" share/udev/99-carpi-uinput.rules 0644
+put "$ROOT/deploy/99-carpi-teensy.rules" share/udev/99-carpi-teensy.rules 0644
 put "$ROOT/deploy/carpi-move-nvme.service" share/systemd/system/carpi-move-nvme.service 0644
 put "$ROOT/os/profile.sh" share/os/profile.sh 0755
 put "$ROOT/os/install.sh" share/os/install.sh 0755
@@ -115,7 +118,19 @@ if [ -n "$TEENSY" ]; then
     [ -n "$TEENSY_VERSION" ] || die "no FW_VERSION in sdlink/teensy/sdemu/config.h; pass --teensy-version"
   fi
   put "$TEENSY" firmware/teensy/sdemu.hex 0644
-  FIRMWARE=(teensy firmware/teensy/sdemu.hex "$TEENSY_VERSION")
+  FIRMWARE=(teensy firmware/teensy/sdemu.hex "$TEENSY_VERSION" -)
+fi
+if [ -n "$RNSE" ]; then
+  for f in sector_107.bin sector_107.bin.sha256 module.json; do put "$RNSE/$f" "firmware/rnse/$f" 0644; done
+  (cd "$STAGE/firmware/rnse" && sha256sum -c --quiet sector_107.bin.sha256) || die "$RNSE/sector_107.bin doesn't match its .sha256"
+  RNSE_BUILD=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["build_id"])' "$RNSE/module.json")
+  # The stream formats this release's avlink and encoder send (sdlink pi/avlink/rnse_ver.h): carpid refuses
+  # to install a module that plays none of them.
+  AVL=$ROOT/sdlink/pi/avlink/rnse_ver.h
+  FMIN=$(sed -n 's/^#define AVL_FMT_MIN *\([0-9][0-9]*\).*/\1/p' "$AVL")
+  FMAX=$(sed -n 's/^#define AVL_FMT_MAX *\([0-9][0-9]*\).*/\1/p' "$AVL")
+  [ -n "$FMIN" ] && [ -n "$FMAX" ] || die "no AVL_FMT_MIN/MAX in $AVL"
+  FIRMWARE+=(rnse firmware/rnse/sector_107.bin "$RNSE_BUILD" "$FMIN,$FMAX")
 fi
 
 # Manifest. Paths are sorted bytewise (LC_ALL=C) so the order is the same everywhere.
@@ -146,7 +161,9 @@ manifest = {
     "commits": {"rnse-carpi": e["PQ_COMMIT"], "livi": e["LIVI_COMMIT"], "sdlink": e["SDLINK_COMMIT"]},
     "min_os_profile": int(e["MIN_PROFILE"]),
     "files": files,
-    "firmware": [{"target": fw[i], "path": fw[i + 1], "version": fw[i + 2]} for i in range(0, len(fw), 3)],
+    "firmware": [dict({"target": fw[i], "path": fw[i + 1], "version": fw[i + 2]},
+                      **({} if fw[i + 3] == "-" else {"chain_fmt": [int(x) for x in fw[i + 3].split(",")]}))
+                 for i in range(0, len(fw), 4)],
 }
 with open(os.path.join(stage, "manifest.json"), "w", newline="\n") as f:
     json.dump(manifest, f, indent=2)

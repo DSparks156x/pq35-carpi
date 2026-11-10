@@ -1,0 +1,4 @@
+# Lets the dialout group flash the SDLink Teensy 4.1 through its HalfKay bootloader (carpid's firmware install).
+# Install: sudo cp deploy/99-carpi-teensy.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+#          sudo usermod -aG dialout $USER   (its serial port needs the same group)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="0478", GROUP="dialout", MODE="0660"

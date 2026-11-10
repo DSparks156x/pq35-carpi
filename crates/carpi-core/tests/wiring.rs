@@ -117,20 +117,20 @@ impl Rig {
 #[test]
 fn decoder_reads_are_bounded_and_go_through_the_ican_gate() {
     let mut r = Rig::new(false);
-    for address in [0x80BFFFC0, 0x80C20000, 0x80C00001] {
+    for address in [0x80D5FFC0, 0x80D80000, 0x80D60001] {
         assert!(r.car.decoder_read_request(address, r.now).is_err());
     }
-    assert!(r.car.decoder_read_request(0x80C00000, r.now).is_err());
+    assert!(r.car.decoder_read_request(0x80D60000, r.now).is_err());
     r.run(20);
     assert!(
         r.car
-            .decoder_read_request(0x80C00000, r.now)
+            .decoder_read_request(0x80D60000, r.now)
             .unwrap_err()
             .contains("Kl15 off")
     );
     r.kl15 = true;
     r.run(5);
-    for address in [0x80C00000, 0x80C1FFC0] {
+    for address in [0x80D60000, 0x80D7FFC0] {
         let (iface, frame) = r.car.decoder_read_request(address, r.now).unwrap();
         assert_eq!(iface, 0);
         assert_eq!(frame.id, 0x7B0);
@@ -139,6 +139,60 @@ fn decoder_reads_are_bounded_and_go_through_the_ican_gate() {
         assert_eq!(&frame.data()[5..], &[64, 0, 0]);
     }
     assert_eq!(r.car.gate(0).stats(TxClass::Diag).passed, 2);
+}
+
+#[test]
+fn rnse_writes_need_the_lease_and_the_lease_stops_everyone_else() {
+    use carpi_core::rnse_service as svc;
+    let mut r = Rig::new(false);
+    r.kl15 = true;
+    r.run(25);
+    // Reads pass without a lease; writes don't.
+    assert!(
+        r.car
+            .rnse_service_request(&svc::read(0x8F72F040, 64), r.now)
+            .is_ok()
+    );
+    let off = svc::poke(svc::AUTO_START_WORD, 0x4F464621);
+    assert!(
+        r.car
+            .rnse_service_request(&off, r.now)
+            .unwrap_err()
+            .contains("lease")
+    );
+    assert!(r.car.rnse_service_request(&svc::commit(), r.now).is_err());
+    // Under the lease: writes and reads go as Lease, a decoder read too.
+    r.car.rnse_lease(Duration::from_secs(60), r.now).unwrap();
+    assert!(r.car.rnse_lease(Duration::from_secs(60), r.now).is_err());
+    assert!(r.car.rnse_service_request(&off, r.now).is_ok());
+    assert!(
+        r.car
+            .rnse_service_request(&svc::stage(0, [0; 5]), r.now)
+            .is_ok()
+    );
+    assert!(
+        r.car
+            .rnse_service_request(&svc::read(0xACE00000, 48), r.now)
+            .is_ok()
+    );
+    assert_eq!(r.car.gate(0).stats(TxClass::Lease).passed, 3);
+    // Shapes are still checked under the lease.
+    assert!(
+        r.car
+            .rnse_service_request(&[0xB7, 0, 0, 96, 0, 0, 0, 0], r.now)
+            .is_err()
+    );
+    assert!(
+        r.car
+            .rnse_service_request(&[0xB8, 0x5A, 0, 0, 0, 0, 0, 0], r.now)
+            .is_err()
+    );
+    r.car.rnse_release();
+    assert!(r.car.rnse_service_request(&off, r.now).is_err());
+    // Ignition off: no lease.
+    r.kl15 = false;
+    r.run(25);
+    assert!(r.car.rnse_lease(Duration::from_secs(60), r.now).is_err());
 }
 
 #[test]

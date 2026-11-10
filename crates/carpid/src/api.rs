@@ -208,6 +208,25 @@ async fn serve(
                     }
                 }
             }
+            Ok(Request::Firmware {
+                action: carpi_proto::FirmwareAction::Status,
+            }) => match jobs.firmware_status().await {
+                Ok(status) => Response::Firmware { status },
+                Err(message) => Response::Error { message },
+            },
+            Ok(Request::Firmware { action }) => {
+                let (events, rx) = mpsc::unbounded_channel();
+                match jobs.start_firmware(action, tx.clone(), events) {
+                    Err(message) => Response::Error { message },
+                    Ok(job) => {
+                        if out_tx.send(Response::JobStarted { job }).await.is_err() {
+                            break;
+                        }
+                        forward_job(job, rx, &out_tx);
+                        continue;
+                    }
+                }
+            }
             Ok(Request::Wifi { action }) => {
                 use carpi_proto::WifiAction as W;
                 let nm = crate::wifi::Real;

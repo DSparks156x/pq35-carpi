@@ -167,6 +167,7 @@ Car Integration
 │  └─ Time zone                          clock.timezone (picker)
 ├─ A/V over SD
 │  ├─ Status                    Teensy, link, stream (info)
+│  ├─ Firmware ▸                RNS-E / Teensy installed and bundled versions, negotiated SDLink version
 │  ├─ Audio gain                dB                            avsd GAIN
 │  ├─ Picture ▸                 LINKCAP, MAXVID, KEYINT, DITHER, palette snap ... with ranges
 │  └─ Restart the stream
@@ -182,6 +183,16 @@ Car Integration
 The bundled updater replaces LIVI's **Settings > System > Software Update** screen.
 It shows the installed version, last apply result, Stable/Beta channel, Check and install,
 and Wi-Fi networks. Installing asks for confirmation before dropping the hotspot.
+
+The updater and **A/V over SD** also open the same **SDLink firmware** screen. It
+keeps the RNS-E module identity separate from the negotiated link protocol and
+shows installed and bundled firmware for both the RNS-E and Teensy. A newer bundle
+is an optional update offer; an older RNS-E may keep streaming through the
+encoder's negotiated compatibility mode. carpid supplies the comparison (build
+history, stream formats, firmware table); the screen never orders version strings.
+**Check versions** probes both (read only); **Install** needs a second press and
+runs carpid's install job (sdlink `docs/PI_UPDATER.md`). The sector 107 CRC read on
+A/V over SD stays a diagnostic, not a version or compatibility check.
 
 ### API additions (carpi-proto `Settings` / `SettingsPatch`)
 

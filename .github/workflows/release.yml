@@ -24,7 +24,66 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml
 
+  # SDLink firmware (sdlink docs/PI_UPDATER.md): the RNS-E sector 107 module (sh-elf toolchain, built once
+  # and cached; same versions as the reference one, so the build id reproduces) and the Teensy image.
+  firmware:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential curl xz-utils \
+            libgmp-dev libmpfr-dev libmpc-dev texinfo python3 python3-pip
+
+      - name: sh-elf toolchain cache
+        id: shelf
+        uses: actions/cache@v4
+        with:
+          path: ~/sh-elf
+          key: sh-elf-${{ runner.os }}-${{ hashFiles('sdlink/tools/build-sh-elf.sh') }}
+
+      - name: sh-elf toolchain
+        if: steps.shelf.outputs.cache-hit != 'true'
+        run: bash sdlink/tools/build-sh-elf.sh "$HOME/sh-elf"
+
+      - name: RNS-E module (sector 107)
+        run: |
+          SH_ELF=$HOME/sh-elf/bin/sh-elf- bash sdlink/rnse/module/build.sh
+          # mkmodule.py appends a build it hasn't seen to history.txt: then this build isn't the committed one.
+          if ! git -C sdlink diff --quiet -- rnse/module/history.txt; then
+            echo "::warning::sector 107 build $(python3 -c 'import json;print(json.load(open("sdlink/rnse/out/module.json"))["build_id"])') is not in sdlink rnse/module/history.txt: commit it, or the build differs from the reference toolchain's"
+          fi
+          mkdir -p fw/rnse
+          cp sdlink/rnse/out/{sector_107.bin,sector_107.bin.sha256,module.json} fw/rnse/
+
+      - name: PlatformIO cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('sdlink/teensy/platformio.ini') }}
+
+      - name: Teensy image
+        run: |
+          pip install --user --break-system-packages -q platformio
+          (cd sdlink/teensy && ~/.local/bin/pio run -e teensy41)
+          mkdir -p fw/teensy
+          cp sdlink/teensy/.pio/build/teensy41/firmware.hex fw/teensy/sdemu.hex
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdlink-firmware
+          path: fw/
+          if-no-files-found: error
+
   bundle:
+    needs: firmware
     runs-on: ubuntu-24.04-arm
     # Same glibc and libraries as Pi OS Trixie.
     container: debian:trixie
@@ -154,6 +213,11 @@ jobs:
         if: steps.sccache.outcome == 'success'
         run: sccache --show-stats
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdlink-firmware
+          path: fw
+
       - name: bundle
         env:
           MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
@@ -166,7 +230,8 @@ jobs:
             echo "::warning::MINISIGN_KEY is not set: the bundle is unsigned"
           fi
           scripts/bundle.sh --version "${{ steps.version.outputs.version }}" \
-            --channel "${{ steps.version.outputs.channel }}" --out dist "${key[@]}"
+            --channel "${{ steps.version.outputs.channel }}" --out dist "${key[@]}" \
+            --rnse fw/rnse --teensy fw/teensy/sdemu.hex
           rm -f "$RUNNER_TEMP/minisign.key"
 
       - uses: actions/upload-artifact@v4
