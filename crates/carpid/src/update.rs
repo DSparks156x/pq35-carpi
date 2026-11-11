@@ -325,9 +325,11 @@ impl Jobs {
             .firmware
             .clone()
             .ok_or("firmware jobs need a live carpid")?;
-        match action {
+        match &action {
             A::Status => return Err("status is not a job".into()),
-            A::InstallRnse { confirm: false } | A::InstallTeensy { confirm: false } => {
+            A::InstallRnse { confirm: false }
+            | A::InstallTeensy { confirm: false }
+            | A::FlashSector { confirm: false, .. } => {
                 return Err("an install needs confirm: true".into());
             }
             _ => {}
@@ -342,6 +344,7 @@ impl Jobs {
                 A::Probe => fw.probe(tx, &events).await,
                 A::InstallRnse { .. } => fw.install_rnse(tx, &events).await,
                 A::InstallTeensy { .. } => fw.install_teensy(&events).await,
+                A::FlashSector { name, .. } => fw.flash_sector(&name, tx, &events).await,
                 A::Status => {}
             }
             fw.done();

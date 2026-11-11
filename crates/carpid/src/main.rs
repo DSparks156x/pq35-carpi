@@ -242,6 +242,7 @@ async fn main() -> anyhow::Result<()> {
             PathBuf::from("/opt/carpi/current"),
             cfg.avsd.unit.clone(),
             jobs.decoder_interface.clone(),
+            cfg.portal.as_ref().map(|p| p.firmware.clone()),
         )));
     }
     let jobs = std::sync::Arc::new(jobs);

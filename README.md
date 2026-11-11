@@ -47,6 +47,8 @@ In LIVI, **Car Integration > A/V over SD > SDLink firmware** (also under Softwar
 - RNS-E: ignition on, engine off. carpid stops the A/V chain, takes the CAN bus, stages the image over CAN (about a minute), commits it (the RNS-E erases sector 107, programs it and restarts, about 25 s), then reads the sector back and checks its CRC, the restart count and that the module runs. Before the commit nothing is written; a failed check stops there. Procedure: sdlink `docs/PI_UPDATER.md`.
 - Teensy: carpid stops the chain, reboots the Teensy into its bootloader, flashes it and checks the version it reports.
 
+**Advanced: Flash Sector** (SDLink Firmware): writes a portal upload `[prefix]sector_<N>.bin` (128 KiB) to RNS-E sector N. Two presses. Same stage/commit/verify as the install; no content checks. Sectors 32-511 (the unit refuses its loader below 0x400000; carpid's gate matches).
+
 The release CI builds both images from sdlink (`.github/workflows/release.yml`, job `firmware`). **Read decoder** on the A/V over SD page still reads the whole sector 107 CRC32 (several minutes).
 
 ## License

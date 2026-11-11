@@ -14,12 +14,22 @@ pub async fn sector_crc(
     stage: &str,
     events: &mpsc::UnboundedSender<JobEvent>,
 ) -> Result<u32, String> {
+    sector_crc_at(bus, SECTOR_XIP, stage, events).await
+}
+
+/// The CRC-32 of the 128 KiB sector at P1 address `xip`.
+pub async fn sector_crc_at(
+    bus: &mut RnseBus,
+    xip: u32,
+    stage: &str,
+    events: &mpsc::UnboundedSender<JobEvent>,
+) -> Result<u32, String> {
     let mut crc = !0;
     for offset in (0..SECTOR_SIZE).step_by(CHUNK as usize) {
         if events.is_closed() {
             return Err("decoder read cancelled: UI disconnected".into());
         }
-        let data = bus.read(SECTOR_XIP + offset, CHUNK as u8).await?;
+        let data = bus.read(xip + offset, CHUNK as u8).await?;
         crc = crc32(crc, &data);
         let done = offset + CHUNK;
         if done.is_multiple_of(4096) || done == SECTOR_SIZE {

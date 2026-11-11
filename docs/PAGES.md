@@ -193,6 +193,9 @@ history, stream formats, firmware table); the screen never orders version string
 **Check versions** probes both (read only); **Install** needs a second press and
 runs carpid's install job (sdlink `docs/PI_UPDATER.md`). The sector 107 CRC read on
 A/V over SD stays a diagnostic, not a version or compatibility check.
+**Advanced: Flash Sector**: listed when the portal holds `[prefix]sector_<N>.bin`
+uploads. Two presses; writes the file to RNS-E sector N (`FirmwareAction::FlashSector`).
+No content checks.
 
 ### API additions (carpi-proto `Settings` / `SettingsPatch`)
 

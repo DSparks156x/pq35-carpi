@@ -136,7 +136,7 @@ pub enum Request {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FirmwareAction {
     /// What carpid knows now, without touching the bus or the Teensy.
@@ -155,6 +155,47 @@ pub enum FirmwareAction {
         #[serde(default)]
         confirm: bool,
     },
+    /// Advanced: Flash Sector. Writes an uploaded `[prefix]sector_<N>.bin`
+    /// (128 KiB, portal firmware folder) to RNS-E sector N. Same procedure as
+    /// the sector 107 install, no module checks. Needs `confirm`.
+    FlashSector {
+        name: String,
+        #[serde(default)]
+        confirm: bool,
+    },
+}
+
+/// An uploaded sector image [`FirmwareAction::FlashSector`] can write.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SectorUpload {
+    /// File name in the portal's firmware folder, `sector_<N>[...].bin`.
+    pub name: String,
+    pub sector: u16,
+    pub size: u64,
+    /// CRC-32 of the file, `"1A2B3C4D"`.
+    pub crc: String,
+    /// `None`: it can be flashed. Otherwise why not (size, sector range).
+    pub problem: Option<String>,
+}
+
+impl SectorUpload {
+    /// Sector number from `[prefix]sector_<N>[-tag].bin` (`_` or `.` before
+    /// the tag work too). Case-insensitive.
+    pub fn sector_of(name: &str) -> Option<u16> {
+        let lower = name.to_ascii_lowercase();
+        let at = lower.rfind("sector_")?;
+        let rest = lower[at + "sector_".len()..].strip_suffix(".bin")?;
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 || digits > 3 {
+            return None;
+        }
+        let tail = &rest[digits..];
+        if !(tail.is_empty() || tail.starts_with(['-', '_', '.'])) {
+            return None;
+        }
+        rest[..digits].parse().ok()
+    }
 }
 
 /// A firmware identity: an installed header/announcement or a bundled
@@ -228,6 +269,8 @@ pub struct FirmwareStatus {
     pub protocol: FirmwareProtocol,
     /// A firmware job is running.
     pub busy: bool,
+    /// Uploaded sector images for Advanced: Flash Sector.
+    pub uploads: Vec<SectorUpload>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1952,5 +1995,23 @@ mod tests {
     #[test]
     fn rejects_huge() {
         assert!(body_len((MAX_MESSAGE as u32 + 1).to_le_bytes()).is_err());
+    }
+
+    #[test]
+    fn sector_upload_names() {
+        assert_eq!(SectorUpload::sector_of("sector_107.bin"), Some(107));
+        assert_eq!(SectorUpload::sector_of("Sector_96-test2.BIN"), Some(96));
+        assert_eq!(SectorUpload::sector_of("sector_40_a.bin"), Some(40));
+        assert_eq!(SectorUpload::sector_of("r52_osm_sector_33.bin"), Some(33));
+        assert_eq!(SectorUpload::sector_of("r52sector_33-v2.bin"), Some(33));
+        for bad in [
+            "sector_.bin",
+            "sector_107x.bin",
+            "sector_1070.bin",
+            "sector_107.hex",
+            "s_107.bin",
+        ] {
+            assert_eq!(SectorUpload::sector_of(bad), None, "{bad}");
+        }
     }
 }

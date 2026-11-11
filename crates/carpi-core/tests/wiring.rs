@@ -179,7 +179,7 @@ fn rnse_writes_need_the_lease_and_the_lease_stops_everyone_else() {
     // Shapes are still checked under the lease.
     assert!(
         r.car
-            .rnse_service_request(&[0xB7, 0, 0, 96, 0, 0, 0, 0], r.now)
+            .rnse_service_request(&[0xB7, 0, 0, 31, 0, 0, 0, 0], r.now)
             .is_err()
     );
     assert!(

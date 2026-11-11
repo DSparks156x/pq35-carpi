@@ -2,8 +2,9 @@
 //! folder (`carpi_logs`: one entry per capture or data-log run, by day),
 //! download files or zips of an entry or a whole day, star, delete, start a
 //! capture; download the carpid journal, sdlink logs and a bug report; upload
-//! a new `carpid.toml` or a Teensy `.hex`; list, add and forget saved Wi-Fi
-//! networks. Nothing is flashed or restarted from here.
+//! a new `carpid.toml`, a Teensy `.hex` or an RNS-E `sector_<N>.bin`; list,
+//! add and forget saved Wi-Fi networks. Nothing is flashed or restarted from
+//! here (a sector image is flashed from the head unit's SDLink firmware screen).
 //!
 //! # Routes
 //!
@@ -51,8 +52,9 @@
 //! - Wi-Fi passwords go to the hook and nowhere else: never logged, never put
 //!   back into a page.
 //! - At most two zips or trimmed CSVs build at once, one capture at a time.
-//! - Uploads have size caps, and firmware only lands as a new, valid Intel HEX
-//!   file (never overwrites). Config is validated by the caller before it
+//! - Uploads have size caps, and firmware only lands as a new file (never
+//!   overwrites): a valid Intel HEX, or a `.bin` named `sector_<N>.bin` that is
+//!   exactly one 128 KiB flash sector. Config is validated by the caller before it
 //!   replaces anything, and the old file is backed up first.
 //! - POSTs with a foreign `Origin` are refused (CSRF from a page the phone has
 //!   open). `Host` must be an IP literal, `localhost` or listed in
@@ -150,7 +152,7 @@ impl Default for PortalConfig {
             .to_vec(),
             pin: None,
             protect_downloads: false,
-            firmware_ext: vec![".hex".into()],
+            firmware_ext: vec![".hex".into(), ".bin".into()],
             firmware_max: 16 << 20,
             config_max: 256 << 10,
             journal_max: 32 << 20,
@@ -916,6 +918,10 @@ async fn up_firmware(State(s): State<Arc<Shared>>, headers: HeaderMap, mp: Multi
     }
     if lower.ends_with(".hex") {
         check_ihex(&data).map_err(|e| Reject::new(StatusCode::BAD_REQUEST, e))?;
+    }
+    if lower.ends_with(".bin") {
+        files::check_sector_bin(&name, data.len())
+            .map_err(|e| Reject::new(StatusCode::BAD_REQUEST, e))?;
     }
     let dir = s.cfg.firmware.clone();
     let n = name.clone();

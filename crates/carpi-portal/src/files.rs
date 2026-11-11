@@ -132,6 +132,31 @@ fn write_new(path: &Path, data: &[u8]) -> io::Result<()> {
     f.sync_all()
 }
 
+/// One RNS-E flash sector, 128 KiB.
+pub const SECTOR_BIN_SIZE: usize = 0x20000;
+
+/// A `.bin` upload is an RNS-E sector image: `[prefix]sector_<N>[-tag].bin`,
+/// exactly one sector long. carpid checks the rest.
+pub fn check_sector_bin(name: &str, len: usize) -> Result<(), String> {
+    let lower = name.to_ascii_lowercase();
+    let named = lower
+        .rfind("sector_")
+        .and_then(|at| lower[at + "sector_".len()..].strip_suffix(".bin"))
+        .is_some_and(|r| {
+            let d = r.bytes().take_while(u8::is_ascii_digit).count();
+            (1..=3).contains(&d) && (r.len() == d || r[d..].starts_with(['-', '_', '.']))
+        });
+    if !named {
+        return Err("Sector image name: [prefix]sector_<N>[-tag].bin.".into());
+    }
+    if len != SECTOR_BIN_SIZE {
+        return Err(format!(
+            "Sector image must be {SECTOR_BIN_SIZE} bytes (128 KiB), got {len}."
+        ));
+    }
+    Ok(())
+}
+
 /// Intel HEX sanity: every record well formed with a good checksum, known
 /// record types, ends with an EOF record. Says nothing about the target chip.
 pub fn check_ihex(data: &[u8]) -> Result<(), String> {
@@ -254,6 +279,22 @@ mod tests {
         assert!(check_ihex(b"hello\n:00000001FF\n").is_err());
         assert!(check_ihex(b":00000001FF\n:0400000001020304F2\n").is_err()); // after EOF
         assert!(check_ihex(b":0500000001020304F2\n:00000001FF\n").is_err()); // length
+    }
+
+    #[test]
+    fn sector_bin() {
+        assert_eq!(check_sector_bin("sector_96.bin", SECTOR_BIN_SIZE), Ok(()));
+        assert_eq!(
+            check_sector_bin("Sector_107-try2.BIN", SECTOR_BIN_SIZE),
+            Ok(())
+        );
+        assert_eq!(
+            check_sector_bin("r52_sector_33.bin", SECTOR_BIN_SIZE),
+            Ok(())
+        );
+        assert!(check_sector_bin("sector_96.bin", 10).is_err());
+        assert!(check_sector_bin("dump.bin", SECTOR_BIN_SIZE).is_err());
+        assert!(check_sector_bin("sector_96x.bin", SECTOR_BIN_SIZE).is_err());
     }
 
     #[test]

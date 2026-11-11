@@ -914,6 +914,33 @@ async fn pin_enforced_on_uploads_only() {
 }
 
 #[tokio::test]
+async fn sector_bin_uploads() {
+    let (_t, cfg) = setup();
+    let app = app(cfg.clone());
+    let sector = vec![0u8; 0x20000];
+    assert_eq!(
+        up(&app, "/up/firmware", "sector_96.bin", &sector, None).await,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        fs::read(cfg.firmware.join("sector_96.bin")).unwrap().len(),
+        0x20000
+    );
+    assert_eq!(
+        up(&app, "/up/firmware", "sector_96.bin", &sector, None).await,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        up(&app, "/up/firmware", "sector_97.bin", &sector[..100], None).await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        up(&app, "/up/firmware", "dump.bin", &sector, None).await,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
 async fn pin_cookie_from_form() {
     let (_t, mut cfg) = setup();
     cfg.pin = Some("4711".into());

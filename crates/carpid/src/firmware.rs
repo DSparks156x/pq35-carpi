@@ -20,12 +20,18 @@
 //! the unit CRCs it), B1 spot checks, B7 + B6 commit (no ack; erase,
 //! program, cold reset), then verify: restart count 0, live CRC equal,
 //! table status `OK2F`, auto start re-armed, chain restarted.
+//!
+//! Advanced: Flash Sector. Same staging and commit, for any sector the
+//! unit accepts (32..=511), from an uploaded `[prefix]sector_<N>.bin` via the
+//! portal. No module checks; the image must be exactly one sector. It needs
+//! the SDLink firmware table (the hooked firmware that has B6/B7), quiesces
+//! the module the same way, and verifies by restart count and live CRC.
 
 use crate::rnse_bus::{RnseBus, crc32};
 use carpi_core::rnse_service as svc;
 use carpi_proto::{
     FirmwareComparison as Cmp, FirmwareIdentity, FirmwareInstalled, FirmwareProtocol,
-    FirmwareStatus, FirmwareTarget, JobEvent,
+    FirmwareStatus, FirmwareTarget, JobEvent, SectorUpload,
 };
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -40,8 +46,15 @@ const MAGIC_TVA2: u32 = 0x5456_4132;
 const TVA: u32 = 0x8F72_F000;
 const TVA_OFF: u32 = 0x4F46_4621; // 'OFF!'
 const OK2F: u32 = 0x4F4B_3246; // 'OK2F'
-/// Where current firmware builds keep the table: r64 line, PCBBC NA, PCBBC EU.
-const TABLE_CANDIDATES: [u32; 3] = [0x806A_A900, 0x806A_CC00, 0x806B_AC00];
+/// Where current firmware builds keep the table: r64 line, PCBBC NA, PCBBC EU
+/// (tone builds r66/r68 NA and r312 EU moved theirs; sdlink PI_UPDATER.md).
+const TABLE_CANDIDATES: [u32; 5] = [
+    0x806A_A900,
+    0x806A_CE00,
+    0x806B_AE00,
+    0x806A_CC00,
+    0x806B_AC00,
+];
 const SDFW: u32 = 0x5344_4657;
 const RAM_MAP_1: u32 = 1;
 /// fwtab.h entry numbers (table word = 5 + entry): TCB_BASE and TASK_TV.
@@ -300,7 +313,7 @@ pub fn compare_rnse(
     table: Option<(u32, u32)>,
 ) -> Cmp {
     if let Some((ver, map)) = table
-        && (ver != b.table_version || map != RAM_MAP_1)
+        && (b.table_version > ver || map != RAM_MAP_1)
     {
         return Cmp::Incompatible;
     }
@@ -588,6 +601,7 @@ pub fn status(i: &Inputs) -> FirmwareStatus {
         teensy,
         protocol,
         busy: i.busy,
+        uploads: Vec::new(),
     }
 }
 
@@ -596,6 +610,8 @@ pub struct Firmware {
     pub root: PathBuf,
     pub unit: String,
     pub interface: Option<String>,
+    /// The portal's firmware folder, where `sector_<N>.bin` uploads land.
+    pub uploads: Option<PathBuf>,
     seen: Mutex<Seen>,
     busy: std::sync::atomic::AtomicBool,
 }
@@ -618,11 +634,17 @@ fn progress(ev: &Events, stage: &str, done: u64, total: u64) {
 }
 
 impl Firmware {
-    pub fn new(root: PathBuf, unit: String, interface: Option<String>) -> Self {
+    pub fn new(
+        root: PathBuf,
+        unit: String,
+        interface: Option<String>,
+        uploads: Option<PathBuf>,
+    ) -> Self {
         Firmware {
             root,
             unit,
             interface,
+            uploads,
             seen: Mutex::new(Seen::default()),
             busy: Default::default(),
         }
@@ -650,13 +672,19 @@ impl Firmware {
         let bundle = load_bundle(&self.root);
         let chain = chain_now(&self.unit);
         let seen = self.seen.lock().unwrap();
-        status(&Inputs {
+        let mut st = status(&Inputs {
             seen: &seen,
             bundle: &bundle,
             chain: &chain,
             busy: self.busy(),
             can: self.interface.is_some(),
-        })
+        });
+        st.uploads = self
+            .uploads
+            .as_deref()
+            .map(sector_uploads)
+            .unwrap_or_default();
+        st
     }
 
     async fn status_async(self: &std::sync::Arc<Self>) -> FirmwareStatus {
@@ -882,9 +910,9 @@ impl Firmware {
         let t = seen.table.clone().ok_or(
             "this RNS-E has no SDLink firmware table: its firmware needs the SDLink hook first",
         )?;
-        if t.version != module.table_version || t.ram_map != RAM_MAP_1 {
+        if module.table_version > t.version || t.ram_map != RAM_MAP_1 {
             return Err(format!(
-                "firmware table {:X} is version {} (ram map {}); the module needs version {}",
+                "firmware table {:X} is version {} (ram map {}); the module needs version {} or later",
                 t.fw_id, t.version, t.ram_map, module.table_version
             ));
         }
@@ -902,7 +930,9 @@ impl Firmware {
 
         // 3. Write, with cleanup whatever happens.
         let restart = self.stop_chain(ev).await?;
-        let r = self.write_rnse(&mut bus, &img, crc, &t, ev).await;
+        let r = self
+            .write_rnse(&mut bus, svc::SECTOR, &img, crc, &t, ev)
+            .await;
         bus.release().await;
         let r = match r {
             Ok(()) => self.verify_rnse(&mut bus, &img, crc, &module, ev).await,
@@ -925,6 +955,7 @@ impl Firmware {
     async fn write_rnse(
         &self,
         bus: &mut RnseBus,
+        sector: u16,
         img: &[u8],
         crc: u32,
         t: &Table,
@@ -1020,9 +1051,13 @@ impl Firmware {
         stage(
             ev,
             "commit",
-            "Writing sector 107: the RNS-E erases, programs and restarts (about 25 s)",
+            format!(
+                "Writing sector {sector}: the RNS-E erases, programs and restarts (about 25 s)"
+            ),
         );
-        bus.send(svc::set_target(crc)).await.map_err(Pre)?;
+        bus.send(svc::set_target_sector(sector, crc))
+            .await
+            .map_err(Pre)?;
         tokio::time::sleep(Duration::from_millis(20)).await;
         bus.drain().await;
         bus.send(svc::commit()).await.map_err(Pre)?;
@@ -1046,33 +1081,8 @@ impl Firmware {
         m: &Module,
         ev: &Events,
     ) -> Result<String, String> {
-        stage(ev, "restart", "Waiting for the RNS-E to restart");
-        tokio::time::sleep(Duration::from_secs(25)).await;
-        let end = Instant::now() + Duration::from_secs(120);
-        let count = loop {
-            match bus.u16(RESTART_COUNT).await {
-                Ok(c) => break c as i16,
-                Err(_) if Instant::now() < end => tokio::time::sleep(Duration::from_secs(2)).await,
-                Err(e) => {
-                    return Err(format!(
-                        "the RNS-E didn't answer after the commit: {e}. Check it, then run Check versions"
-                    ));
-                }
-            }
-        };
-        if count != 0 {
-            return Err(format!("the RNS-E's restart count is {count}, expected 0"));
-        }
-        stage(ev, "verify", "Reading sector 107 back");
-        if bus.read_all(svc::SECTOR_XIP, HEADER).await? != img[..HEADER] {
-            return Err("sector 107's header doesn't match the image after the commit".into());
-        }
-        let live = crate::decoder::sector_crc(bus, "verify", ev).await?;
-        if live != crc {
-            return Err(format!(
-                "sector 107 CRC {live:08X} after the commit, image {crc:08X}"
-            ));
-        }
+        wait_restart(bus, ev).await?;
+        read_back(bus, svc::SECTOR, img, crc, ev).await?;
         stage(
             ev,
             "verify",
@@ -1103,6 +1113,97 @@ impl Firmware {
             ));
         }
         Ok(format!("Module {} installed and running", m.build()))
+    }
+
+    // ------------------------------------------------------------ Advanced: Flash Sector
+    pub async fn flash_sector(
+        self: &std::sync::Arc<Self>,
+        name: &str,
+        tx: mpsc::Sender<crate::Msg>,
+        ev: &Events,
+    ) {
+        let r = tokio::time::timeout(
+            Duration::from_secs(25 * 60),
+            self.flash_sector_inner(name, tx, ev),
+        )
+        .await
+        .unwrap_or_else(|_| Err("stopped after 25 minutes".into()));
+        self.emit_status(ev).await;
+        let (ok, message) = match r {
+            Ok(m) => (true, m),
+            Err(m) => (false, m),
+        };
+        let _ = ev.send(JobEvent::Finished { ok, message });
+    }
+
+    async fn flash_sector_inner(
+        &self,
+        name: &str,
+        tx: mpsc::Sender<crate::Msg>,
+        ev: &Events,
+    ) -> Result<String, String> {
+        // 1. The upload.
+        stage(ev, "check", format!("Checking {name}"));
+        let dir = self
+            .uploads
+            .clone()
+            .ok_or("no upload folder: the portal is off")?;
+        let path = upload_path(&dir, name)?;
+        let sector = SectorUpload::sector_of(name).ok_or("not a [prefix]sector_<N>.bin name")?;
+        let img = tokio::fs::read(&path)
+            .await
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        if let Some(p) = sector_problem(sector, img.len()) {
+            return Err(format!("{name}: {p}"));
+        }
+        let crc = !crc32(!0, &img);
+        let xip = svc::sector_xip(sector);
+
+        // 2. The unit: it needs the hooked firmware; is the image already there?
+        let iface = self.interface.clone().ok_or("no live ICAN interface")?;
+        let mut bus = RnseBus::open(&iface, tx)?;
+        stage(ev, "gate", "Reading the RNS-E's firmware table");
+        let seen = self.probe_rnse(&mut bus).await?;
+        self.seen.lock().unwrap().rnse = Some(seen.clone());
+        let t = seen
+            .table
+            .clone()
+            .ok_or("this RNS-E has no SDLink firmware table, so no flash commands to write with")?;
+        if bus.read_all(xip, HEADER).await? == img[..HEADER] {
+            stage(
+                ev,
+                "verify",
+                format!("Sector {sector} starts the same; reading it all to compare"),
+            );
+            if crate::decoder::sector_crc_at(&mut bus, xip, "verify", ev).await? == crc {
+                return Ok(format!("Sector {sector} already holds {name}"));
+            }
+        }
+
+        // 3. Write, with cleanup whatever happens.
+        let restart = self.stop_chain(ev).await?;
+        let r = self.write_rnse(&mut bus, sector, &img, crc, &t, ev).await;
+        bus.release().await;
+        let committed = r.is_ok();
+        let r = match r {
+            Ok(()) => match wait_restart(&mut bus, ev).await {
+                Ok(()) => read_back(&mut bus, sector, &img, crc, ev).await,
+                Err(e) => Err(e),
+            },
+            Err(Pre(e)) => Err(e),
+        };
+        // The cold reset cleared the off word; after a refusal it is still set.
+        if bus.lease(Duration::from_secs(10)).await.is_ok() {
+            let _ = bus.send(svc::poke(svc::AUTO_START_WORD, 0)).await;
+            bus.release().await;
+        }
+        if committed && let Ok(s) = self.probe_rnse(&mut bus).await {
+            self.seen.lock().unwrap().rnse = Some(s);
+        }
+        if restart {
+            self.start_chain(ev).await;
+        }
+        r.map(|()| format!("Wrote {name} to sector {sector}; CRC {crc:08X} read back"))
     }
 
     // ------------------------------------------------------------ Teensy install
@@ -1194,6 +1295,116 @@ impl Firmware {
 /// An install error before the commit: nothing was written to flash.
 struct Pre(String);
 
+/// After a commit: the unit comes back with restart count 0.
+async fn wait_restart(bus: &mut RnseBus, ev: &Events) -> Result<(), String> {
+    stage(ev, "restart", "Waiting for the RNS-E to restart");
+    tokio::time::sleep(Duration::from_secs(25)).await;
+    let end = Instant::now() + Duration::from_secs(120);
+    let count = loop {
+        match bus.u16(RESTART_COUNT).await {
+            Ok(c) => break c as i16,
+            Err(_) if Instant::now() < end => tokio::time::sleep(Duration::from_secs(2)).await,
+            Err(e) => {
+                return Err(format!(
+                    "the RNS-E didn't answer after the commit: {e}. Check it, then run Check versions"
+                ));
+            }
+        }
+    };
+    if count != 0 {
+        return Err(format!("the RNS-E's restart count is {count}, expected 0"));
+    }
+    Ok(())
+}
+
+/// The live sector equals the image: its start first, then the whole CRC.
+async fn read_back(
+    bus: &mut RnseBus,
+    sector: u16,
+    img: &[u8],
+    crc: u32,
+    ev: &Events,
+) -> Result<(), String> {
+    let xip = svc::sector_xip(sector);
+    stage(ev, "verify", format!("Reading sector {sector} back"));
+    if bus.read_all(xip, HEADER).await? != img[..HEADER] {
+        return Err(format!(
+            "sector {sector}'s start doesn't match the image after the commit"
+        ));
+    }
+    let live = crate::decoder::sector_crc_at(bus, xip, "verify", ev).await?;
+    if live != crc {
+        return Err(format!(
+            "sector {sector} CRC {live:08X} after the commit, image {crc:08X}"
+        ));
+    }
+    Ok(())
+}
+
+/// Why an upload for `sector` of `len` bytes can't be flashed.
+fn sector_problem(sector: u16, len: usize) -> Option<String> {
+    if !(svc::SECTOR_MIN..=svc::SECTOR_MAX).contains(&sector) {
+        return Some(format!(
+            "sector {sector} is outside {}-{}; the unit never writes its loader",
+            svc::SECTOR_MIN,
+            svc::SECTOR_MAX
+        ));
+    }
+    if len != svc::SECTOR_SIZE as usize {
+        return Some(format!("{len} bytes, not one 128 KiB sector"));
+    }
+    None
+}
+
+/// `dir/name` for a plain upload name that is a regular file there.
+fn upload_path(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(format!("bad upload name {name:?}"));
+    }
+    let path = dir.join(name);
+    match std::fs::symlink_metadata(&path) {
+        Ok(m) if m.is_file() => Ok(path),
+        _ => Err(format!("no upload named {name} in {}", dir.display())),
+    }
+}
+
+/// `sector_<N>.bin` uploads in `dir`, by sector then name.
+pub fn sector_uploads(dir: &Path) -> Vec<SectorUpload> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<SectorUpload> = rd
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let sector = SectorUpload::sector_of(&name)?;
+            let path = upload_path(dir, &name).ok()?;
+            Some(match std::fs::read(&path) {
+                Ok(b) => SectorUpload {
+                    sector,
+                    size: b.len() as u64,
+                    crc: format!("{:08X}", !crc32(!0, &b)),
+                    problem: sector_problem(sector, b.len()),
+                    name,
+                },
+                Err(e) => SectorUpload {
+                    sector,
+                    problem: Some(e.to_string()),
+                    name,
+                    ..SectorUpload::default()
+                },
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.sector.cmp(&b.sector).then(a.name.cmp(&b.name)));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1268,8 +1479,13 @@ mod tests {
         // Empty sector: newer on a known table, unknown without one.
         assert_eq!(compare_rnse(None, &b, t), Cmp::Newer);
         assert_eq!(compare_rnse(None, &b, None), Cmp::Unknown);
-        // Table version or RAM map the module doesn't take.
+        // Table older than the module needs, or a RAM map it doesn't take.
         assert_eq!(
+            compare_rnse(Some(("AAAA0001", 1)), &b, Some((0, 1))),
+            Cmp::Incompatible
+        );
+        // A version-2 (tone) table still takes a module that needs 1.
+        assert_ne!(
             compare_rnse(Some(("AAAA0001", 1)), &b, Some((2, 1))),
             Cmp::Incompatible
         );
@@ -1477,5 +1693,28 @@ mod tests {
         assert_eq!(at("TCB_BASE"), FWE_TCB_BASE);
         assert_eq!(at("TASK_TV"), FWE_TASK_TV);
         assert!(h.contains("#define FWT_MAGIC    0x53444657u"));
+    }
+
+    #[test]
+    fn sector_uploads_list_and_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = vec![0x5Au8; svc::SECTOR_SIZE as usize];
+        std::fs::write(dir.path().join("sector_96.bin"), &sec).unwrap();
+        std::fs::write(dir.path().join("sector_40-short.bin"), [1, 2, 3]).unwrap();
+        std::fs::write(dir.path().join("sector_7.bin"), &sec).unwrap();
+        std::fs::write(dir.path().join("teensy.hex"), b":00000001FF").unwrap();
+        let u = sector_uploads(dir.path());
+        let names: Vec<_> = u.iter().map(|u| u.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["sector_7.bin", "sector_40-short.bin", "sector_96.bin"]
+        );
+        assert!(u[0].problem.as_deref().unwrap().contains("loader"));
+        assert!(u[1].problem.as_deref().unwrap().contains("3 bytes"));
+        assert_eq!(u[2].problem, None);
+        assert_eq!(u[2].crc, format!("{:08X}", !crc32(!0, &sec)));
+        assert!(upload_path(dir.path(), "../sector_96.bin").is_err());
+        assert!(upload_path(dir.path(), "sector_95.bin").is_err());
+        assert!(upload_path(dir.path(), "sector_96.bin").is_ok());
     }
 }

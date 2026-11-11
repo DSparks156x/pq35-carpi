@@ -623,7 +623,8 @@ pub fn setup(
 
     let _ = write!(
         b,
-        "<h2>Firmware</h2><section class=\"card pad\"><p class=mut>{} up to {}. Stored only; nothing is flashed.</p>",
+        "<h2>Firmware</h2><section class=\"card pad\"><p class=mut>{} up to {}. Stored only; nothing is flashed. \
+         RNS-E sector: [prefix]sector_&lt;N&gt;.bin, 128 KiB. Flash: SDLink Firmware &gt; Advanced: Flash Sector.</p>",
         esc(&cfg.firmware_ext.join(", ")),
         size(cfg.firmware_max)
     );

@@ -1,12 +1,14 @@
 //! What carpid may send to the RNS-E's service commands on 0x7B0 (sdlink
-//! docs/PI_UPDATER.md): B1 memory reads, and for a sector 107 update only,
-//! B9 to the auto start word, B3 staging, B7 + B6 commit.
+//! docs/PI_UPDATER.md): B1 memory reads, and for a one-sector write (the
+//! sector 107 update, or Advanced: Flash Sector), B9 to the auto start
+//! word, B3 staging, B7 + B6 commit.
 //!
 //! Reads pass through the `Diag` class, or `Lease` while the bus is leased.
 //! Everything that writes needs the lease, which the updater takes for the
 //! write and which stops every other sender on ICAN meanwhile. Each frame is
-//! checked against a narrow shape: B9 only to the one word, B7/B6 only to
-//! sector 107, one target, armed.
+//! checked against a narrow shape: B9 only to the one word, B7 only slot 0
+//! and a sector the unit itself would accept (32..=511, never the loader),
+//! B6 only one target, armed.
 
 use carpi_can::Frame;
 
@@ -15,6 +17,15 @@ pub const SECTOR: u16 = 107;
 /// Its XIP address and size.
 pub const SECTOR_XIP: u32 = 0x80D60000;
 pub const SECTOR_SIZE: u32 = 0x20000;
+/// Sectors a commit may target: the unit refuses anything below 0x400000
+/// (the first-stage loader and recovery) and past the 64 MiB chip.
+pub const SECTOR_MIN: u16 = 32;
+pub const SECTOR_MAX: u16 = 0x1FF;
+
+/// P1 (cached XIP) address of a 128 KiB flash sector.
+pub fn sector_xip(sector: u16) -> u32 {
+    0x8000_0000 | (sector as u32) << 17
+}
 /// TVA word 1: `'OFF!'` stops auto start, 0 re-arms it.
 pub const AUTO_START_WORD: u32 = 0x8F72F004;
 /// B6 arm byte.
@@ -72,9 +83,9 @@ pub fn classify(d: &[u8; 8]) -> Result<Need, String> {
         }
         0xB7 => {
             let sidx = u16::from_be_bytes([d[2], d[3]]);
-            if d[1] != 0 || sidx != SECTOR {
+            if d[1] != 0 || !(SECTOR_MIN..=SECTOR_MAX).contains(&sidx) {
                 return Err(format!(
-                    "B7 slot {} sector {sidx}: only slot 0, sector {SECTOR}",
+                    "B7 slot {} sector {sidx}: only slot 0, sectors {SECTOR_MIN}-{SECTOR_MAX}",
                     d[1]
                 ));
             }
@@ -129,7 +140,12 @@ pub fn stage_end(n: u32) -> [u8; 8] {
 
 /// B7 slot 0 -> sector 107 with the image CRC.
 pub fn set_target(crc: u32) -> [u8; 8] {
-    let s = SECTOR.to_be_bytes();
+    set_target_sector(SECTOR, crc)
+}
+
+/// B7 slot 0 -> `sector` with the image CRC.
+pub fn set_target_sector(sector: u16, crc: u32) -> [u8; 8] {
+    let s = sector.to_be_bytes();
     let c = crc.to_be_bytes();
     [0xB7, 0, s[0], s[1], c[0], c[1], c[2], c[3]]
 }
@@ -168,12 +184,19 @@ mod tests {
             set_target(0xAABBCCDD),
             [0xB7, 0, 0, 107, 0xAA, 0xBB, 0xCC, 0xDD]
         );
+        for s in [SECTOR_MIN, 106, SECTOR_MAX] {
+            assert_eq!(classify(&set_target_sector(s, 1)), Ok(Need::Lease), "{s}");
+        }
+        assert_eq!(sector_xip(SECTOR), SECTOR_XIP);
+        assert_eq!(sector_xip(SECTOR_MAX) + SECTOR_SIZE, 0x8400_0000);
     }
 
     #[test]
     fn anything_else_is_refused() {
-        // Other sectors, slots, counts, unarmed commits.
-        assert!(classify(&[0xB7, 0, 0, 106, 0, 0, 0, 0]).is_err());
+        // The loader, past the chip, other slots, counts, unarmed commits.
+        assert!(classify(&[0xB7, 0, 0, 31, 0, 0, 0, 0]).is_err());
+        assert!(classify(&[0xB7, 0, 0, 0, 0, 0, 0, 0]).is_err());
+        assert!(classify(&[0xB7, 0, 0x02, 0x00, 0, 0, 0, 0]).is_err());
         assert!(classify(&[0xB7, 1, 0, 107, 0, 0, 0, 0]).is_err());
         assert!(classify(&[0xB6, 2, 0, 0, 0, 0, 0, ARM]).is_err());
         assert!(classify(&[0xB6, 1, 0, 0, 0, 0, 0, 0]).is_err());
