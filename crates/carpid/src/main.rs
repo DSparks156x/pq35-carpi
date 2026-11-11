@@ -10,7 +10,7 @@
 //! Captures go to the logs folder (`capture`), automatically on crashes and
 //! bad CAN or update faults (`runmark`, `faults`); the Pi clock follows the
 //! car's until network time syncs (`clock`). Data-log runs go there too
-//! (`datalog`).
+//! (`datalog`), and fault scan reports (`scan`).
 
 mod act;
 mod api;
@@ -29,6 +29,7 @@ mod portal;
 mod remote;
 mod rnse_bus;
 mod runmark;
+mod scan;
 mod settings;
 mod storage;
 mod teensy;
@@ -41,7 +42,7 @@ use carpi_can::{Port, ReplayPort, RxFrame};
 use carpi_core::{Car, DiagJobId, DiagSubId};
 use carpi_proto::{DiagAction, JobEvent, Response, SettingsAction};
 use clap::Parser;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -118,6 +119,8 @@ struct Daemon {
     act: act::Actuators,
     portal_pin: Option<carpi_portal::PinCell>,
     diag_jobs: HashMap<DiagJobId, JobEvents>,
+    /// Diag jobs that are scans: their report goes to the logs folder.
+    scans: HashSet<DiagJobId>,
     portal_status: watch::Sender<carpi_portal::Status>,
     /// Learned light points not yet in the file, and when they changed.
     learned_dirty: Option<Instant>,
@@ -323,6 +326,7 @@ async fn main() -> anyhow::Result<()> {
         act,
         portal_pin,
         diag_jobs: HashMap::new(),
+        scans: HashSet::new(),
         portal_status,
         learned_dirty: None,
         captures,
@@ -455,15 +459,21 @@ impl Daemon {
                 let _ = reply.send(car.diag_subscribe(&prefixes, period, now));
             }
             Msg::DiagUnsubscribe(ids) => car.diag_unsubscribe(&ids, now),
-            Msg::DiagJob(action, events, reply) => match car.diag_start(action, now) {
-                Ok(id) => {
-                    self.diag_jobs.insert(id, events);
-                    let _ = reply.send(Ok(()));
+            Msg::DiagJob(action, events, reply) => {
+                let is_scan = action == DiagAction::Scan;
+                match car.diag_start(action, now) {
+                    Ok(id) => {
+                        self.diag_jobs.insert(id, events);
+                        if is_scan {
+                            self.scans.insert(id);
+                        }
+                        let _ = reply.send(Ok(()));
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
                 }
-                Err(e) => {
-                    let _ = reply.send(Err(e));
-                }
-            },
+            }
             Msg::DiagStatus(reply, events) => match car.diag_status(now) {
                 Some(st) => {
                     let _ = events.send(JobEvent::DiagStatus(st));
@@ -746,6 +756,10 @@ impl Daemon {
             let done = events
                 .iter()
                 .any(|e| matches!(e, JobEvent::Finished { .. }));
+            if done && self.scans.remove(&id) {
+                self.scan_done(car, id, events);
+                continue;
+            }
             if let Some(tx) = self.diag_jobs.get(&id) {
                 for e in events {
                     let _ = tx.send(e);
@@ -755,6 +769,49 @@ impl Daemon {
                 self.diag_jobs.remove(&id);
             }
         }
+    }
+
+    /// A scan finished: its events go out, then the report is written off
+    /// the loop, then `Finished`, naming the entry.
+    fn scan_done(&mut self, car: &mut Car, id: DiagJobId, events: Vec<JobEvent>) {
+        let tx = self.diag_jobs.remove(&id);
+        let mut finished = None;
+        for e in events {
+            match e {
+                JobEvent::Finished { ok, message } => finished = Some((ok, message)),
+                e => {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(e);
+                    }
+                }
+            }
+        }
+        let (ok, message) = finished.unwrap_or((false, "scan".into()));
+        let Some(report) = car.take_scan_report(id) else {
+            if let Some(tx) = &tx {
+                let _ = tx.send(JobEvent::Finished { ok, message });
+            }
+            return;
+        };
+        let odometer = car.store().get_num("vehicle.odometer_km", Instant::now());
+        let root = self.cfg.logs.root();
+        let max_pct = self.cfg.logs.max_pct;
+        tokio::task::spawn_blocking(move || {
+            let saved = scan::save(&root, max_pct, &report, odometer);
+            let (ok, message) = match saved {
+                Ok(label) => {
+                    info!("scan {label}: {}", scan::summary(&report));
+                    (ok, format!("{message}, {label}"))
+                }
+                Err(e) => {
+                    warn!("scan report: {e}");
+                    (false, format!("{message}; report not saved: {e}"))
+                }
+            };
+            if let Some(tx) = tx {
+                let _ = tx.send(JobEvent::Finished { ok, message });
+            }
+        });
     }
 
     fn publish_status(&self, car: &mut Car) {

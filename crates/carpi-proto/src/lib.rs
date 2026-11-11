@@ -341,6 +341,9 @@ pub enum DatalogAction {
     Delete {
         name: String,
     },
+    /// Marks the next row of the run: its `Mark` cell gets the mark's number
+    /// (1, 2, 3...) and LIVI a toast. Refused when nothing is logging.
+    Mark,
 }
 
 /// A channel set and a rate. carpid keeps these in `datalog.toml` next to
@@ -352,6 +355,10 @@ pub struct DatalogProfile {
     pub values: Vec<String>,
     /// One of [`DATALOG_RATES`].
     pub rate_hz: u32,
+    /// CSV header text per value, same order as `values`, set by the UI
+    /// (`Boost actual (mbar)`). A missing or empty entry uses the name.
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 /// What a profile costs.
@@ -396,6 +403,9 @@ pub struct DatalogRun {
     /// Why it stopped by itself, if it did.
     #[serde(default)]
     pub error: Option<String>,
+    /// Marks so far: the last one's number.
+    #[serde(default)]
+    pub marks: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -421,13 +431,34 @@ pub enum LightAction {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Diag jobs (docs/PAGES.md 5c, Faults). `module` is always the TP2 logical
+/// ID (the install list's `tp2`), never the VCDS address.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DiagAction {
     /// Gateway installation list (`1A 9F`).
     InstallList,
     /// Fault codes of one module (TP2 logical ID, e.g. 1 = engine).
     ReadDtcs { module: u8 },
+    /// Install list, then the fault codes and identity of every coded module
+    /// in turn: [`JobEvent::InstallList`], then [`JobEvent::Dtcs`] and
+    /// [`JobEvent::Identity`] per module as it answers (a `Stage` `module`
+    /// event for one that doesn't). Ends with a text report in the logs
+    /// folder; `Finished` names it. One scan at a time.
+    Scan,
+    /// Part number, component, software version and coding:
+    /// [`JobEvent::Identity`].
+    Identify { module: u8 },
+    /// One measuring block (`21 group`), once: [`JobEvent::Group`]. Refused
+    /// for ABS.
+    ReadGroup { module: u8, group: u8 },
+    /// One adaptation channel: [`JobEvent::Adaptation`]. Not supported yet:
+    /// carpid answers an error.
+    ReadAdaptation { module: u8, channel: u8 },
+    /// Write the coding, as hex. Refused: writes are disabled in carpid.
+    WriteCoding { module: u8, coding: String },
+    /// Write one adaptation channel. Refused: writes are disabled in carpid.
+    WriteAdaptation { module: u8, channel: u8, value: u16 },
     /// Clear fault codes, then read what's left. Takes the exclusive diag
     /// token, so it only runs with `confirm: true`.
     ClearDtcs {
@@ -1348,6 +1379,29 @@ pub enum JobEvent {
     InstallList { modules: Vec<InstalledModule> },
     /// Diag: fault codes read from `module`. After a clear, what's left.
     Dtcs { module: u8, dtcs: Vec<Dtc> },
+    /// Diag: who `module` is. `None` where the module didn't say.
+    Identity {
+        module: u8,
+        /// `8J0907115B`.
+        part_no: Option<String>,
+        /// `MED17.5.1 TFSI`.
+        component: Option<String>,
+        /// `0040`.
+        sw_version: Option<String>,
+        /// Coding, as upper-case hex.
+        coding: Option<String>,
+        /// Workshop code. `None` until its layout is known.
+        workshop: Option<String>,
+    },
+    /// Diag: one measuring block, every field it sent (usually 4, the
+    /// engine sends 8).
+    Group {
+        module: u8,
+        group: u8,
+        fields: Vec<GroupField>,
+    },
+    /// Diag: one adaptation channel.
+    Adaptation { module: u8, channel: u8, value: u16 },
     /// Diag: mode, channels and subscriptions.
     DiagStatus(DiagStatus),
     /// Wi-Fi scan: networks in range, strongest first.
@@ -1366,6 +1420,17 @@ pub struct InstalledModule {
     pub tp2: u8,
     pub coded: bool,
     pub status: u8,
+}
+
+/// One measuring-block field, decoded with the block's formula byte.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GroupField {
+    /// `None` for text fields and formulas carpid doesn't know.
+    pub value: Option<f64>,
+    /// As shown: `840`, `4.44`, `WARM`, or the raw `7D 00 00`.
+    pub text: String,
+    /// `rpm`, `°C`, ...; empty when the formula has none.
+    pub unit: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1961,6 +2026,70 @@ mod tests {
             serde_json::to_string(&s).unwrap(),
             r#"{"type":"datalog","status":{"profiles":[],"selected":null,"running":null,"last":null}}"#
         );
+    }
+
+    #[test]
+    fn data_page_wire_shape() {
+        // Old profiles have no labels; Mark is a bare action.
+        let r: Request = decode(
+            br#"{"type":"datalog","action":{"kind":"save","profile":{"name":"B","values":["engine.rpm"],"rate_hz":10}}}"#,
+        )
+        .unwrap();
+        let Request::Datalog {
+            action: DatalogAction::Save { profile, .. },
+        } = r
+        else {
+            panic!()
+        };
+        assert!(profile.labels.is_empty());
+        let r: Request = decode(br#"{"type":"datalog","action":{"kind":"mark"}}"#).unwrap();
+        assert_eq!(
+            r,
+            Request::Datalog {
+                action: DatalogAction::Mark
+            }
+        );
+        for (json, action) in [
+            (r#"{"kind":"scan"}"#, DiagAction::Scan),
+            (
+                r#"{"kind":"identify","module":1}"#,
+                DiagAction::Identify { module: 1 },
+            ),
+            (
+                r#"{"kind":"read_group","module":1,"group":115}"#,
+                DiagAction::ReadGroup {
+                    module: 1,
+                    group: 115,
+                },
+            ),
+            (
+                r#"{"kind":"write_coding","module":32,"coding":"0A1B"}"#,
+                DiagAction::WriteCoding {
+                    module: 32,
+                    coding: "0A1B".into(),
+                },
+            ),
+        ] {
+            assert_eq!(serde_json::from_str::<DiagAction>(json).unwrap(), action);
+        }
+        let e = JobEvent::Group {
+            module: 1,
+            group: 3,
+            fields: vec![GroupField {
+                value: Some(840.0),
+                text: "840".into(),
+                unit: "rpm".into(),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_string(&e).unwrap(),
+            r#"{"event":"group","module":1,"group":3,"fields":[{"value":840.0,"text":"840","unit":"rpm"}]}"#
+        );
+        let i: JobEvent = serde_json::from_str(
+            r#"{"event":"identity","module":1,"part_no":"8J0907115B","component":null,"sw_version":"0040","coding":null,"workshop":null}"#,
+        )
+        .unwrap();
+        assert!(matches!(i, JobEvent::Identity { part_no: Some(p), .. } if p == "8J0907115B"));
     }
 
     #[test]

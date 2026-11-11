@@ -1,5 +1,8 @@
 //! A data log's `data.csv`, trimmed: some of its columns, a time range. The
-//! first column is `time_s` and rows are in time order (carpid writes it so).
+//! first column is the time in seconds (`Time (s)`, `time_s` in older runs)
+//! and rows are in time order (carpid writes it so). A last column called
+//! `Mark` holds the run's marks: it isn't offered as a column and is always
+//! kept.
 
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -7,8 +10,10 @@ use std::path::Path;
 /// The columns and the time range of a CSV, for the form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outline {
-    /// Every column after `time_s`.
+    /// Every value column: after the time, without `Mark`.
     pub columns: Vec<String>,
+    /// The last column is `Mark`.
+    pub mark: bool,
     pub first: Option<f64>,
     pub last: Option<f64>,
 }
@@ -21,11 +26,15 @@ pub fn outline(path: &Path) -> io::Result<Outline> {
     r.read_line(&mut head)?;
     let mut first_row = String::new();
     r.read_line(&mut first_row)?;
-    let columns = fields(head.trim_end_matches(['\n', '\r']))
+    let mut columns: Vec<String> = fields(head.trim_end_matches(['\n', '\r']))
         .into_iter()
         .skip(1)
         .map(unquote)
         .collect();
+    let mark = columns.last().is_some_and(|c| c == MARK);
+    if mark {
+        columns.pop();
+    }
     let len = f.metadata()?.len();
     let from = len.saturating_sub(4096);
     f.seek(SeekFrom::Start(from))?;
@@ -39,18 +48,24 @@ pub fn outline(path: &Path) -> io::Result<Outline> {
     let last = lines.iter().rev().find_map(|l| time(l));
     Ok(Outline {
         columns,
+        mark,
         first: time(&first_row),
         last: last.or(time(&first_row)),
     })
 }
 
-/// What to keep. Columns are indices into a row, 0 being `time_s`, which
+/// The marks column's header.
+pub const MARK: &str = "Mark";
+
+/// What to keep. Columns are indices into a row, 0 being the time, which
 /// is always kept.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Trim {
     pub columns: Option<Vec<usize>>,
     pub from: Option<f64>,
     pub to: Option<f64>,
+    /// Index of the `Mark` column, kept after the picked ones.
+    pub mark: Option<usize>,
 }
 
 /// From the form's query: `pick=1&c=1&c=3&from=0&to=12.5`. Without `pick`
@@ -91,7 +106,19 @@ pub fn parse(query: &str, columns: usize) -> Result<Trim, String> {
     } else {
         None
     };
-    Ok(Trim { columns, from, to })
+    Ok(Trim {
+        columns,
+        from,
+        to,
+        mark: None,
+    })
+}
+
+/// [`parse`] for a CSV with this outline: the `Mark` column comes along.
+pub fn parse_for(query: &str, o: &Outline) -> Result<Trim, String> {
+    let mut t = parse(query, o.columns.len())?;
+    t.mark = o.mark.then_some(o.columns.len() + 1);
+    Ok(t)
 }
 
 fn seconds(v: &str) -> Result<Option<f64>, String> {
@@ -137,7 +164,7 @@ fn write_fields(out: &mut impl Write, line: &str, t: &Trim) -> io::Result<()> {
         Some(cols) => {
             let f = fields(line);
             let mut s = String::from(f.first().copied().unwrap_or(""));
-            for &c in cols {
+            for &c in cols.iter().chain(&t.mark) {
                 s.push(',');
                 s.push_str(f.get(c).copied().unwrap_or(""));
             }
@@ -238,6 +265,33 @@ mod tests {
         assert!(run("from=%zz").is_err());
         assert_eq!(decode("0.5%2B1+x").as_deref(), Some("0.5+1 x"));
         assert_eq!(decode("%4"), None);
+    }
+
+    #[test]
+    fn marks_stay_with_picked_columns() {
+        let csv = "Time (s),Boost actual (mbar),\"RPM, engine\",Mark\n\
+                   0.000,900,800,\n\
+                   0.100,910,810,1\n\
+                   0.200,920,820,\n";
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("data.csv");
+        std::fs::write(&p, csv).unwrap();
+        let o = outline(&p).unwrap();
+        assert_eq!(o.columns, ["Boost actual (mbar)", "RPM, engine"]);
+        assert!(o.mark);
+        assert!(parse_for("pick=1&c=3", &o).is_err());
+        let t = parse_for("pick=1&c=2&from=0.1", &o).unwrap();
+        let mut out = Vec::new();
+        copy(csv.as_bytes(), &mut out, &t).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "Time (s),\"RPM, engine\",Mark\n0.100,810,1\n0.200,820,\n"
+        );
+        // No pick: the file as it is.
+        let t = parse_for("", &o).unwrap();
+        let mut out = Vec::new();
+        copy(csv.as_bytes(), &mut out, &t).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), csv);
     }
 
     #[test]

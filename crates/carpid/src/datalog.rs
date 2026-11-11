@@ -2,10 +2,14 @@
 //!
 //! ```text
 //! entry.json    carpi_logs::Meta, kind datalog, trigger = the profile's name
-//! data.csv      time_s, then a column per value; a row per tick, blank when stale
+//! data.csv      Time (s), a column per value (the profile's label), Mark;
+//!               a row per tick, each value held until the next sample
 //! profile.json  the profile as it ran, and what it cost
-//! info.txt      start and end, Pi time, car clock, versions
+//! info.txt      start and end, Pi time, car clock, odometer, versions
 //! ```
+//!
+//! A mark (`DatalogAction::Mark`) puts its number (1, 2, 3...) in the next
+//! row's `Mark` cell and toasts "Mark N".
 //!
 //! Profiles are kept in `datalog.toml` next to carpid's config. One run at a
 //! time. The run's task asks the event loop for its values once a tick
@@ -31,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, oneshot};
@@ -43,6 +47,8 @@ pub const FILE: &str = "datalog.toml";
 const FLUSH: Duration = Duration::from_secs(1);
 const MAX_VALUES: usize = 200;
 const MAX_NAME: usize = 32;
+/// Longest column label, in characters.
+const MAX_LABEL: usize = 64;
 /// Read for info.txt at the start and the end.
 const CLOCK: &str = "clock.datetime";
 const ODOMETER: &str = "vehicle.odometer_km";
@@ -98,6 +104,7 @@ fn defaults() -> Vec<DatalogProfile> {
         .map(String::from)
         .to_vec(),
         rate_hz: 10,
+        labels: Vec::new(),
     }]
 }
 
@@ -155,7 +162,7 @@ fn write_profiles(path: &Path, f: &ProfilesFile, broken: bool) -> io::Result<()>
 }
 
 /// A profile as carpid keeps it: trimmed name, a known rate, plain value
-/// names without repeats.
+/// names without repeats, a one-line label (or none) per value.
 pub fn check(mut p: DatalogProfile) -> Result<DatalogProfile, String> {
     p.name = p.name.trim().to_string();
     if p.name.is_empty() || p.name.chars().count() > MAX_NAME {
@@ -172,7 +179,26 @@ pub fn check(mut p: DatalogProfile) -> Result<DatalogProfile, String> {
         ));
     }
     let mut seen = BTreeSet::new();
-    p.values.retain(|v| seen.insert(v.clone()));
+    let mut labels = std::mem::take(&mut p.labels).into_iter();
+    let (values, labels): (Vec<String>, Vec<String>) = std::mem::take(&mut p.values)
+        .into_iter()
+        .map(|v| {
+            let l = labels.next().unwrap_or_default();
+            let l: String = l
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            (v, l.trim().chars().take(MAX_LABEL).collect())
+        })
+        .filter(|(v, _)| seen.insert(v.clone()))
+        .unzip();
+    p.values = values;
+    // No labels at all stays an empty list.
+    p.labels = if labels.iter().all(String::is_empty) {
+        Vec::new()
+    } else {
+        labels
+    };
     if p.values.len() > MAX_VALUES {
         return Err(format!("at most {MAX_VALUES} values"));
     }
@@ -197,6 +223,14 @@ pub fn load(catalog: &Catalog, values: &[String], rate_hz: u32) -> DatalogLoad {
     let mut bus = 0;
     let mut need: Vec<Vec<(u8, u8, usize)>> = Vec::new();
     for v in values {
+        // A module-group name is one measuring-block read of its own.
+        if let Some(f) = carpi_diag::GroupField::parse(v) {
+            match carpi_diag::modules::default_tp2(f.address) {
+                Some(m) if !cfg.profiles.is_denied(m) => need.push(vec![(m, f.group, 0)]),
+                _ => bus += 1,
+            }
+            continue;
+        }
         let Some(def) = catalog.get(v).filter(|d| d.ican_name().is_none()) else {
             bus += 1;
             continue;
@@ -255,20 +289,22 @@ pub fn load(catalog: &Catalog, values: &[String], rate_hz: u32) -> DatalogLoad {
     }
 }
 
-/// The CSV's header line: `time_s` and the value names.
-pub fn header(names: &[String]) -> String {
-    let mut s = String::from("time_s");
-    for n in names {
+/// The CSV's header line: `Time (s)`, each value's label (its name when the
+/// label is missing or empty), `Mark`.
+pub fn header(p: &DatalogProfile) -> String {
+    let mut s = String::from("Time (s)");
+    for (i, n) in p.values.iter().enumerate() {
+        let l = p.labels.get(i).filter(|l| !l.is_empty()).unwrap_or(n);
         s.push(',');
-        s.push_str(&field(n));
+        s.push_str(&field(l));
     }
-    s.push('\n');
+    s.push_str(",Mark\n");
     s
 }
 
 /// One row: the time in ms as seconds, then each value, blank when there
-/// is none.
-pub fn line(ms: u64, values: &[Option<Value>]) -> String {
+/// is none, then the mark's number if one was made.
+pub fn line(ms: u64, values: &[Option<Value>], mark: Option<u32>) -> String {
     let mut s = format!("{}.{:03}", ms / 1000, ms % 1000);
     for v in values {
         s.push(',');
@@ -279,8 +315,22 @@ pub fn line(ms: u64, values: &[Option<Value>]) -> String {
             Some(Value::Text(t)) => s.push_str(&field(t)),
         }
     }
+    s.push(',');
+    if let Some(m) = mark {
+        s.push_str(&m.to_string());
+    }
     s.push('\n');
     s
+}
+
+/// Values for the next row: what came in, else the last value seen, so a
+/// cell is blank only before a value's first sample.
+pub fn hold(last: &mut [Option<Value>], now: Vec<Option<Value>>) {
+    for (l, v) in last.iter_mut().zip(now) {
+        if v.is_some() {
+            *l = v;
+        }
+    }
 }
 
 /// At most 6 decimals, no trailing zeros; blank for NaN and infinities.
@@ -320,6 +370,7 @@ pub fn tick_ms(since_start: Duration, rate_hz: u32) -> u64 {
 pub struct Row {
     pub ms: u64,
     pub values: Vec<Option<Value>>,
+    pub mark: Option<u32>,
 }
 
 /// The writer thread: rows into `out`, flushed and synced every `flush`, and
@@ -336,7 +387,7 @@ pub fn write_rows(
     loop {
         let done = match rx.recv_timeout(flush) {
             Ok(row) => {
-                w.write_all(line(row.ms, &row.values).as_bytes())?;
+                w.write_all(line(row.ms, &row.values, row.mark).as_bytes())?;
                 rows.fetch_add(1, Ordering::Relaxed);
                 false
             }
@@ -385,6 +436,8 @@ struct Live {
     run: DatalogRun,
     t0: Instant,
     rows: Arc<AtomicU64>,
+    /// Marks made, and the one the next row carries (0: none).
+    marks: Arc<Marks>,
     stop: Option<oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<DatalogRun>>,
 }
@@ -394,8 +447,17 @@ impl Live {
         let mut r = self.run.clone();
         r.elapsed_ms = self.t0.elapsed().as_millis() as u64;
         r.rows = self.rows.load(Ordering::Relaxed);
+        r.marks = self.marks.made.load(Ordering::Relaxed);
         r
     }
+}
+
+/// A run's marks, between the API and the run's task.
+#[derive(Default)]
+struct Marks {
+    made: AtomicU32,
+    /// For the next row; 0 when there's none.
+    next: AtomicU32,
 }
 
 /// What a run's task needs.
@@ -408,6 +470,7 @@ struct Plan {
     rows_tx: std::sync::mpsc::Sender<Row>,
     writer: std::thread::JoinHandle<io::Result<()>>,
     rows: Arc<AtomicU64>,
+    marks: Arc<Marks>,
     stop: oneshot::Receiver<()>,
     t0: Instant,
     start_values: Vec<Reading>,
@@ -461,6 +524,7 @@ impl Datalog {
             DatalogAction::Stop => self.stop().await.map(|_| ()),
             DatalogAction::Save { profile, replaces } => self.save(profile, replaces),
             DatalogAction::Delete { name } => self.delete(&name),
+            DatalogAction::Mark => self.mark().map(|_| ()),
         };
         match r {
             Ok(()) => Response::Datalog {
@@ -512,6 +576,21 @@ impl Datalog {
                 d.toast(format!("Logging: {e}"), ToastLevel::Error);
             }
         });
+    }
+
+    /// Marks the next row of the run; its number.
+    pub fn mark(&self) -> Result<u32, String> {
+        let n = {
+            let st = self.state();
+            let Some(live) = &st.run else {
+                return Err("not logging".into());
+            };
+            let n = live.marks.made.fetch_add(1, Ordering::Relaxed) + 1;
+            live.marks.next.store(n, Ordering::Relaxed);
+            n
+        };
+        self.toast(format!("Mark {n}"), ToastLevel::Info);
+        Ok(n)
     }
 
     /// Stops a run before carpid exits, so it gets its end.
@@ -660,7 +739,9 @@ impl Datalog {
             dir: dir.display().to_string(),
             summary: String::new(),
             error: None,
+            marks: 0,
         };
+        let marks = Arc::new(Marks::default());
         let plan = Plan {
             meta,
             dir,
@@ -670,6 +751,7 @@ impl Datalog {
             rows_tx,
             writer,
             rows: rows.clone(),
+            marks: marks.clone(),
             stop: stop_rx,
             t0,
             start_values,
@@ -682,6 +764,7 @@ impl Datalog {
                 run: run.clone(),
                 t0,
                 rows,
+                marks,
                 stop: Some(stop_tx),
                 task: Some(task),
             });
@@ -736,6 +819,7 @@ impl Datalog {
         let mut tick = tokio::time::interval_at(tokio::time::Instant::from_std(plan.t0), period);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut error = None;
+        let mut last: Vec<Option<Value>> = vec![None; names.len()];
         loop {
             let at = tokio::select! {
                 _ = &mut plan.stop => break,
@@ -756,7 +840,7 @@ impl Datalog {
                 error = Some("carpid's event loop stopped".to_string());
                 break;
             };
-            let values = names
+            let now = names
                 .iter()
                 .map(|n| {
                     items
@@ -765,8 +849,15 @@ impl Datalog {
                         .and_then(|r| r.value.clone())
                 })
                 .collect();
+            hold(&mut last, now);
+            let mark = Some(plan.marks.next.swap(0, Ordering::Relaxed)).filter(|&m| m > 0);
             let ms = tick_ms(at.into_std().saturating_duration_since(plan.t0), rate);
-            if plan.rows_tx.send(Row { ms, values }).is_err() {
+            let row = Row {
+                ms,
+                values: last.clone(),
+                mark,
+            };
+            if plan.rows_tx.send(row).is_err() {
                 break;
             }
         }
@@ -831,6 +922,7 @@ impl Datalog {
             run.rows = rows;
             run.summary = summary;
             run.error = error.clone();
+            run.marks = plan.marks.made.load(Ordering::Relaxed);
             st.last = Some(run.clone());
             run
         };
@@ -885,7 +977,7 @@ fn open(
     .map_err(|e| format!("profile.json: {e}"))?;
     let mut f =
         std::fs::File::create(dir.join("data.csv")).map_err(|e| format!("data.csv: {e}"))?;
-    f.write_all(header(&profile.values).as_bytes())
+    f.write_all(header(profile).as_bytes())
         .and_then(|_| f.sync_data())
         .map_err(|e| format!("data.csv: {e}"))?;
     Ok((meta, dir, f))
@@ -927,6 +1019,9 @@ impl End {
         line("profile", self.profile.name.clone());
         line("rate", format!("{} Hz", self.profile.rate_hz));
         line("values", self.profile.values.join(" "));
+        if !self.profile.labels.is_empty() {
+            line("labels", self.profile.labels.join(" | "));
+        }
         line("load", load_text(&self.load));
         line(
             "started",
@@ -1012,13 +1107,22 @@ pub(crate) mod tests {
             name: name.into(),
             values: values.iter().map(|v| v.to_string()).collect(),
             rate_hz,
+            labels: Vec::new(),
         }
     }
 
     #[test]
-    fn rows_leave_stale_values_blank() {
-        let names = vec!["engine.rpm".into(), "a,b".into()];
-        assert_eq!(header(&names), "time_s,engine.rpm,\"a,b\"\n");
+    fn header_rows_and_marks() {
+        let mut p = profile("x", &["engine.rpm", "a,b", "engine.boost.actual"], 1);
+        assert_eq!(
+            header(&p),
+            "Time (s),engine.rpm,\"a,b\",engine.boost.actual,Mark\n"
+        );
+        p.labels = vec!["RPM".into(), String::new()];
+        assert_eq!(
+            header(&p),
+            "Time (s),RPM,\"a,b\",engine.boost.actual,Mark\n"
+        );
         let row = line(
             1250,
             &[
@@ -1030,9 +1134,33 @@ pub(crate) mod tests {
                 Some(Value::Num(f64::NAN)),
                 Some(Value::Num(-0.0000001)),
             ],
+            None,
         );
-        assert_eq!(row, "1.250,840,,0.992188,1,\"say \"\"hi\"\" there\",,0\n");
-        assert_eq!(line(0, &[None, None]), "0.000,,\n");
+        assert_eq!(row, "1.250,840,,0.992188,1,\"say \"\"hi\"\" there\",,0,\n");
+        assert_eq!(line(0, &[None, None], Some(3)), "0.000,,,3\n");
+    }
+
+    #[test]
+    fn values_hold_between_samples() {
+        let mut last = vec![None, None];
+        hold(&mut last, vec![Some(Value::Num(1.0)), None]);
+        assert_eq!(last, [Some(Value::Num(1.0)), None]);
+        hold(&mut last, vec![None, Some(Value::Num(2.0))]);
+        assert_eq!(last, [Some(Value::Num(1.0)), Some(Value::Num(2.0))]);
+        hold(&mut last, vec![Some(Value::Num(3.0)), None]);
+        assert_eq!(last, [Some(Value::Num(3.0)), Some(Value::Num(2.0))]);
+    }
+
+    #[test]
+    fn labels_follow_their_values() {
+        let mut p = profile("x", &["a", "b", "a", "c"], 1);
+        p.labels = vec!["A".into(), " B\n2 ".into(), "A again".into()];
+        let p = check(p).unwrap();
+        assert_eq!(p.values, ["a", "b", "c"]);
+        assert_eq!(p.labels, ["A", "B 2", ""]);
+        let mut q = profile("x", &["a", "b"], 1);
+        q.labels = vec![String::new(), "  ".into(), "extra".into()];
+        assert!(check(q).unwrap().labels.is_empty());
     }
 
     #[test]
@@ -1130,6 +1258,20 @@ pub(crate) mod tests {
         );
         assert_eq!((l.diag_groups, l.diag_modules), (5, 2));
         assert_eq!(l.diag_hz, Some(3.3));
+        // Module groups: two fields of one block are one read.
+        let g = load(
+            &c,
+            &v(&[
+                "diag.01.103.1",
+                "diag.01.103.2",
+                "diag.22.5.1",
+                "diag.03.1.1",
+            ]),
+            10,
+        );
+        assert_eq!((g.bus_values, g.diag_values), (1, 3));
+        assert_eq!((g.diag_groups, g.diag_modules), (2, 2));
+
         assert_eq!(
             load_text(&l),
             "0 bus, 5 diag in 5 groups on 2 modules, about 3.3 Hz each"
@@ -1238,13 +1380,23 @@ pub(crate) mod tests {
         );
         tokio::time::sleep(Duration::from_millis(520)).await;
         values.lock().unwrap()[0].value = Some(Value::Num(2500.0));
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(d.mark(), Ok(1));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Gone stale: the row keeps the last value.
+        values.lock().unwrap()[0].value = None;
+        tokio::time::sleep(Duration::from_millis(300)).await;
         let st = d.status();
         assert!(st.running.as_ref().unwrap().rows >= 10);
+        assert_eq!(st.running.as_ref().unwrap().marks, 1);
         let done = d.stop().await.unwrap();
+        assert_eq!(done.marks, 1);
         assert!(d.status().running.is_none());
         assert_eq!(d.status().last.as_ref(), Some(&done));
         assert!(matches!(d.stop().await, Err(e) if e == "not logging"));
+        assert!(matches!(
+            d.handle(DatalogAction::Mark).await,
+            Response::Error { message } if message == "not logging"
+        ));
 
         let logs = Logs::new(t.path().join("logs"));
         let id = carpi_logs::EntryId::parse(&done.label).unwrap();
@@ -1265,12 +1417,15 @@ pub(crate) mod tests {
         let mut lines = csv.lines();
         assert_eq!(
             lines.next(),
-            Some("time_s,engine.rpm,awd.oil_temp_c,nav.road")
+            Some("Time (s),engine.rpm,awd.oil_temp_c,nav.road,Mark")
         );
         let rows: Vec<&str> = lines.collect();
         assert_eq!(rows.len() as u64, done.rows);
         assert!((15..=25).contains(&rows.len()), "{}", rows.len());
-        assert_eq!(rows[0], "0.000,900,,");
+        assert_eq!(rows[0], "0.000,900,,,");
+        let marked: Vec<&&str> = rows.iter().filter(|r| !r.ends_with(',')).collect();
+        assert_eq!(marked.len(), 1, "{rows:?}");
+        assert!(marked[0].ends_with(",2500,,,1"), "{marked:?}");
         let times: Vec<u64> = rows
             .iter()
             .map(|r| {
@@ -1280,7 +1435,8 @@ pub(crate) mod tests {
             .collect();
         assert!(times.windows(2).all(|w| w[1] > w[0]), "{times:?}");
         assert!(times.iter().all(|t| t % 50 == 0), "{times:?}");
-        assert!(rows.last().unwrap().ends_with(",2500,,"));
+        assert!(rows.last().unwrap().ends_with(",2500,,,"));
+
         let info = std::fs::read_to_string(Path::new(&done.dir).join("info.txt")).unwrap();
         assert!(info.contains("profile    Haldex"), "{info}");
         assert!(info.contains("2026-11-08T10:00:00 (200 ms old)"), "{info}");

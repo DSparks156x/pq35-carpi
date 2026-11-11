@@ -263,15 +263,15 @@ pub fn home(access: Access, status: Option<&Status>, can_capture: bool, days: &[
     if can_capture {
         let _ = write!(
             b,
-            "<form class=capture method=post action=\"/capture\" data-busy=\"Capturing…\">\
-             <button class=\"btn pri wide tall\">{I_REC}<span>Capture now</span></button></form>\
-             <p class=hint>Saves the last 5 minutes: CAN, journal, values, config.</p>"
+            "<form class=capture method=post action=\"/capture\" data-busy=\"Collecting…\">\
+             <button class=\"btn pri wide tall\">{I_REC}<span>Collect debug logs</span></button></form>\
+             <p class=hint>Last 5 min: CAN, journal, values, config.</p>"
         );
     }
     b.push_str("<h2>Days</h2>");
     if days.is_empty() {
         b.push_str(
-            "<section class=\"card pad empty\"><p class=mut>No captures or data logs yet.</p></section>",
+            "<section class=\"card pad empty\"><p class=mut>No debug logs or data logs yet.</p></section>",
         );
     } else {
         b.push_str("<section class=\"card list\">");
@@ -298,8 +298,9 @@ pub fn home(access: Access, status: Option<&Status>, can_capture: bool, days: &[
 
 fn kind_badge(meta: Option<&Meta>) -> &'static str {
     match meta.map(|m| m.kind) {
-        Some(Kind::Capture) => "<span class=\"badge cap\">capture</span>",
+        Some(Kind::Capture) => "<span class=\"badge cap\">debug logs</span>",
         Some(Kind::Datalog) => "<span class=\"badge log\">datalog</span>",
+        Some(Kind::Scan) => "<span class=\"badge scan\">fault scan</span>",
         None => "<span class=badge>unknown</span>",
     }
 }
@@ -586,7 +587,7 @@ pub fn setup(
             let what = if cfg.protect_downloads {
                 "everything"
             } else {
-                "uploads, stars, deletes, captures and Wi-Fi changes"
+                "uploads, stars, deletes, debug logs and Wi-Fi changes"
             };
             let _ = write!(b, "<p class=mut>The PIN is needed for {what}.</p>");
             pin_form(&mut b, "/setup", "Unlock");
@@ -670,10 +671,10 @@ const HEAD: &str = r##"<!doctype html><html lang=en><head><meta charset=utf-8>
 <style>
 :root{--bg:#0d0f12;--card:#16191e;--card2:#1f232a;--line:#2a2f37;--fg:#eef1f4;--mut:#9aa3ae;
 --acc:#ffb224;--acc-fg:#1b1300;--link:#8cb8ff;--ok:#36d399;--idle:#8a94a0;--warn:#ffb224;--bad:#ff6b6b;
---star:#ffcc33;--cap:#8cb8ff;--log:#c99bff;--r:16px;--sh:none}
+--star:#ffcc33;--cap:#8cb8ff;--log:#c99bff;--scan:#ffad66;--r:16px;--sh:none}
 @media (prefers-color-scheme:light){:root{--bg:#f3f4f6;--card:#fff;--card2:#eff1f4;--line:#dde1e6;--fg:#0c0e11;
 --mut:#545d68;--acc:#f59e0b;--acc-fg:#140d00;--link:#0b57d0;--ok:#0b8a4c;--idle:#69727e;--warn:#a85f00;--bad:#c62828;
---star:#d99a00;--cap:#0b57d0;--log:#7b3fd0;--sh:0 1px 2px rgba(16,24,40,.06)}}
+--star:#d99a00;--cap:#0b57d0;--log:#7b3fd0;--scan:#b35900;--sh:0 1px 2px rgba(16,24,40,.06)}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
@@ -748,6 +749,7 @@ h1 .num{font-size:inherit}
 h1 .badge{font-size:.78rem}
 .badge.cap{color:var(--cap);background:color-mix(in srgb,var(--cap) 15%,transparent)}
 .badge.log{color:var(--log);background:color-mix(in srgb,var(--log) 15%,transparent)}
+.badge.scan{color:var(--scan);background:color-mix(in srgb,var(--scan) 15%,transparent)}
 .trig{color:var(--mut);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .acts,.row-btns{display:flex;gap:10px;align-items:center}
 .acts{padding:0 12px 12px 16px}

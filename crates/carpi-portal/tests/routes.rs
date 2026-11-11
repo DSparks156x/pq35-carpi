@@ -234,7 +234,7 @@ async fn day_lists_entries_newest_first() {
         "/zip/e/2026-11-08/02",
         "Download #01 (.zip)",
         "/e/2026-11-08/01",
-        "capture",
+        "debug logs",
         "datalog",
         "boost",
         "4 buses, 1 frame",
@@ -707,7 +707,7 @@ async fn capture_hook() {
         })
         .router();
     let html = page(&app, "/").await;
-    assert!(html.contains("action=\"/capture\"") && html.contains("Capture now"));
+    assert!(html.contains("action=\"/capture\"") && html.contains("Collect debug logs"));
     let req = form("/capture").body(Body::empty()).unwrap();
     let (code, h, _) = send(&app, req).await;
     assert_eq!(code, StatusCode::SEE_OTHER);

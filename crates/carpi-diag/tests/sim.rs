@@ -527,3 +527,117 @@ fn absent_module_backs_off() {
     // 0.5 s setup timeout, then 1 s, 2 s backoff: a handful of tries, not a flood.
     assert!((2..=4).contains(&w.setups(0x01)), "{}", w.setups(0x01));
 }
+
+#[test]
+fn module_group_names_poll_any_field() {
+    let mut w = World::tt();
+    // Engine group 113 field 4 is not under this name in the catalog: the
+    // name alone is enough. Haldex is VCDS 22 -> TP2 0x0A.
+    let a = w.sub("diag.01.113.4", ms(200), 1, Duration::from_secs(60));
+    let b = w.sub("diag.01.3.1", ms(200), 1, Duration::from_secs(60));
+    let h = w.sub("diag.22.1.2", ms(500), 1, Duration::from_secs(60));
+    w.run(Duration::from_secs(3));
+    assert_eq!(
+        w.status(a).source,
+        Source::Diag {
+            module: 0x01,
+            group: 113,
+            field: 4
+        }
+    );
+    assert_eq!(
+        w.status(h).source,
+        Source::Diag {
+            module: 0x0A,
+            group: 1,
+            field: 2
+        }
+    );
+    assert_eq!(w.num("diag.01.113.4"), Some(795.0));
+    assert_eq!(w.num("diag.01.3.1"), Some(840.0));
+    assert_eq!(w.num("diag.22.1.2"), Some(30.0));
+    assert_eq!(w.status(b).value, "diag.01.3.1");
+    let def = w.dm.d.catalog().get("diag.01.3.1").unwrap();
+    assert_eq!((def.label, def.sub), ("01 · 3 · 1", "Module groups"));
+
+    // ABS, unknown addresses and malformed names are refused.
+    let now = w.now();
+    let sub = |value: &str| Subscription {
+        value: value.into(),
+        period: ms(200),
+        priority: 1,
+        lease_expires: now + Duration::from_secs(5),
+    };
+    assert_eq!(
+        w.dm.d.subscribe(now, sub("diag.03.1.1")),
+        Err(SubError::Denied)
+    );
+    assert_eq!(
+        w.dm.d.subscribe(now, sub("diag.7E.1.1")),
+        Err(SubError::UnknownValue)
+    );
+    assert_eq!(
+        w.dm.d.subscribe(now, sub("diag.01.3.5")),
+        Err(SubError::UnknownValue)
+    );
+    assert_eq!(w.setups(0x03), 0);
+}
+
+#[test]
+fn identify_and_one_group() {
+    let mut w = World::tt();
+    let id = w.job(Job::Identify { module: 0x01 }, None);
+    let Some(Ok(JobOutput::Identity(i))) = w.dm.job_done(id) else {
+        panic!("{:?}", w.dm.events)
+    };
+    // The sim's reply isn't laid out like a real one; the part number is.
+    assert_eq!(i.part_no.as_deref(), Some("8J0907115"));
+    assert_eq!(i.coding, None);
+
+    let id = w.job(
+        Job::ReadGroup {
+            module: 0x01,
+            group: 3,
+        },
+        None,
+    );
+    let Some(Ok(JobOutput::Group(g))) = w.dm.job_done(id) else {
+        panic!("{:?}", w.dm.events)
+    };
+    assert_eq!(g.records.len(), 8);
+    let id = w.job(
+        Job::ReadGroup {
+            module: 0x01,
+            group: 2,
+        },
+        None,
+    );
+    assert!(matches!(
+        w.dm.job_done(id),
+        Some(Err(JobError::Kwp(carpi_kwp::KwpError::Negative {
+            nrc: 0x31
+        })))
+    ));
+
+    // An install list moves an address to the TP2 ID the gateway gives.
+    let id = w.job(Job::InstallList, None);
+    assert!(w.dm.job_done(id).is_some_and(|r| r.is_ok()));
+    assert_eq!(w.dm.d.tp2_of(0x46), Some(0x21));
+    assert_eq!(w.dm.d.address_of(0x0A), Some(0x22));
+
+    // No measuring block from ABS, even under the token.
+    let now = w.now();
+    let t = w.dm.d.begin_exclusive(now, Class::ReadOnly).unwrap();
+    assert_eq!(
+        w.dm.d.start_job(
+            now,
+            Job::ReadGroup {
+                module: 0x03,
+                group: 1
+            },
+            Some(&t)
+        ),
+        Err(JobError::Denied)
+    );
+    w.dm.d.end_exclusive(now, t).unwrap();
+}

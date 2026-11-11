@@ -21,17 +21,23 @@
 //! - Modes: [`Mode::VcdsPause`] (automatic on a foreign tester, or manual),
 //!   [`Mode::Exclusive`] (one client holds the [`carpi_kwp::ExclusiveToken`]),
 //!   [`Mode::BusLease`] (the daemon's flag; everything stops).
-//! - Jobs: install list, DTC read, DTC clear (token only).
+//! - Jobs: install list, DTC read, DTC clear (token only), identity, one
+//!   measuring block.
+//! - [`modules`]: VCDS address to TP2 ID, and module-group names
+//!   (`diag.01.103.2`) that subscribe to any measuring-block field.
 //!
 //! Defaults marked "ours" are guesses until measured on the car.
 
 pub mod catalog;
 mod diag;
 mod job;
+pub mod modules;
 
 pub use catalog::{Basis, Catalog, CatalogError, Category, Provider, Unit, ValueDef};
 pub use diag::{
-    ChannelError, ChannelState, ChannelStatus, Config, Degraded, Diag, Event, Mode, ModeError,
-    Sample, Source, SubError, SubId, SubStatus, Subscription, VCDS_TESTER_RX,
+    ChannelError, ChannelState, ChannelStatus, Config, Degraded, Diag, Event, MAX_GROUP_FIELDS,
+    Mode, ModeError, Sample, Source, SubError, SubId, SubStatus, Subscription, VCDS_TESTER_RX,
 };
+pub use modules::GroupField;
+
 pub use job::{Job, JobError, JobEvent, JobId, JobOutput, JobStage};

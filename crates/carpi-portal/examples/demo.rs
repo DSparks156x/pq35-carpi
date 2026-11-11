@@ -23,6 +23,7 @@ fn fill(root: &std::path::Path) {
                     "08:20:02",
                     "boost set, 10 Hz, 6 min",
                 ),
+                (Kind::Scan, "faults", "08:31:09", "14 modules, 2 faults"),
                 (
                     Kind::Capture,
                     "portal",
@@ -79,6 +80,9 @@ fn fill(root: &std::path::Path) {
                         .collect();
                     fs::write(dir.join("data.csv"), format!("t,boost\n{csv}")).unwrap();
                     fs::write(dir.join("profile.json"), "{}\n").unwrap();
+                }
+                Kind::Scan => {
+                    fs::write(dir.join("scan.txt"), "Address 01: Engine\n").unwrap();
                 }
             }
             m.summary = summary.to_string();

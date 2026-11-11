@@ -3,8 +3,9 @@
 //! Refs: `[research]` rnse-carpi `docs/research/diagnostics.md`; `[trace]` as in
 //! [`crate::catalog`].
 
-use crate::catalog::{Catalog, Provider};
-use crate::job::{Job, JobError, JobEvent, JobId, JobRun, JobStage, Step};
+use crate::catalog::{Basis, Catalog, Category, Provider, Unit, ValueDef};
+use crate::job::{Job, JobError, JobEvent, JobId, JobOutput, JobRun, JobStage, Step};
+use crate::modules::{self, GroupField};
 use carpi_can::Frame;
 use carpi_kwp::group::{self, parse_group};
 use carpi_kwp::{
@@ -199,7 +200,15 @@ pub struct SubStatus {
 pub enum SubError {
     UnknownValue,
     LeaseExpired,
+    /// A module-group name for a module that's never polled (ABS).
+    Denied,
+    /// Too many distinct module-group names since carpid started.
+    Full,
 }
+
+/// Module-group names (`diag.01.103.2`) carpid keeps at most. Each one stays
+/// in the catalog for good.
+pub const MAX_GROUP_FIELDS: usize = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeError {
@@ -337,6 +346,10 @@ pub struct Diag {
     vcds_manual: bool,
     vcds_until: Option<Instant>,
     exclusive: Option<u64>,
+    /// TP2 ID by VCDS address: the table, then the last install list.
+    addresses: BTreeMap<u8, u8>,
+    /// Module-group values added to the catalog.
+    group_fields: usize,
     next_id: u64,
     out: VecDeque<Frame>,
     samples: VecDeque<Sample>,
@@ -384,6 +397,8 @@ impl Diag {
             vcds_manual: false,
             vcds_until: None,
             exclusive: None,
+            addresses: modules::MODULES.iter().map(|m| (m.0, m.1)).collect(),
+            group_fields: 0,
             next_id: 1,
             out: VecDeque::new(),
             samples: VecDeque::new(),
@@ -394,6 +409,47 @@ impl Diag {
 
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+
+    /// TP2 ID of the module at VCDS `address`: from the last install list,
+    /// else the table.
+    pub fn tp2_of(&self, address: u8) -> Option<u8> {
+        self.addresses.get(&address).copied()
+    }
+
+    /// VCDS address of TP2 module `tp2`.
+    pub fn address_of(&self, tp2: u8) -> Option<u8> {
+        self.addresses
+            .iter()
+            .find(|(_, t)| **t == tp2)
+            .map(|(a, _)| *a)
+    }
+
+    /// Whether `tp2` is never polled (ABS).
+    pub fn is_denied(&self, tp2: u8) -> bool {
+        self.cfg.profiles.is_denied(tp2)
+    }
+
+    /// The catalog index of a module-group name, adding it the first time.
+    fn group_field(&mut self, f: GroupField) -> Result<usize, SubError> {
+        let name = f.name();
+        if let Some(i) = self.catalog.index_of(&name) {
+            return Ok(i);
+        }
+        let tp2 = self.tp2_of(f.address).ok_or(SubError::UnknownValue)?;
+        if f.address == modules::ABS_ADDRESS || self.cfg.profiles.is_denied(tp2) {
+            return Err(SubError::Denied);
+        }
+        if self.group_fields >= MAX_GROUP_FIELDS {
+            return Err(SubError::Full);
+        }
+        self.group_fields += 1;
+        // Bounded by MAX_GROUP_FIELDS, so leaking the names is fine.
+        let def = ValueDef::new(Box::leak(name.into_boxed_str()), Unit::Reported)
+            .label(Box::leak(f.label().into_boxed_str()))
+            .place(Category::Other, "Module groups")
+            .diag(tp2, f.group, f.field, Basis::Custom);
+        Ok(self.catalog.push(def))
     }
 
     pub fn mode(&self) -> Mode {
@@ -517,14 +573,19 @@ impl Diag {
 
     // ----- subscriptions ----------------------------------------------------
 
+    /// Subscribe to a catalog value, or to any measuring-block field by its
+    /// module-group name (`diag.01.103.2`, see [`GroupField`]).
     pub fn subscribe(&mut self, now: Instant, sub: Subscription) -> Result<SubId, SubError> {
-        let def = self
-            .catalog
-            .index_of(&sub.value)
-            .ok_or(SubError::UnknownValue)?;
         if now >= sub.lease_expires {
             return Err(SubError::LeaseExpired);
         }
+        let def = match self.catalog.index_of(&sub.value) {
+            Some(i) => i,
+            None => {
+                let f = GroupField::parse(&sub.value).ok_or(SubError::UnknownValue)?;
+                self.group_field(f)?
+            }
+        };
         let id = SubId(self.id());
         self.subs.insert(
             id,
@@ -735,9 +796,13 @@ impl Diag {
             (None, Some(_)) => return Err(JobError::Exclusive),
             (None, None) => {}
         }
-        if self.cfg.profiles.is_denied(job.module()) && token.is_none() {
+        if self.cfg.profiles.is_denied(job.module())
+            && (token.is_none() || matches!(job, Job::ReadGroup { .. }))
+        {
+            // Measuring blocks never go to a denied module, token or not.
             return Err(JobError::Denied);
         }
+
         let clear = match job {
             Job::ClearDtcs { .. } => Some(
                 services::clear_dtcs(token.expect("checked")).map_err(|_| JobError::StaleToken)?,
@@ -745,14 +810,9 @@ impl Diag {
             _ => None,
         };
         let id = JobId(self.id());
-        self.jobs.push(JobRun {
-            id,
-            job,
-            lease: token.map(|t| t.lease()),
-            clear,
-            step: 0,
-            active: false,
-        });
+        self.jobs
+            .push(JobRun::new(id, job, token.map(|t| t.lease()), clear));
+
         self.events.push_back(Event::Job(JobEvent::Progress {
             id,
             stage: JobStage::Queued,
@@ -1163,6 +1223,11 @@ impl Diag {
         match self.jobs[i].on_result(result) {
             Step::Next => self.jobs[i].active = false,
             Step::Done(r) => {
+                if let Ok(JobOutput::InstallList(l)) = &r {
+                    for m in l {
+                        self.addresses.insert(m.vcds, m.tp2);
+                    }
+                }
                 self.jobs.remove(i);
                 self.events
                     .push_back(Event::Job(JobEvent::Done { id, result: r }));

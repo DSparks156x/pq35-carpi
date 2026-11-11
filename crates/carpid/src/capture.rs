@@ -290,7 +290,7 @@ impl Captures {
         if auto && !self.allowed(&trigger) {
             info!("capture ({trigger}) skipped: rate limit");
             return Response::Error {
-                message: format!("{trigger}: automatic captures are rate limited"),
+                message: format!("{trigger}: automatic debug logs rate limited"),
             };
         }
         let _busy = self.inner.busy.lock().await;
@@ -333,7 +333,7 @@ impl Captures {
         match result {
             Ok((meta, dir)) => {
                 info!("capture {} ({trigger}): {}", meta.id, meta.summary);
-                self.toast(format!("Capture {} saved", meta.id), level);
+                self.toast(format!("Debug logs {} saved", meta.id), level);
                 Response::Captured {
                     label: meta.id.to_string(),
                     date: meta.id.date,
@@ -344,7 +344,7 @@ impl Captures {
             }
             Err(message) => {
                 warn!("capture ({trigger}) failed: {message}");
-                self.toast(format!("Capture failed: {message}"), ToastLevel::Error);
+                self.toast(format!("Debug logs failed: {message}"), ToastLevel::Error);
                 Response::Error { message }
             }
         }

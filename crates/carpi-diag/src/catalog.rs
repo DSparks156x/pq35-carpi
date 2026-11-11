@@ -303,6 +303,16 @@ impl Catalog {
     pub(crate) fn index_of(&self, name: &str) -> Option<usize> {
         self.index.get(name).copied()
     }
+    /// Adds a value at the end; an existing name keeps its index.
+    pub(crate) fn push(&mut self, def: ValueDef) -> usize {
+        if let Some(i) = self.index_of(def.name) {
+            return i;
+        }
+        self.index.insert(def.name, self.defs.len());
+        self.defs.push(def);
+        self.defs.len() - 1
+    }
+
     pub(crate) fn at(&self, i: usize) -> &ValueDef {
         &self.defs[i]
     }

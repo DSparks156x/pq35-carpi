@@ -60,13 +60,13 @@ One component, used three ways: Data page tiles, DIS readings pages and data-log
 | DIS readings | per screen type: 1 big, 2 or 4 lines | short label (catalog default, portal edit), decimals |
 | Data log set | one list, no pages, no fixed cap | rate class; the editor shows the estimated rate and diag load |
 
-## 3. Captures
+## 3. Debug logs
 
-One capture is one press of the capture trigger. It saves the **last 5 minutes** of everything.
+Called "capture" in code (`carpid/src/capture.rs`, `logs.capture_minutes`); every user-facing label says "Debug logs" / "Collect debug logs". One collection saves the **last 5 minutes** of everything.
 
 - **Triggers**:
-  - Prev extended (exists).
-  - A Capture button on the Logs page.
+  - Prev extended (exists), action "Collect debug logs".
+  - Collect debug logs in Car Integration > Debug logs.
   - A button in the portal.
   - Automatic, only for crashes and bad faults (Drew): a LIVI crash (`carpi-capture@.service`), a carpid crash (found at the next start; journal only), CAN bus-off, interface gone or an error-passive storm, an update rollback. At most one per reason per 10 min and 6 an hour.
 - **Contents**:
@@ -82,9 +82,7 @@ One capture is one press of the capture trigger. It saves the **last 5 minutes**
 
 ## 4. Data logging
 
-- Profiles: a channel set (slot editor), a rate, and manual start/stop. Start and stop from a Logs page row or a bound key.
-- Each run is a # in the day folder: `data.csv` (wide: time plus one column per value, rows at the profile rate, blank when stale), `profile.json` and `info.txt`.
-- Diag-sourced values go through the catalog scheduler (PLAN 2.8). The editor shows what the set will cost before you start.
+See 5c, Logs. Storage: one pool with debug logs (`logs.max_pct`).
 
 ## 5. Portal
 
@@ -154,11 +152,11 @@ Car Integration
 │  ├─ Extended hold             s                             input.extended_s
 │  ├─ On-screen keyboard, Key order, Show passwords
 │  └─ Key bindings              Reset to defaults
-├─ Logging & captures ›         status: Logging <profile>
-│  ├─ Logging ›                 profiles, start/stop
-│  ├─ Capture now
-│  ├─ Capture length            1–30 min                      logs.capture_minutes
-│  └─ Log storage               5–75 %                        logs.max_pct
+├─ Debug logs ›                status: N today
+│  ├─ Collect debug logs
+│  ├─ Length                    1–30 min                      logs.capture_minutes
+│  ├─ Log storage               5–75 % (debug + data logs)    logs.max_pct
+│  └─ Collected ›
 ├─ Power & clock ›
 │  ├─ Auto shutdown             power.shutdown
 │  ├─ Shutdown delay            power.silent_s (15–600 s)
@@ -254,13 +252,85 @@ LIVI has no on-screen keyboard and no way to join a Wi-Fi network. The update ne
 3. Wi-Fi networks screen and portal form.
 4. Typed accel lines, page names and the PIN move to the keyboard.
 
+## 5c. Data page (Drew, 2026-11-11)
+
+Mockup: claude.ai/artifact/MuNUKGJRVd6pYSFr2JYzW7. Replaces the Data and Diagnostics pages and Car Integration's Logging.
+
+```
+Data                        top level, tabs: Panels · Logs · Faults
+├─ Panels                   panel pages + page dots; Scratch last
+├─ Logs                     Start/Stop, Mark, Profile, Profiles ›, Runs ›
+└─ Faults                   scan on open; module ›: faults, Clear faults, Identity ›, Coding ›, Adaptation ›
+```
+
+### Controls
+
+| Where | Knob | Push | D-pad ← → | D-pad ↑ ↓ | Return |
+|---|---|---|---|---|---|
+| Panel, viewing | Next/prev panel | Panel menu | Next/prev panel | ↑ tab bar | Home |
+| Tab bar | Move | Open | Switch tab | ↓ page | Home |
+| Panel, editing | Next/prev widget | Widget rows | Move widget | Move widget | Done |
+| Lists | Move | Activate | Change in place | Move | Back |
+
+A viewing panel takes no focus.
+
+### Panels
+
+- **Look**: LIVI telemetry. Black, hairlines between widgets, no boxes. Tiny spaced uppercase label, big light numeral, small unit.
+- **Grid**: per panel: 1, 2×1, 2×2, 3×2, 4×3. A widget covers 1–n cells.
+- **Panel menu**: Edit panel, Log this panel, Reset peaks, New panel, Panels › (add, rename, reorder, remove).
+- **Edit**: brightness-curve layout. Live panel left, focused widget's rows right. Empty cells dashed; push adds a value.
+- **Scratch**: always last. Auto layout 1 → 2 → 4 → 6 → 9. Save as panel.
+- **Widgets**: Style changes keep the settings that still apply; the rest go back to catalog defaults.
+
+| Style | Settings |
+|---|---|
+| All | Value(s), Style, Size, Label, Decimals, Unit (where it converts) |
+| Number | Min/max: Off / Since start / Last 30 s |
+| Gauge | Range, Red from, Peak: Off / Hold / Hold 10 s, Major ticks |
+| Bar | Range, Warn from, Limit from, Segments |
+| Graph | Values 1–3, Window 10/30/60 s, Range Auto/Fixed, Fill, Marks |
+| Pair | Actual, Specified, Difference: Absolute / % |
+| Set | Wheels 2×2, Cylinders 1–4, Doors; per item Number / Bar |
+| Selector | DSG/auto selector P R N D S + gear, shifting flag (`trans.selector`, `trans.shifting`) |
+
+- **Boost** (Drew): `engine.boost.actual`, `.specified`, `.cluster_mbar` are absolute. Per-widget Pressure: Absolute / Relative. Relative subtracts atmospheric: ICAN `engine.altitude_factor` × 1013 mbar (0x555, faster), else `engine.atmospheric_mbar` (group 113). Below zero reads as vacuum.
+
+- **Portal editor** (later): usable from a laptop, so full panel/profile editing there is worth doing. Head-unit editor stays complete on its own.
+- **Picker**: adds **Module groups ›**: module ›, Group (D-pad steps 0–255), four fields live (unit from the measuring-block formula), push adds a field, Add all four. Key `diag.<addr>.<group>.<field>`, label "01 · 103 · 2" until named in the portal. Not offered for ABS (03).
+- **Polling**: panel on screen and a running log poll separately. No unioning.
+
+### Logs
+
+- Rows: Start/Stop, Mark (focused while running), Profile (D-pad), Log this panel, Profiles ›, Runs ›.
+- Running row: profile, values, rate, rows, timer. A timer shows top right on every Data screen.
+- Mark: numbered, toast "Mark N", lines on graph widgets. No key binding yet.
+- No pre-trigger.
+- CSV: `Time (s)` from start, then `<catalog label> (<unit>)` per value, then `Mark` (mark number on its row). Last value held between samples. Wall clock, odometer, profile, versions in `info.txt`.
+
+### Faults
+
+- Scan when the tab opens: install list, then faults per module as they answer. Faults first. TP2 modules only.
+- Each scan writes a text report into the day folder.
+- Module: faults (code, text, status, count, freeze frame), Clear faults (Confirm clear), Identity › (part no., component, SW, workshop), Coding ›, Adaptation ›.
+- Clear all: no gating.
+- Coding and adaptation: read. Write path built, disabled.
+- Status (2026-11-11):
+  - Identity: `1A 9B` part no., SW, component (offsets as PQ35-Flasher; matches the Haldex). Coding from `22 06 00`; older KWP modules may refuse it. Workshop not decoded.
+  - Adaptation read: not supported yet (service/layout unconfirmed). carpid answers "Adaptation not supported"; no row on the head unit.
+  - Freeze frame: not read (no captured reply). Status byte shown raw.
+  - Writes: `carpi_core::diagnostics::WRITES_ENABLED = false`, "Writes disabled".
+  - Clear all: the head unit clears module by module, one job at a time.
+
 ## 6. Order
 
-1. Captures (3) and the portal's day/zip view (5). This is what Drew asked for first.
-2. UI rules (1) applied to the existing pages: Data, Light, Car, Diagnostics.
-3. The slot editor (2) for the Data page, then DIS readings.
-4. Data logging (4) and its portal retrieval.
+1. Debug logs rename (3).
+2. Data page tabs (5c): Panels, Logs moved out of Car Integration, Faults.
+3. carpid diag: scan, identity, coding, adaptation; Faults tab.
+4. Panel widgets: grid, styles, settings, Scratch.
+5. Module groups in the picker.
+6. CSV format.
 
 ## 7. Open
 
-- Data page: keep the fixed groups (Engine/Drivetrain/Body/Electrical) as the starting pages, or start empty?
+- Starting panels (Drew: better ones, later).

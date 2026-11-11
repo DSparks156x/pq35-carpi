@@ -344,6 +344,26 @@ impl Car {
             proto::DiagAction::ClearDtcs { module, confirm } => {
                 (Job::ClearDtcs { module }, confirm)
             }
+            proto::DiagAction::Identify { module } => (Job::Identify { module }, false),
+            proto::DiagAction::ReadGroup { module, group } => {
+                (Job::ReadGroup { module, group }, false)
+            }
+            proto::DiagAction::Scan => {
+                let r = d.scan(now);
+                self.pump_diag(now);
+                return r;
+            }
+            proto::DiagAction::ReadAdaptation { .. } => {
+                return Err("Adaptation not supported".into());
+            }
+            proto::DiagAction::WriteCoding { .. } | proto::DiagAction::WriteAdaptation { .. } => {
+                return Err(if diagnostics::WRITES_ENABLED {
+                    "Writes not built"
+                } else {
+                    "Writes disabled"
+                }
+                .into());
+            }
             proto::DiagAction::Status => return Err("status isn't a job".into()),
         };
         let r = d.start(now, job, confirm);
@@ -353,6 +373,12 @@ impl Car {
 
     pub fn diag_status(&self, now: Instant) -> Option<proto::DiagStatus> {
         self.diag.as_ref().map(|d| d.status(now))
+    }
+
+    /// The report of scan `id`, once it has finished (its `Finished` event
+    /// is out). Once.
+    pub fn take_scan_report(&mut self, id: DiagJobId) -> Option<diagnostics::ScanReport> {
+        self.diag.as_mut().and_then(|d| d.take_report(id))
     }
 
     /// Diag job events since the last call, as API events.

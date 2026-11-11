@@ -26,6 +26,8 @@ pub const META: &str = "entry.json";
 pub enum Kind {
     Capture,
     Datalog,
+    /// A fault scan's report (docs/PAGES.md 5c, Faults).
+    Scan,
 }
 
 /// `2026-11-08` and `3`: shown as `2026-11-08 #03`, folder `2026-11-08/03`.

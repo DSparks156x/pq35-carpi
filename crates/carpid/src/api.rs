@@ -543,6 +543,7 @@ mod tests {
                     name: "Idle".into(),
                     values: vec!["engine.rpm".into()],
                     rate_hz: 10,
+                    labels: Vec::new(),
                 },
                 replaces: None,
             }),

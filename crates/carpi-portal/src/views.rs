@@ -236,7 +236,7 @@ pub async fn trim(
         .await
         .map_err(|e| Reject::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|_| Reject::not_found())?;
-    let t = crate::trim::parse(query.as_deref().unwrap_or(""), outline.columns.len())
+    let t = crate::trim::parse_for(query.as_deref().unwrap_or(""), &outline)
         .map_err(|e| Reject::new(StatusCode::BAD_REQUEST, e))?;
     let permit = s.zip_permit()?;
     let body = crate::archive::stream_with(
@@ -460,8 +460,8 @@ pub async fn capture(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Respon
     let Ok(_running) = s.capturing.try_acquire() else {
         return v.message(
             StatusCode::CONFLICT,
-            "Already capturing",
-            "A capture is running. It shows up on Home when it's done.",
+            "Already collecting",
+            "Debug logs are being collected. They show up on Home when done.",
             "/",
         );
     };
@@ -475,10 +475,10 @@ pub async fn capture(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Respon
                 .filter(|id| s.logs.dir(id).is_some());
             match id {
                 Some(id) => Redirect::to(&format!("/e/{}", tail(&id))).into_response(),
-                None => v.message(StatusCode::OK, "Captured", &format!("Saved {label}."), "/"),
+                None => v.message(StatusCode::OK, "Debug logs saved", &format!("Saved {label}."), "/"),
             }
         }
-        Err(e) => v.message(StatusCode::INTERNAL_SERVER_ERROR, "Capture failed", &e, "/"),
+        Err(e) => v.message(StatusCode::INTERNAL_SERVER_ERROR, "Debug logs failed", &e, "/"),
     }
 }
 
