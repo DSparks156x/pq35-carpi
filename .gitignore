@@ -2,3 +2,4 @@
 *.log
 /captures
 __pycache__/
+/dist/

@@ -365,7 +365,7 @@ fn media_input(store: &Store, now: Instant, art: Option<&(u64, Art, Art)>) -> Me
     };
     MediaInput {
         title: text(store, "media.title", now),
-        artist: text(store, "media.artist", now),
+        artist: media_artist(store, now),
         album: text(store, "media.album", now),
         playing: store.get_bool("media.playing", now) == Some(true),
         position_ms: ms("media.position_ms"),
@@ -390,6 +390,23 @@ fn text(store: &Store, name: &str, now: Instant) -> Option<String> {
     match store.get(name, now) {
         Some(Value::Text(s)) if !s.is_empty() => Some(s.clone()),
         _ => None,
+    }
+}
+
+/// Spotify appends an audio-quality badge to its artist metadata. Remove it
+/// before AUDSCII encoding (which turns the bullet into a blank), leaving the
+/// original metadata in the store and ordinary artist names untouched.
+fn media_artist(store: &Store, now: Instant) -> Option<String> {
+    let artist = text(store, "media.artist", now)?;
+    let name = artist
+        .trim_end()
+        .strip_suffix("Lossless")
+        .and_then(|s| s.trim_end().strip_suffix('•'))
+        .map(str::trim_end);
+    match name {
+        Some("") => None,
+        Some(name) => Some(name.to_owned()),
+        None => Some(artist),
     }
 }
 
@@ -513,7 +530,7 @@ pub fn top_lines(
             return None;
         }
         let title = text(store, "media.title", now)?;
-        let artist = text(store, "media.artist", now).unwrap_or_default();
+        let artist = media_artist(store, now).unwrap_or_default();
         Some(TopText {
             alone: title.clone(),
             line1: title,
@@ -1041,6 +1058,42 @@ mod tests {
             s.set(k, Some(v.clone()), now, Duration::from_secs(60));
         }
         s
+    }
+
+    #[test]
+    fn media_hides_lossless_badge_on_centre_and_top_lines() {
+        let now = Instant::now();
+        for (artist, shown) in [
+            ("Artist • Lossless", Some("Artist")),
+            ("Björk\u{a0}•\u{a0}Lossless\u{a0}", Some("Björk")),
+            ("Lossless • Lossless", Some("Lossless")),
+            ("• Lossless", None),
+            ("Lossless", Some("Lossless")),
+            ("Artist Lossless", Some("Artist Lossless")),
+            ("Lossless Artist", Some("Lossless Artist")),
+            ("Artist • Lossless Remix", Some("Artist • Lossless Remix")),
+            ("Artist • Live", Some("Artist • Live")),
+        ] {
+            let s = store(
+                now,
+                &[
+                    ("media.active", Value::Bool(true)),
+                    ("media.title", Value::Text("Lossless".into())),
+                    ("media.artist", Value::Text(artist.into())),
+                    ("media.album", Value::Text("Album • Lossless".into())),
+                ],
+            );
+            let input = media_input(&s, now, None);
+            assert_eq!(input.artist.as_deref(), shown, "{artist}");
+            assert_eq!(input.title.as_deref(), Some("Lossless"));
+            assert_eq!(input.album.as_deref(), Some("Album • Lossless"));
+            assert_eq!(
+                top_lines(&s, now, None, false, false),
+                Some(("Lossless".into(), Some(shown.unwrap_or_default().into()))),
+                "{artist}"
+            );
+            assert_eq!(text(&s, "media.artist", now).as_deref(), Some(artist));
+        }
     }
 
     #[test]
