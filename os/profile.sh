@@ -14,7 +14,9 @@ set -euo pipefail
 
 PROFILE_VERSION=2
 
-HAT=carpihat
+# Re-running on a profiled Pi keeps the hat it was set up with (an image-tool Pi is "none").
+HAT=$(sed -n 's/^HAT=\([a-z]*\)$/\1/p' /etc/carpi-profile 2>/dev/null || true)
+HAT=${HAT:-carpihat}
 USERNAME=${SUDO_USER:-}
 TZONE=${CARPI_TZ:-}
 DRY=0

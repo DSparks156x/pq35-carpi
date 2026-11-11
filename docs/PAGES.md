@@ -181,7 +181,7 @@ Car Integration
 ```
 
 The bundled updater replaces LIVI's **Settings > System > Software Update** screen.
-It shows the installed version, last apply result, Stable/Beta channel, Check and install,
+It shows the installed version, last update result (this session's attempt, else the recorded apply), Stable/Beta channel, Check and install,
 and Wi-Fi networks. Installing asks for confirmation before dropping the hotspot.
 
 The updater and **A/V over SD** also open the same **SDLink firmware** screen. It

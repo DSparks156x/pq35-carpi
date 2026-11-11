@@ -31,14 +31,8 @@ pub fn check(needs: u32, have: Option<u32>) -> Result<(), String> {
     match have {
         _ if needs == 0 => Ok(()),
         Some(h) if h >= needs => Ok(()),
-        Some(h) => Err(format!(
-            "this bundle needs OS profile {needs}, the device has {h}. \
-             Run os/profile.sh from the bundle's rnse-carpi commit first."
-        )),
-        None => Err(format!(
-            "this bundle needs OS profile {needs} and the device has none \
-             (no /etc/carpi-profile). Run os/profile.sh first."
-        )),
+        Some(h) => Err(format!("needs OS profile {needs}, Pi has {h}")),
+        None => Err(format!("needs OS profile {needs}, Pi has none")),
     }
 }
 
