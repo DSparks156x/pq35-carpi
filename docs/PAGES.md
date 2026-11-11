@@ -113,75 +113,80 @@ All our settings live in one **Car Integration** tab at the bottom of LIVI's own
 - **Organisation**: by what you're doing, then by source. Levels are fine when they make sense.
 - **Rows**:
   - Every row does something on a press, and choices and steps also change with the D-pad in place.
-  - Names say what happens.
-  - Live state sits next to the setting it explains.
+  - Labels are short nouns ("Auto shutdown", "Fullscreen cover time"), never sentences. No hint rows.
+  - A row that opens a page shows nothing, or a live status of that page ("Waiting for the cluster", "Night, 40 %", "Update available"). Never a setting inside it.
+  - Two-push confirms read "Confirm <verb>".
 
 ### Tree
 
 ```
 Car Integration
 ├─ Flashing mode                tx.flashing_mode (persistent CAN send inhibit)
-├─ Status                       live: bus, ignition, RNS-E source, phone, cluster, carpid version
-│  ├─ All values ▸              every store value with its age
-│  └─ Buses ▸                   ring members, frames, gate refusals
-├─ Cluster display
-│  ├─ Show on the cluster       on/off                        dis.enabled
-│  ├─ Our screen shows          Always / From the cluster menu  dis.claim
+├─ Status ›                     live: bus, ignition, RNS-E source, phone, cluster, carpid version
+│  ├─ All values ›              every store value with its age
+│  └─ Buses ›                   ring members, frames, gate refusals
+├─ Cluster display ›            status: Showing … / Waiting for the cluster / Off
+│  ├─ Enabled                   dis.enabled
+│  ├─ Auto claim                dis.claim (on = always, off = cluster menu only)
 │  ├─ Start page                Readings / Accel / Media      dis.default_page
-│  ├─ Readings pages ▸          named pages: add, rename (portal for text), reorder, remove
-│  │    └─ <page> ▸             Name, Cells ▸ (slot editor + picker), per cell: decimals, unit, icon
-│  ├─ Navigation ▸
-│  │    Take over when a route starts   dis.claim_nav
-│  │    Give back when it ends          dis.release_nav
-│  │    Look                            Ours / Stock            dis.nav_style
-│  │    Distance to the turn            dis.nav_distance
-│  │    Trip info                       dis.nav_pocket
-│  │      ETA / Time left / Distance left  dis.nav_eta, nav_time_left, nav_dest_distance
-│  │    Lanes                           Off / Instead of the road / Alternate with the road  dis.nav_lanes
-│  │    Units                           As the phone / Metric / Imperial  dis.units
-│  │    ETA clock                       As the phone / 12 h / 24 h        dis.clock
-│  ├─ Calls ▸                   Take over on a call / Give back after it
-│  └─ Media ▸                   Take over on a new track / Give back when it stops /
-│                               Layout (Text / Cover + text) / Cover flash (Off, 2–15 s)
-├─ Screen & lighting
+│  ├─ Readings ›                named pages: add, rename, reorder, remove
+│  │    └─ <page> ›             Name, values (slot editor + picker); per value: decimals, unit, icon
+│  ├─ Accel ›                   Line 1–4
+│  ├─ Navigation ›
+│  │    Auto claim / Auto release   dis.claim_nav, release_nav
+│  │    Style                   Fancy / Stock                 dis.nav_style
+│  │    Turn distance           dis.nav_distance
+│  │    Trip info               dis.nav_pocket; ETA / Time left / Distance left
+│  │    Lanes                   Off / Replace road / Alternate dis.nav_lanes
+│  │    Units                   Phone / Metric / Imperial     dis.units
+│  │    Clock                   Phone / 12 h / 24 h           dis.clock
+│  ├─ Calls ›                   Auto claim / Auto release
+│  └─ Media ›                   Auto claim / Auto release / Layout (Text / Cover + text) /
+│                               Fullscreen cover time (Off, 2–15 s)
+├─ Screen & lighting ›          status: Day/Night, panel %
 │  ├─ Auto brightness, Brightness now, Light sensor, Curve, Learned points, Scroll trim
-│  ├─ Brightness curve ▸        the plot and point editor
-│  └─ Night mode ▸              Decided by, Night threshold, Night from / Day from, Location
-├─ Controls
-│  ├─ Steering wheel ▸          per key: Short / Long → action
-│  ├─ Faceplate ▸               per key: Short / Long / Held 10 s → action
-│  ├─ Long press                ms                            input.long_ms (panel)
-│  ├─ Hold for system actions   s                             input.extended_s
-│  └─ Reset to defaults
-├─ Logging & captures
-│  ├─ Logging ▸                 the logging page (profiles, start/stop)
+│  ├─ Brightness curve ›        the plot and point editor
+│  └─ Night mode ›              Source, Night below, Night from / Day from, Location
+├─ Controls ›
+│  ├─ Steering wheel ›          per key ›: Short / Long → action (choice; push opens the list)
+│  ├─ Faceplate ›               per key ›: Short / Long / Held → action
+│  ├─ Long press                ms                            input.long_ms
+│  ├─ Extended hold             s                             input.extended_s
+│  ├─ On-screen keyboard, Key order, Show passwords
+│  └─ Key bindings              Reset to defaults
+├─ Logging & captures ›         status: Logging <profile>
+│  ├─ Logging ›                 profiles, start/stop
 │  ├─ Capture now
 │  ├─ Capture length            1–30 min                      logs.capture_minutes
-│  ├─ Space for logs            5–75 % of the disk            logs.max_pct
-│  └─ On your phone             http://10.10.0.1:5003 (info)
-├─ Power & clock
-│  ├─ Shut down when the car is off      power.shutdown
-│  ├─ Wait after the car goes quiet      power.silent_s (15–600 s)
-│  ├─ Stay on while the radio plays      power.radio_hold_min (0–120, 0 = off)
-│  ├─ Set the clock from the car         clock.set_from_car
-│  └─ Time zone                          clock.timezone (picker)
-├─ A/V over SD
-│  ├─ Status                    Teensy, link, stream (info)
-│  ├─ Firmware ▸                RNS-E / Teensy installed and bundled versions, negotiated SDLink version
-│  ├─ Audio gain                dB                            avsd GAIN
-│  ├─ Picture ▸                 LINKCAP, MAXVID, KEYINT, DITHER, palette snap ... with ranges
-│  └─ Restart the stream
-├─ Phone portal
-│  ├─ Address                   info
-│  ├─ PIN                       set / clear
-│  └─ Downloads need the PIN    portal.protect_downloads
-└─ Advanced
-   ├─ Send to the car           tx.enabled (off = log only)
-   └─ Keys to LIVI              input.uinput
+│  └─ Log storage               5–75 %                        logs.max_pct
+├─ Power & clock ›
+│  ├─ Auto shutdown             power.shutdown
+│  ├─ Shutdown delay            power.silent_s (15–600 s)
+│  ├─ Radio hold                power.radio_hold_min (0–120, 0 = off)
+│  ├─ Clock from car            clock.set_from_car
+│  └─ Time zone ›               clock.timezone
+├─ A/V over SD ›                status: Not set up / Update available
+│  ├─ RNS-E firmware, SDLink protocol (info)
+│  ├─ SDLink firmware ›         status: Update available
+│  ├─ Legacy decoder CRC
+│  ├─ Stream status, Audio gain
+│  ├─ Picture ›                 LINKCAP, MAXVID, KEYINT, DITHER, palette snap ... with ranges
+│  └─ Restart stream
+├─ Remote access ›              status: VNC on
+│  ├─ Portal                    address (info)
+│  ├─ PIN ›, Clear PIN, PIN for downloads   portal.protect_downloads
+│  ├─ SSH                       Always on (info)
+│  └─ VNC, VNC at boot
+└─ Advanced ›
+   ├─ Move to NVMe ›, Show Setup
+   ├─ CAN transmit              tx.enabled (off = log only)
+   └─ Key input                 input.uinput
 ```
 
+Setup (first start, hidden by Finish setup; Advanced > Show Setup brings it back): Time zone ›, Wi-Fi networks ›, Phone connection ›, Cluster display ›, Remote access ›, Move to NVMe ›.
+
 The bundled updater replaces LIVI's **Settings > System > Software Update** screen.
-It shows the installed version, last update result (this session's attempt, else the recorded apply), Stable/Beta channel, Check and install,
+It shows the installed version, last update result (this session's attempt, else the recorded apply), Stable/Beta channel, Install,
 and Wi-Fi networks. Installing asks for confirmation before dropping the hotspot.
 
 The updater and **A/V over SD** also open the same **SDLink firmware** screen. It
@@ -190,7 +195,7 @@ shows installed and bundled firmware for both the RNS-E and Teensy. A newer bund
 is an optional update offer; an older RNS-E may keep streaming through the
 encoder's negotiated compatibility mode. carpid supplies the comparison (build
 history, stream formats, firmware table); the screen never orders version strings.
-**Check versions** probes both (read only); **Install** needs a second press and
+**Check versions** probes both (read only); **Install** needs a second press (Confirm install) and
 runs carpid's install job (sdlink `docs/PI_UPDATER.md`). The sector 107 CRC read on
 A/V over SD stays a diagnostic, not a version or compatibility check.
 **Advanced: Flash Sector**: listed when the portal holds `[prefix]sector_<N>.bin`
