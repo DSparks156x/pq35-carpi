@@ -699,8 +699,14 @@ impl Channel {
         };
         // Which sent-but-unconfirmed frame does `next` follow?
         let mut confirmed = None;
-        for i in m.acked..m.next.max(m.acked) {
-            if (frame_seq(&m.frames[i]) + 1) & 0x0F == next {
+        for (i, f) in m
+            .frames
+            .iter()
+            .enumerate()
+            .take(m.next.max(m.acked))
+            .skip(m.acked)
+        {
+            if (frame_seq(f) + 1) & 0x0F == next {
                 confirmed = Some(i + 1);
             }
         }
