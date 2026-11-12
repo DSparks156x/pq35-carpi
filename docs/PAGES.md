@@ -18,7 +18,7 @@ Every page has to work with only the RNS-E controls. Touch is secondary.
 - Simple values are edited where they sit, with the D-pad. A sub-screen only opens for picking from a long list.
 - Nothing needs typing. Anything that does (custom labels, names) is done in the portal.
 - Rows are at least 56 px, with text at least 22 px; about 6 rows fit. The theme follows `light.night`.
-- Empty states get one line saying why ("not seen on the bus since start"), not a wall of `–`. Pickers hide values the car has never sent, behind a "Show unavailable" row.
+- Empty states get one line saying why ("not seen on the bus since start"), not a wall of `–`. Pickers list values the car has never sent, dimmed and marked "not seen".
 - Disabled controls are hidden, not greyed out, unless their being there explains something.
 
 ## 2. Slot editor
@@ -29,14 +29,17 @@ One component, used three ways: Data page tiles, DIS readings pages and data-log
   - Knob: moves between slots.
   - Push: opens the picker for that slot.
   - D-pad: moves the focused slot's value left or right, to reorder.
-- **Picker**: two levels, never more.
+- **Picker**: three levels, never more.
   - **Level 1**: Empty, Recent (the last 6 picked), then the categories. Each category row shows how many of its values the car is sending.
-  - **Level 2**: one category, split into sub-groups under headers. Each row shows the label, the live reading and a small `diag` tag if the value costs polling.
+  - **Level 2**: one category. With more than one sub-group, its sub-groups, each with its live/diag count; with one, its values.
     - D-pad: jumps to the previous or next category without backing out.
+    - The sub-group or value already in the slot starts focused.
+  - **Level 3**: one sub-group's values. Each row shows the label, the live reading and a small `diag` tag if the value costs polling.
+    - D-pad: jumps to the previous or next sub-group.
     - Push: assigns the value.
     - The value already in the slot starts focused.
   - **Order**: curated, not alphabetical. Actual comes before specified, FL FR RL RR, cylinders 1–4, the everyday values first. Unknown keys go last, alphabetically.
-  - **Hidden by default**: values the car has never sent, behind a "Show unavailable" row at the end.
+  - **Never hidden**: values the car has never sent stay in place, dimmed, so they can be set up on the bench.
   - **Where the split lives**: carpid's catalog (`group` and sub-group per value), so the Data page, the DIS editor, the data-log editor and the portal all share it.
 
   | Category | Sub-groups (in order) |
