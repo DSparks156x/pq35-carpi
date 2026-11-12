@@ -8,6 +8,12 @@
 //! Scenes: nav, media, readings, accel, call. `cover.png` feeds the media
 //! scene's art (any RGB/RGBA image).
 
+#![allow(
+    clippy::type_complexity,
+    clippy::collapsible_if,
+    clippy::needless_update
+)]
+
 use carpi_dis::fb::{Fb, PX_H, PX_W};
 use carpi_dis::font::{Font, audscii};
 use carpi_dis::glyphs;
