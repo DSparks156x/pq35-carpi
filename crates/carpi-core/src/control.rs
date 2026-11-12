@@ -186,7 +186,14 @@ impl Controls {
         }
         let auto = self.light.setup().auto_brightness;
         let num = |v: Option<f64>| v.map(Value::Num);
-        store.set("light.night", Some(Value::Bool(light.night)), now, DERIVED);
+        // Nothing decided yet (no Kl15, lights or car clock): no value, so
+        // LIVI keeps its last look instead of flashing day at every wake.
+        store.set(
+            "light.night",
+            light.night_source.map(|_| Value::Bool(light.night)),
+            now,
+            DERIVED,
+        );
         store.set(
             "light.night_source",
             light.night_source.map(|s| Value::Text(s.as_str().into())),

@@ -334,7 +334,7 @@ async fn main() -> anyhow::Result<()> {
         replay,
         mark,
         beat_at: Instant::now(),
-        clock_at: Instant::now() + Duration::from_secs(10),
+        clock_at: Instant::now(),
         clock_busy: Arc::new(AtomicBool::new(false)),
         ring_minutes: ring_min,
     };
@@ -538,7 +538,9 @@ impl Daemon {
         if self.replay || !self.cfg.clock.set_from_car || now < self.clock_at {
             return;
         }
-        self.clock_at = now + clock::CHECK_EVERY;
+        // Until the car clock is in, look again each second: the first set
+        // should land as soon as 0x65D does, not a minute later.
+        self.clock_at = now + Duration::from_secs(1);
         if self.clock_busy.load(Ordering::Relaxed) {
             return;
         }
@@ -556,6 +558,7 @@ impl Daemon {
         let Some(car_t) = clock::car_now(&dt, age_ms) else {
             return;
         };
+        self.clock_at = now + clock::CHECK_EVERY;
         let pi = clock::local_now().naive;
         let Some(target) = clock::needs_set(pi, car_t) else {
             return;
