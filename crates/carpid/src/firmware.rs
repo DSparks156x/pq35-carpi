@@ -619,10 +619,22 @@ pub struct Firmware {
 type Events = mpsc::UnboundedSender<JobEvent>;
 
 fn stage(ev: &Events, stage: &str, msg: impl Into<String>) {
+    let message = msg.into();
+    tracing::info!("firmware {stage}: {message}");
     let _ = ev.send(JobEvent::Stage {
         stage: stage.into(),
-        message: msg.into(),
+        message,
     });
+}
+
+/// The job's last event, also in the journal.
+fn finish(ev: &Events, ok: bool, message: String) {
+    if ok {
+        tracing::info!("firmware job done: {message}");
+    } else {
+        tracing::warn!("firmware job failed: {message}");
+    }
+    let _ = ev.send(JobEvent::Finished { ok, message });
 }
 
 fn progress(ev: &Events, stage: &str, done: u64, total: u64) {
@@ -792,10 +804,7 @@ impl Firmware {
             Err(e) => notes.push(format!("Teensy: {e}")),
         }
         self.emit_status(ev).await;
-        let _ = ev.send(JobEvent::Finished {
-            ok: true,
-            message: notes.join("; "),
-        });
+        finish(ev, true, notes.join("; "));
     }
 
     // ------------------------------------------------------------ chain
@@ -854,7 +863,7 @@ impl Firmware {
             Ok(m) => (true, m),
             Err(m) => (false, m),
         };
-        let _ = ev.send(JobEvent::Finished { ok, message });
+        finish(ev, ok, message);
     }
 
     async fn install_rnse_inner(
@@ -1133,7 +1142,7 @@ impl Firmware {
             Ok(m) => (true, m),
             Err(m) => (false, m),
         };
-        let _ = ev.send(JobEvent::Finished { ok, message });
+        finish(ev, ok, message);
     }
 
     async fn flash_sector_inner(
@@ -1216,7 +1225,7 @@ impl Firmware {
             Ok(m) => (true, m),
             Err(m) => (false, m),
         };
-        let _ = ev.send(JobEvent::Finished { ok, message });
+        finish(ev, ok, message);
     }
 
     async fn install_teensy_inner(&self, ev: &Events) -> Result<String, String> {
