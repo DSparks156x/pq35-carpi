@@ -277,6 +277,7 @@ A viewing panel takes no focus.
 ### Panels
 
 - **Look**: LIVI telemetry. Black, hairlines between widgets, no boxes. Tiny spaced uppercase label, big light numeral, small unit.
+- **Full screen**: a panel being viewed has no header; its name and the log timer sit in the footer by the page dots. Up puts focus on the tabs and the header comes back.
 - **Grid**: per panel: 1, 2×1, 2×2, 3×2, 4×3. A widget covers 1–n cells.
 - **Panel menu**: Edit panel, Log this panel, Reset peaks, New panel, Panels › (add, rename, reorder, remove).
 - **Edit**: brightness-curve layout. Live panel left, focused widget's rows right. Empty cells dashed; push adds a value.
@@ -292,7 +293,7 @@ A viewing panel takes no focus.
 | Graph | Values 1–3, Window 10/30/60 s, Range Auto/Fixed, Fill, Marks |
 | Pair | Actual, Specified, Difference: Absolute / % |
 | Set | Wheels 2×2, Cylinders 1–4, Doors; per item Number / Bar |
-| Selector | DSG/auto selector P R N D S + gear, shifting flag (`trans.selector`, `trans.shifting`) |
+| Forks | DSG selector forks 1-3, 2-4, 5-N, 6-R (02 grp 15); sync points from grp 17/18, read once; engaged gears big |
 
 - **Boost** (Drew): `engine.boost.actual`, `.specified`, `.cluster_mbar` are absolute. Per-widget Pressure: Absolute / Relative. Relative subtracts atmospheric: ICAN `engine.altitude_factor` × 1013 mbar (0x555, faster), else `engine.atmospheric_mbar` (group 113). Below zero reads as vacuum.
 
