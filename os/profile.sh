@@ -168,6 +168,13 @@ if put_file /etc/udev/rules.d/99-carpi-uinput.rules \
   do_ udevadm control --reload
   do_ udevadm trigger --name-match=uinput || true
 fi
+# brcmfmac: Pi OS's /usr/lib/modprobe.d/rpi-brcmfmac.conf plus SAE_EXT (bit 25). The 43455
+# firmware advertises WPA3 it can't complete, so a WPA2/WPA3 phone hotspot never joins; without
+# it wpa_supplicant uses WPA2-PSK. Same name in /etc replaces the Pi OS file. LIVI's AP is WPA2
+# here (firmware SME). raspberrypi/linux#7634.
+if put_file /etc/modprobe.d/rpi-brcmfmac.conf "options brcmfmac roamoff=1 feature_disable=0x2282000"; then
+  REBOOT=1
+fi
 if ! id -nG "$USERNAME" | tr ' ' '\n' | grep -qx input; then
   say "adding $USERNAME to input"; do_ usermod -aG input "$USERNAME"; REBOOT=1
 fi
