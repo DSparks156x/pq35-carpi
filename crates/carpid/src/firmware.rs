@@ -925,16 +925,8 @@ impl Firmware {
                 t.fw_id, t.version, t.ram_map, module.table_version
             ));
         }
-        let live_header = bus.read_all(svc::SECTOR_XIP, HEADER).await?;
-        if live_header == img[..HEADER] {
-            stage(
-                ev,
-                "verify",
-                "The header matches; reading the whole sector to confirm",
-            );
-            if crate::decoder::sector_crc(&mut bus, "verify", ev).await? == crc {
-                return Ok(format!("Module {} is already installed", module.build()));
-            }
+        if quick_check(&mut bus, svc::SECTOR, &img).await.is_ok() {
+            return Ok(format!("Module {} is already installed", module.build()));
         }
 
         // 3. Write, with cleanup whatever happens.
@@ -943,21 +935,28 @@ impl Firmware {
             .write_rnse(&mut bus, svc::SECTOR, &img, crc, &t, ev)
             .await;
         bus.release().await;
-        let r = match r {
-            Ok(()) => self.verify_rnse(&mut bus, &img, crc, &module, ev).await,
+        match r {
+            Ok(()) => {
+                // The chain comes back as soon as the unit answers; the checks run beside it.
+                let back = wait_restart(&mut bus, ev).await;
+                if restart {
+                    self.start_chain(ev).await;
+                }
+                back?;
+                self.verify_rnse(&mut bus, &img, &module, ev).await
+            }
             Err(Pre(e)) => {
                 // Nothing was committed: re-arm auto start.
                 if bus.lease(Duration::from_secs(10)).await.is_ok() {
                     let _ = bus.send(svc::poke(svc::AUTO_START_WORD, 0)).await;
                     bus.release().await;
                 }
+                if restart {
+                    self.start_chain(ev).await;
+                }
                 Err(e)
             }
-        };
-        if restart {
-            self.start_chain(ev).await;
         }
-        r
     }
 
     /// Steps 4-6. `Err` here means nothing was committed.
@@ -998,7 +997,7 @@ impl Firmware {
         let n = img.len() as u32;
         let frames = img.len().div_ceil(5);
         let mut staged = false;
-        for (attempt, per_tick) in [4usize, 2, 1].into_iter().enumerate() {
+        for (attempt, per_tick) in [8usize, 4, 2].into_iter().enumerate() {
             stage(
                 ev,
                 "stage",
@@ -1086,12 +1085,10 @@ impl Firmware {
         &self,
         bus: &mut RnseBus,
         img: &[u8],
-        crc: u32,
         m: &Module,
         ev: &Events,
     ) -> Result<String, String> {
-        wait_restart(bus, ev).await?;
-        read_back(bus, svc::SECTOR, img, crc, ev).await?;
+        quick_check(bus, svc::SECTOR, img).await?;
         stage(
             ev,
             "verify",
@@ -1117,7 +1114,7 @@ impl Firmware {
         }
         if !running {
             return Err(format!(
-                "module {} is written and verified, but it hasn't reported OK2F yet; check the firmware table",
+                "module {} is written, but it hasn't reported OK2F yet; check the firmware table",
                 m.build()
             ));
         }
@@ -1166,7 +1163,6 @@ impl Firmware {
             return Err(format!("{name}: {p}"));
         }
         let crc = !crc32(!0, &img);
-        let xip = svc::sector_xip(sector);
 
         // 2. The unit: it needs the hooked firmware; is the image already there?
         let iface = self.interface.clone().ok_or("no live ICAN interface")?;
@@ -1178,15 +1174,8 @@ impl Firmware {
             .table
             .clone()
             .ok_or("this RNS-E has no SDLink firmware table, so no flash commands to write with")?;
-        if bus.read_all(xip, HEADER).await? == img[..HEADER] {
-            stage(
-                ev,
-                "verify",
-                format!("Sector {sector} starts the same; reading it all to compare"),
-            );
-            if crate::decoder::sector_crc_at(&mut bus, xip, "verify", ev).await? == crc {
-                return Ok(format!("Sector {sector} already holds {name}"));
-            }
+        if quick_check(&mut bus, sector, &img).await.is_ok() {
+            return Ok(format!("Sector {sector} already holds {name}"));
         }
 
         // 3. Write, with cleanup whatever happens.
@@ -1194,11 +1183,19 @@ impl Firmware {
         let r = self.write_rnse(&mut bus, sector, &img, crc, &t, ev).await;
         bus.release().await;
         let committed = r.is_ok();
+        let mut restart = restart;
         let r = match r {
-            Ok(()) => match wait_restart(&mut bus, ev).await {
-                Ok(()) => read_back(&mut bus, sector, &img, crc, ev).await,
-                Err(e) => Err(e),
-            },
+            Ok(()) => {
+                let back = wait_restart(&mut bus, ev).await;
+                if restart {
+                    self.start_chain(ev).await;
+                    restart = false;
+                }
+                match back {
+                    Ok(()) => quick_check(&mut bus, sector, &img).await,
+                    Err(e) => Err(e),
+                }
+            }
             Err(Pre(e)) => Err(e),
         };
         // The cold reset cleared the off word; after a refusal it is still set.
@@ -1212,7 +1209,7 @@ impl Firmware {
         if restart {
             self.start_chain(ev).await;
         }
-        r.map(|()| format!("Wrote {name} to sector {sector}; CRC {crc:08X} read back"))
+        r.map(|()| format!("Wrote {name} to sector {sector} (CRC {crc:08X}); the unit restarted and samples match"))
     }
 
     // ------------------------------------------------------------ Teensy install
@@ -1307,12 +1304,13 @@ struct Pre(String);
 /// After a commit: the unit comes back with restart count 0.
 async fn wait_restart(bus: &mut RnseBus, ev: &Events) -> Result<(), String> {
     stage(ev, "restart", "Waiting for the RNS-E to restart");
-    tokio::time::sleep(Duration::from_secs(25)).await;
+    // Erase, program and boot take about 25 s; ask from 12 s on, it answers as soon as it's up.
+    tokio::time::sleep(Duration::from_secs(12)).await;
     let end = Instant::now() + Duration::from_secs(120);
     let count = loop {
         match bus.u16(RESTART_COUNT).await {
             Ok(c) => break c as i16,
-            Err(_) if Instant::now() < end => tokio::time::sleep(Duration::from_secs(2)).await,
+            Err(_) if Instant::now() < end => tokio::time::sleep(Duration::from_millis(500)).await,
             Err(e) => {
                 return Err(format!(
                     "the RNS-E didn't answer after the commit: {e}. Check it, then run Check versions"
@@ -1326,26 +1324,24 @@ async fn wait_restart(bus: &mut RnseBus, ev: &Events) -> Result<(), String> {
     Ok(())
 }
 
-/// The live sector equals the image: its start first, then the whole CRC.
-async fn read_back(
-    bus: &mut RnseBus,
-    sector: u16,
-    img: &[u8],
-    crc: u32,
-    ev: &Events,
-) -> Result<(), String> {
+/// The live sector matches the image: its first 0xA0 bytes, the last 64 and 64 bytes in each
+/// 8 KiB, about 20 reads. The commit already CRC-checked the staged image, and a 107 module
+/// also has the hook's whole-module word sum (OK2F) behind it; a whole read is Read decoder.
+async fn quick_check(bus: &mut RnseBus, sector: u16, img: &[u8]) -> Result<(), String> {
     let xip = svc::sector_xip(sector);
-    stage(ev, "verify", format!("Reading sector {sector} back"));
     if bus.read_all(xip, HEADER).await? != img[..HEADER] {
-        return Err(format!(
-            "sector {sector}'s start doesn't match the image after the commit"
-        ));
+        return Err(format!("sector {sector}'s start doesn't match the image"));
     }
-    let live = crate::decoder::sector_crc_at(bus, xip, "verify", ev).await?;
-    if live != crc {
-        return Err(format!(
-            "sector {sector} CRC {live:08X} after the commit, image {crc:08X}"
-        ));
+    let mut offs: Vec<usize> = (0..img.len() / 0x2000)
+        .map(|i| i * 0x2000 + 0x1000)
+        .collect();
+    offs.push(img.len() - 64);
+    for off in offs {
+        if bus.read(xip + off as u32, 64).await? != img[off..off + 64] {
+            return Err(format!(
+                "sector {sector} differs from the image at +{off:05X}"
+            ));
+        }
     }
     Ok(())
 }
