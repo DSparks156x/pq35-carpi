@@ -27,6 +27,7 @@
 //! the SDLink firmware table (the hooked firmware that has B6/B7), quiesces
 //! the module the same way, and verifies by restart count and live CRC.
 
+use crate::progress_text::Progress;
 use crate::rnse_bus::{RnseBus, crc32};
 use carpi_core::rnse_service as svc;
 use carpi_proto::{
@@ -852,12 +853,14 @@ impl Firmware {
         tx: mpsc::Sender<crate::Msg>,
         ev: &Events,
     ) {
+        let p = Progress::start(tx.clone());
         let r = tokio::time::timeout(
             Duration::from_secs(25 * 60),
-            self.install_rnse_inner(tx, ev),
+            self.install_rnse_inner(tx, ev, &p),
         )
         .await
         .unwrap_or_else(|_| Err("stopped after 25 minutes".into()));
+        p.end(r.is_ok());
         self.emit_status(ev).await;
         let (ok, message) = match r {
             Ok(m) => (true, m),
@@ -870,6 +873,7 @@ impl Firmware {
         &self,
         tx: mpsc::Sender<crate::Msg>,
         ev: &Events,
+        p: &Progress,
     ) -> Result<String, String> {
         // 1. The image.
         stage(ev, "check", "Checking the bundled sector 107 image");
@@ -932,13 +936,14 @@ impl Firmware {
         // 3. Write, with cleanup whatever happens.
         let restart = self.stop_chain(ev).await?;
         let r = self
-            .write_rnse(&mut bus, svc::SECTOR, &img, crc, &t, ev)
+            .write_rnse(&mut bus, svc::SECTOR, &img, crc, &t, ev, p)
             .await;
         bus.release().await;
         match r {
             Ok(()) => {
                 // The chain comes back as soon as the unit answers; the checks run beside it.
                 let back = wait_restart(&mut bus, ev).await;
+                p.set("VF", 95);
                 if restart {
                     self.start_chain(ev).await;
                 }
@@ -960,6 +965,7 @@ impl Firmware {
     }
 
     /// Steps 4-6. `Err` here means nothing was committed.
+    #[allow(clippy::too_many_arguments)]
     async fn write_rnse(
         &self,
         bus: &mut RnseBus,
@@ -968,8 +974,10 @@ impl Firmware {
         crc: u32,
         t: &Table,
         ev: &Events,
+        p: &Progress,
     ) -> Result<(), Pre> {
         stage(ev, "prepare", "Taking the bus; auto start off");
+        p.set("PR", 1);
         bus.lease(Duration::from_secs(15 * 60)).await.map_err(Pre)?;
         bus.send(svc::poke(svc::AUTO_START_WORD, TVA_OFF))
             .await
@@ -1007,6 +1015,7 @@ impl Firmware {
                     frames
                 ),
             );
+            let tag = ["TX", "T2", "T3"][attempt];
             let mut tick = tokio::time::interval(Duration::from_millis(10));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             for (seq, chunk) in img.chunks(5).enumerate() {
@@ -1019,7 +1028,11 @@ impl Firmware {
                 if seq % 1024 == 0 || seq + 1 == frames {
                     progress(ev, "stage", (seq + 1) as u64, frames as u64);
                 }
+                if seq % 64 == 0 {
+                    p.set(tag, 2 + (53 * seq / frames) as u32);
+                }
             }
+            p.set("CK", 55);
             let mut end_reply = None;
             for _ in 0..6 {
                 bus.drain().await;
@@ -1063,6 +1076,8 @@ impl Firmware {
                 "Writing sector {sector}: the RNS-E erases, programs and restarts (about 25 s)"
             ),
         );
+        // No feedback until the unit is back (about 25 s, then its boot): a timed ramp.
+        p.ramp("FL", 57, 94, Duration::from_secs(37));
         bus.send(svc::set_target_sector(sector, crc))
             .await
             .map_err(Pre)?;
@@ -1128,12 +1143,14 @@ impl Firmware {
         tx: mpsc::Sender<crate::Msg>,
         ev: &Events,
     ) {
+        let p = Progress::start(tx.clone());
         let r = tokio::time::timeout(
             Duration::from_secs(25 * 60),
-            self.flash_sector_inner(name, tx, ev),
+            self.flash_sector_inner(name, tx, ev, &p),
         )
         .await
         .unwrap_or_else(|_| Err("stopped after 25 minutes".into()));
+        p.end(r.is_ok());
         self.emit_status(ev).await;
         let (ok, message) = match r {
             Ok(m) => (true, m),
@@ -1147,6 +1164,7 @@ impl Firmware {
         name: &str,
         tx: mpsc::Sender<crate::Msg>,
         ev: &Events,
+        p: &Progress,
     ) -> Result<String, String> {
         // 1. The upload.
         stage(ev, "check", format!("Checking {name}"));
@@ -1180,13 +1198,16 @@ impl Firmware {
 
         // 3. Write, with cleanup whatever happens.
         let restart = self.stop_chain(ev).await?;
-        let r = self.write_rnse(&mut bus, sector, &img, crc, &t, ev).await;
+        let r = self
+            .write_rnse(&mut bus, sector, &img, crc, &t, ev, p)
+            .await;
         bus.release().await;
         let committed = r.is_ok();
         let mut restart = restart;
         let r = match r {
             Ok(()) => {
                 let back = wait_restart(&mut bus, ev).await;
+                p.set("VF", 95);
                 if restart {
                     self.start_chain(ev).await;
                     restart = false;

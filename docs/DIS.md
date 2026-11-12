@@ -205,6 +205,7 @@ Ladder: lower the per-value rate, then update only half the cells per frame (rou
 - **Top lines** are a separate surface:
   - The Pi writes 0x363/0x365 only while the RNS-E is on TV, `rnse_alive`, Kl15 on and the cluster isn't busy/phone (`dbc:4993-5018`).
   - On other sources the firmware sends them itself (`RNSE hacking/R41_FEATURES.md:53`), so the Pi is silent.
+  - Exception, RNS-E update (`carpid/src/progress_text.rs`): line 1 only, 2 Hz, `TX 47% /` (phase, percent, spinner), ahead of every other source and also off TV. The gate lets that 0x363 past the update's lease and the RNS-E's reboot (`Gate::set_update_text`); Kl15 and an awake bus still required. `UPD  OK` / `UPD FAIL` for 3 s at the end. Phases: CK check, PR prepare, TX/T2/T3 staging (2-55 %), CK end CRC, FL erase/program/reboot (timed 57-94 %, no feedback), VF verify.
   - Sources: the radio text from 0x7B4/0x7B5, forwarded byte-exact, or our own 16-cell strings.
   - At most one change per 50 ms and no heartbeat spam. The old 100 ms resend and 3 reactive copies (`dc/dis_top_display_service.py:56-70, 583-610`) existed only to fight the OEM writes, which the redirect removes.
   - Skip any top-line content the centre already shows.

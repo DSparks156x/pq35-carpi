@@ -226,6 +226,38 @@ fn top_lines_skip_the_centre_and_leave_line_2_to_the_cluster() {
 }
 
 #[test]
+fn update_progress_takes_line_1_through_the_lease_then_gives_it_back() {
+    let mut r = Rig::new(DisSetup {
+        claim_media: false,
+        ..enabled()
+    });
+    r.on_tv = true;
+    play(&mut r, "Song");
+    r.run(Duration::from_secs(4));
+    assert_eq!(r.text("dis.top_text").as_deref(), Some("Song"));
+    // The update holds the bus; its line still goes out, off TV too, 0x363 only.
+    r.car.rnse_lease(Duration::from_secs(60), r.now).unwrap();
+    r.on_tv = false;
+    r.top.clear();
+    r.car.set_update_text(Some("TX 47% -".into()), r.now);
+    r.run(Duration::from_secs(1));
+    let want = carpi_dis::top::encode("TX 47% -");
+    assert!(
+        r.top
+            .iter()
+            .any(|f| f.id == 0x363 && f.data() == &want[..8])
+    );
+    assert!(!r.top.iter().any(|f| f.id == 0x365));
+    assert_eq!(r.text("dis.top_text").as_deref(), Some("TX 47% -"));
+    // Done: lease released, the line goes back to its sources.
+    r.car.rnse_release();
+    r.car.set_update_text(None, r.now);
+    r.on_tv = true;
+    r.run(Duration::from_secs(2));
+    assert_eq!(r.text("dis.top_text").as_deref(), Some("Song"));
+}
+
+#[test]
 fn top_lines_skip_media_when_the_centre_shows_it() {
     let mut r = Rig::new(enabled());
     r.on_tv = true;

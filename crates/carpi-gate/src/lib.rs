@@ -11,6 +11,9 @@
 //! - `DisplayDdp`, `Diag`, `Extra`: only with Kl15 on. Unknown Kl15 counts as off.
 //! - While a lease is held, only `Lease` passes. `Lease` needs a lease, Kl15
 //!   and an awake bus.
+//! - Exception: while an RNS-E update runs (`set_update_text`), its progress on
+//!   top line 1 (0x363, `DisplayTop`) passes the lease and the RNS-E's reboot;
+//!   it still needs Kl15, an awake bus and the class rate cap.
 //! - Fixed-ID classes are checked against their IDs, and NM IDs never pass.
 //!
 //! One gate per interface. A separate diag bus has no ring the Pi can see, so
@@ -274,6 +277,8 @@ pub struct Gate {
     buckets: [Bucket; 6],
     stats: [ClassStats; 6],
     lease_until: Option<Instant>,
+    /// An RNS-E update is running: its progress line (0x363 only) may pass.
+    update_text: bool,
 }
 
 impl Gate {
@@ -290,6 +295,18 @@ impl Gate {
             buckets: [bucket; 6],
             stats: [ClassStats::default(); 6],
             lease_until: None,
+            update_text: false,
+        }
+    }
+
+    /// While an RNS-E update runs, its progress on top line 1 (0x363) passes
+    /// the update's own lease and the RNS-E's reboot (no `rnse_awake`). It
+    /// still needs an awake bus, Kl15 and the `DisplayTop` rate cap; 0x365
+    /// and every other class keep the normal rules.
+    pub fn set_update_text(&mut self, on: bool) {
+        if self.update_text != on {
+            self.update_text = on;
+            info!(iface = %self.name, on, "update progress text");
         }
     }
 
@@ -330,13 +347,21 @@ impl Gate {
             BusState::Awake => {}
         }
         let leased = self.lease_until.is_some();
+        let update_text =
+            self.update_text && class == TxClass::DisplayTop && frame.id == ids::DIS_TOPLINE_1;
         match (class, leased) {
             (TxClass::Lease, false) => return Err(Refused::NoLease),
             (TxClass::Lease, true) => {}
+            (_, true) if update_text => {}
             (_, true) => return Err(Refused::Leased),
             (_, false) => {}
         }
         match class {
+            TxClass::DisplayTop if update_text => {
+                if !view.kl15_on() {
+                    return Err(Refused::Kl15Off);
+                }
+            }
             TxClass::Override | TxClass::DisplayTop => {
                 if !view.rnse_awake {
                     return Err(Refused::RnseAsleep);
@@ -696,6 +721,54 @@ mod tests {
         g.take_lease(t, ms(1000), &v).unwrap();
         g.release_lease();
         assert_eq!(g.check(TxClass::Diag, &legit(TxClass::Diag), t, &v), Ok(()));
+    }
+
+    #[test]
+    fn update_text_passes_lease_and_reboot_on_line_1_only() {
+        let t0 = Instant::now();
+        let mut g = Gate::new("ican", Config::default());
+        let rebooting = view(BusState::Awake, false, Some(true));
+        let l1 = Frame::new(0x363, b"TX 47% /").unwrap();
+        let l2 = Frame::new(0x365, b"        ").unwrap();
+        g.take_lease(t0, ms(60_000), &awake()).unwrap();
+        assert_eq!(
+            g.check(TxClass::DisplayTop, &l1, t0, &rebooting),
+            Err(Refused::Leased)
+        );
+        g.set_update_text(true);
+        assert_eq!(g.check(TxClass::DisplayTop, &l1, t0, &rebooting), Ok(()));
+        assert_eq!(
+            g.check(TxClass::DisplayTop, &l2, t0, &rebooting),
+            Err(Refused::Leased)
+        );
+        assert_eq!(
+            g.check(TxClass::Override, &legit(TxClass::Override), t0, &awake()),
+            Err(Refused::Leased)
+        );
+        assert_eq!(
+            g.check(
+                TxClass::DisplayTop,
+                &l1,
+                t0,
+                &view(BusState::Awake, false, None)
+            ),
+            Err(Refused::Kl15Off)
+        );
+        assert_eq!(
+            g.check(
+                TxClass::DisplayTop,
+                &l1,
+                t0,
+                &view(BusState::Silent, true, Some(true))
+            ),
+            Err(Refused::BusSilent)
+        );
+        g.release_lease();
+        g.set_update_text(false);
+        assert_eq!(
+            g.check(TxClass::DisplayTop, &l1, t0, &rebooting),
+            Err(Refused::RnseAsleep)
+        );
     }
 
     #[test]

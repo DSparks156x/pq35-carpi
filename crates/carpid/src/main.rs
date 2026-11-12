@@ -26,6 +26,7 @@ mod faults;
 mod firmware;
 mod netdev;
 mod portal;
+mod progress_text;
 mod remote;
 mod rnse_bus;
 mod runmark;
@@ -100,6 +101,8 @@ pub enum Msg {
     /// RNS-E service traffic for the decoder and firmware jobs, through the
     /// live gate (`carpi_core::rnse_service`).
     Rnse(RnseOp, oneshot::Sender<Result<(), String>>),
+    /// RNS-E update progress for DIS top line 1, `None` when it ends.
+    UpdateText(Option<String>),
 }
 
 #[derive(Debug)]
@@ -423,6 +426,7 @@ impl Daemon {
                 };
                 let _ = reply.send(result);
             }
+            Msg::UpdateText(text) => car.set_update_text(text, now),
             Msg::Frame(idx, frame) => {
                 if let Some(ev) = car.ingest(idx, &frame) {
                     info!(

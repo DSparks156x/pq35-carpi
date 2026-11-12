@@ -193,6 +193,17 @@ impl Car {
             .map_err(|e| format!("bus lease refused: {e}"))
     }
 
+    /// RNS-E update progress on DIS top line 1 (8 cells), `None` when the
+    /// update ends. Beats every other top-line source, and the ICAN gate lets
+    /// it past the update's lease and the RNS-E's reboot.
+    pub fn set_update_text(&mut self, text: Option<String>, now: Instant) {
+        if let Some(i) = self.ican_idx() {
+            self.controls.gates[i].set_update_text(text.is_some());
+        }
+        self.display.set_update_text(text);
+        self.service(now);
+    }
+
     pub fn rnse_release(&mut self) {
         if let Some(iface) = self.ican_idx() {
             self.controls.gates[iface].release_lease();

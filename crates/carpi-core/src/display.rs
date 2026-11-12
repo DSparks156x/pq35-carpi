@@ -223,6 +223,8 @@ pub(crate) struct Display {
     nav: Option<NavInput>,
     readings: Option<ReadingsInput>,
     top_text: String,
+    /// RNS-E update progress for top line 1: beats every other top-line source.
+    update_text: Option<String>,
     last_error: Option<String>,
     focus: bool,
     /// The current cover, decoded once per `media.art_id`.
@@ -578,6 +580,11 @@ fn window_name(w: Window) -> &'static str {
 }
 
 impl Display {
+    /// RNS-E update progress (8 cells, line 1 only), `None` when the update ends.
+    pub fn set_update_text(&mut self, text: Option<String>) {
+        self.update_text = text;
+    }
+
     pub fn new(setup: DisSetup) -> Self {
         Display {
             dis: new_dis(&setup),
@@ -589,6 +596,7 @@ impl Display {
             nav: None,
             readings: None,
             top_text: String::new(),
+            update_text: None,
             last_error: None,
             focus: false,
             art: None,
@@ -849,14 +857,25 @@ impl Display {
         }
         self.flush(now, Some(view), iface, gate, out);
 
-        // Top lines.
+        // Top lines. An RNS-E update's progress comes first, on line 1 only, and
+        // also off TV: the RNS-E reboots during it (the gate lets it through).
         let on_tv = store.get_bool("rnse.on_tv", now) == Some(true);
-        if self.setup.enabled && on_tv {
-            let ours = self.running && self.dis.session().owned();
-            let centre = if ours { self.dis.shown() } else { None };
-            let imperial =
-                carpi_dis::screens::nav::imperial(&nav_input(store, now), &nav_config(&self.setup));
-            let (l1, l2) = top_lines(store, now, centre, ours, imperial).unwrap_or_default();
+        let lines = match &self.update_text {
+            Some(t) => Some((t.clone(), None)),
+            None if on_tv => {
+                let ours = self.running && self.dis.session().owned();
+                let centre = if ours { self.dis.shown() } else { None };
+                let imperial = carpi_dis::screens::nav::imperial(
+                    &nav_input(store, now),
+                    &nav_config(&self.setup),
+                );
+                Some(top_lines(store, now, centre, ours, imperial).unwrap_or_default())
+            }
+            None => None,
+        };
+        if self.setup.enabled
+            && let Some((l1, l2)) = lines
+        {
             self.top_text = match &l2 {
                 Some(l2) => format!("{l1}|{l2}"),
                 None => l1.clone(),
