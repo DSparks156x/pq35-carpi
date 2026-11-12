@@ -475,10 +475,20 @@ pub async fn capture(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Respon
                 .filter(|id| s.logs.dir(id).is_some());
             match id {
                 Some(id) => Redirect::to(&format!("/e/{}", tail(&id))).into_response(),
-                None => v.message(StatusCode::OK, "Debug logs saved", &format!("Saved {label}."), "/"),
+                None => v.message(
+                    StatusCode::OK,
+                    "Debug logs saved",
+                    &format!("Saved {label}."),
+                    "/",
+                ),
             }
         }
-        Err(e) => v.message(StatusCode::INTERNAL_SERVER_ERROR, "Debug logs failed", &e, "/"),
+        Err(e) => v.message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Debug logs failed",
+            &e,
+            "/",
+        ),
     }
 }
 

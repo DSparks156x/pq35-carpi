@@ -163,7 +163,13 @@ fn fixed_line(img: &mut RgbaImage, s: &str, y: u32) {
     let m = carpi_dis::font::Metrics::for_variant(carpi_dis::proto::Variant::White);
     let b: Vec<u8> = audscii(s).into_iter().take(8).collect();
     let blank = |c: u8| (0..glyphs::H).all(|y| glyphs::row(Font::Fixed, c, y) == 0);
-    let adv = |c: u8| if blank(c) && c != 0x20 { 12 } else { u32::from(m.advance(Font::Fixed, c)) };
+    let adv = |c: u8| {
+        if blank(c) && c != 0x20 {
+            12
+        } else {
+            u32::from(m.advance(Font::Fixed, c))
+        }
+    };
     let w: u32 = b.iter().map(|&c| adv(c)).sum();
     let mut x = (PX_W as u32).saturating_sub(w) / 2;
     for c in b {
@@ -247,7 +253,14 @@ fn nav(out: &Path, stock: bool) {
             ],
             320.0,
         ),
-        ("roundabout_enter_and_exit", Some("right"), Some(270), "Harmony Rd", vec![], 240.0),
+        (
+            "roundabout_enter_and_exit",
+            Some("right"),
+            Some(270),
+            "Harmony Rd",
+            vec![],
+            240.0,
+        ),
         ("on_ramp", Some("right"), None, "I-25 N", vec![], 220.0),
         (
             "fork",
@@ -328,7 +341,14 @@ fn media(out: &Path, cover_png: Option<&Path>, mode: &str) {
         rgb.as_ref().map(|img| {
             (
                 id,
-                cover(img.as_raw(), img.width() as usize, img.height() as usize, w, h, &p),
+                cover(
+                    img.as_raw(),
+                    img.width() as usize,
+                    img.height() as usize,
+                    w,
+                    h,
+                    &p,
+                ),
             )
         })
     };
@@ -355,7 +375,11 @@ fn media(out: &Path, cover_png: Option<&Path>, mode: &str) {
             sim.reenter();
         }
     }
-    let layout = if mode == "text" { MediaLayout::Stack } else { MediaLayout::Art };
+    let layout = if mode == "text" {
+        MediaLayout::Stack
+    } else {
+        MediaLayout::Art
+    };
     let mut s = MediaScreen::new(layout);
     let n = if mode == "flash" { 50 } else { 90 };
     for k in 0..n as u64 {
@@ -412,7 +436,11 @@ fn readings(out: &Path) {
         let t = k as f64 * 0.1;
         // A gentle pull from ~2 s to ~6 s.
         let pull = ((t - 2.0) / 4.0).clamp(0.0, 1.0);
-        let pull = if t > 6.0 { (1.0 - (t - 6.0) / 2.0).max(0.0) } else { pull };
+        let pull = if t > 6.0 {
+            (1.0 - (t - 6.0) / 2.0).max(0.0)
+        } else {
+            pull
+        };
         if k == 20 {
             s.set_focus(true);
         }
@@ -471,27 +499,29 @@ fn accel(out: &Path, metric: bool) {
         }
     } else {
         AccelConfig {
-        legs: vec![
-            Leg::range(0.0, 60.0),
-            Leg::range(30.0, 70.0),
-            Leg::Distance {
-                m: 402.336,
-                label: "1/4 mi".into(),
-            },
-            Leg::Speed,
-        ],
-        imperial: true,
-        ..AccelConfig::default()
-    }
+            legs: vec![
+                Leg::range(0.0, 60.0),
+                Leg::range(30.0, 70.0),
+                Leg::Distance {
+                    m: 402.336,
+                    label: "1/4 mi".into(),
+                },
+                Leg::Speed,
+            ],
+            imperial: true,
+            ..AccelConfig::default()
+        }
     };
     let k = if metric { 1.609_344 } else { 1.0 };
-    let v = |s: f64| k * {
-        if s < 1.5 {
-            0.0
-        } else if s < 20.0 {
-            120.0 * (1.0 - (-(s - 1.5) / 9.0).exp())
-        } else {
-            (120.0 * (1.0 - (-18.5f64 / 9.0).exp()) - (s - 20.0) * 15.0).max(0.0)
+    let v = |s: f64| {
+        k * {
+            if s < 1.5 {
+                0.0
+            } else if s < 20.0 {
+                120.0 * (1.0 - (-(s - 1.5) / 9.0).exp())
+            } else {
+                (120.0 * (1.0 - (-18.5f64 / 9.0).exp()) - (s - 20.0) * 15.0).max(0.0)
+            }
         }
     };
     let mut s = AccelScreen::new(cfg);
@@ -505,7 +535,11 @@ fn accel(out: &Path, metric: bool) {
         }
         sim.tick(&mut s);
     }
-    sim.write(&out.join(if metric { "accel-metric.gif" } else { "accel.gif" }));
+    sim.write(&out.join(if metric {
+        "accel-metric.gif"
+    } else {
+        "accel.gif"
+    }));
 }
 
 /// Incoming, answered, a few seconds of call, hung up.
@@ -538,10 +572,19 @@ fn call(out: &Path) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let out = PathBuf::from(args.first().expect("usage: gifs <out dir> [cover.png] [scene]"));
+    let out = PathBuf::from(
+        args.first()
+            .expect("usage: gifs <out dir> [cover.png] [scene]"),
+    );
     std::fs::create_dir_all(&out).expect("out dir");
-    let cover = args.get(1).filter(|a| a.ends_with(".png") || a.ends_with(".jpg"));
-    let which = args.iter().skip(1).find(|a| Some(*a) != cover).map(String::as_str);
+    let cover = args
+        .get(1)
+        .filter(|a| a.ends_with(".png") || a.ends_with(".jpg"));
+    let which = args
+        .iter()
+        .skip(1)
+        .find(|a| Some(*a) != cover)
+        .map(String::as_str);
     let cover = cover.map(PathBuf::from);
     let all = which.is_none();
     if all || which == Some("nav") {
