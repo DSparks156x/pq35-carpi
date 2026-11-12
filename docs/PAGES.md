@@ -278,6 +278,7 @@ A viewing panel takes no focus.
 
 - **Look**: LIVI telemetry. Black, hairlines between widgets, no boxes. Tiny spaced uppercase label, big light numeral, small unit.
 - **Full screen**: a panel being viewed has no header; its name and the log timer sit in the footer by the page dots. Up puts focus on the tabs and the header comes back.
+- **Touch**: swipe left/right flips panels; tapping a page dot goes to that panel. Knob and D-pad do the same.
 - **Grid**: per panel: 1, 2×1, 2×2, 3×2, 4×3. A widget covers 1–n cells.
 - **Panel menu**: Edit panel, Log this panel, Reset peaks, New panel, Panels › (add, rename, reorder, remove).
 - **Edit**: brightness-curve layout. Live panel left, focused widget's rows right. Empty cells dashed; push adds a value.
