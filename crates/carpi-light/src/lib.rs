@@ -16,8 +16,9 @@
 //! 4. Scroll trim: the car's display dimming (58d, which the car computes
 //!    from the scroll, its sensor and the lights) shifts the result by
 //!    [`TRIM_GAIN`] % per % away from [`TRIM_REF`]. Gentle on purpose.
-//! 5. Clamped to 6-100 (`BB` 1-5 act as 6), then [`Sender`]: a new level
-//!    only on a change of 2 % or more, at most every 500 ms.
+//! 5. Clamped to 6-100 (`BB` 1-5 act as 6), then [`Sender`]: the goal
+//!    moves on a change of 2 % or more; the panel ramps to it in 1 % steps
+//!    every 250 ms (bigger steps only for big swings).
 //!
 //! **Night**: see [`dark`].
 
@@ -153,12 +154,16 @@ impl Inputs {
     }
 }
 
-/// What goes out: a level only on a change of `min_step` or more (or onto
-/// the floor or ceiling), at most every `min_interval`.
+/// What goes out. The goal follows the target with hysteresis (a change
+/// of `min_step` or more, or onto the floor or ceiling); the level then
+/// ramps to the goal one step every `step_interval`: 1 % for small moves,
+/// a third of the gap for big ones, so a tunnel settles in a few seconds.
 #[derive(Clone, Debug)]
 pub struct Sender {
     pub min_step: u8,
-    pub min_interval: Duration,
+    /// Under the gate's 5/s cap for RNS-E commands.
+    pub step_interval: Duration,
+    goal: Option<u8>,
     level: Option<u8>,
     at: Option<Instant>,
 }
@@ -167,7 +172,8 @@ impl Default for Sender {
     fn default() -> Self {
         Sender {
             min_step: 2,
-            min_interval: Duration::from_millis(500),
+            step_interval: Duration::from_millis(250),
+            goal: None,
             level: None,
             at: None,
         }
@@ -177,19 +183,32 @@ impl Default for Sender {
 impl Sender {
     /// The level to hold now. `None` until there's been a target.
     pub fn update(&mut self, now: Instant, target: Option<f64>) -> Option<u8> {
-        let Some(t) = target else {
+        if let Some(t) = target {
+            let t = t.round().clamp(FLOOR_PCT as f64, 100.0) as u8;
+            let worth = match self.goal {
+                None => true,
+                Some(g) => {
+                    g.abs_diff(t) >= self.min_step || (g != t && (t == FLOOR_PCT || t == 100))
+                }
+            };
+            if worth {
+                self.goal = Some(t);
+            }
+        }
+        let goal = self.goal?;
+        let Some(l) = self.level else {
+            // First level: straight there.
+            self.level = Some(goal);
+            self.at = Some(now);
             return self.level;
         };
-        let t = t.round().clamp(FLOOR_PCT as f64, 100.0) as u8;
         let due = self
             .at
-            .is_none_or(|at| now.saturating_duration_since(at) >= self.min_interval);
-        let worth = match self.level {
-            None => true,
-            Some(l) => l.abs_diff(t) >= self.min_step || (l != t && (t == FLOOR_PCT || t == 100)),
-        };
-        if due && worth {
-            self.level = Some(t);
+            .is_none_or(|at| now.saturating_duration_since(at) >= self.step_interval);
+        if l != goal && due {
+            let gap = l.abs_diff(goal);
+            let step = (gap / 3).max(1);
+            self.level = Some(if goal > l { l + step } else { l - step });
             self.at = Some(now);
         }
         self.level
@@ -197,6 +216,12 @@ impl Sender {
 
     pub fn level(&self) -> Option<u8> {
         self.level
+    }
+
+    /// The next update goes straight to the target: a nudge or a settings
+    /// change shows at once.
+    pub fn snap(&mut self) {
+        self.level = None;
     }
 }
 
@@ -260,6 +285,7 @@ impl LightModel {
         }
         self.setup = s;
         self.rebuild();
+        self.sender.snap();
     }
 
     fn rebuild(&mut self) {
@@ -333,6 +359,7 @@ impl LightModel {
         let src = self.setup.ambient_source;
         let pct = curve::nudge(&mut self.setup.learned, &self.curve, src, a, delta);
         self.rebuild();
+        self.sender.snap();
         Ok(pct)
     }
 
@@ -341,6 +368,7 @@ impl LightModel {
         let src = src.unwrap_or(self.setup.ambient_source);
         self.setup.learned.retain(|p| p.0 != src);
         self.rebuild();
+        self.sender.snap();
     }
 
     pub fn learned(&self) -> &Learned {
@@ -452,34 +480,57 @@ mod tests {
     }
 
     #[test]
-    fn sender_rate_limit() {
+    fn sender_ramps() {
         let t0 = Instant::now();
         let mut s = Sender::default();
         assert_eq!(s.update(t0, None), None);
+        // First target: straight there.
         assert_eq!(s.update(t0, Some(50.2)), Some(50));
         // Under 2 %: nothing new.
         assert_eq!(s.update(t0 + ms(600), Some(51.4)), Some(50));
-        // 2 % but too soon after the last.
-        assert_eq!(s.update(t0 + ms(100), Some(52.0)), Some(50));
-        assert_eq!(s.update(t0 + ms(499), Some(60.0)), Some(50));
-        assert_eq!(s.update(t0 + ms(500), Some(60.0)), Some(60));
-        // A target sweeping every tick: at most 2 Hz.
+        // 3 % up: 1 % per 250 ms, never more.
+        let mut seen = vec![];
+        for k in 1..=20 {
+            let l = s.update(t0 + ms(600 + 100 * k), Some(53.0)).unwrap();
+            if seen.last() != Some(&l) {
+                seen.push(l);
+            }
+        }
+        assert_eq!(seen, [51, 52, 53]);
+        // A slow drift (dusk) only ever moves 1 % at a time.
+        let t1 = t0 + ms(3000);
+        let mut last = s.level().unwrap();
+        for k in 1..=300 {
+            let l = s
+                .update(t1 + ms(100 * k), Some(53.0 - k as f64 * 0.1))
+                .unwrap();
+            assert!(l.abs_diff(last) <= 1, "{last} -> {l}");
+            last = l;
+        }
+        assert!(last <= 25, "kept up: {last}");
+        // A tunnel: big steps first, 1 % at the end, there in ~4 s.
+        let mut s = Sender::default();
+        s.update(t0, Some(80.0));
         let mut changes = 0;
-        let mut last = s.level();
-        for k in 1..=50 {
-            let l = s.update(t0 + ms(500 + 100 * k), Some(60.0 - k as f64));
+        let mut last = 80;
+        for k in 1..=40 {
+            let l = s.update(t0 + ms(100 * k), Some(12.0)).unwrap();
             if l != last {
                 changes += 1;
+                assert!(t0 + ms(100 * k) >= t0 + ms(250) * changes);
                 last = l;
             }
         }
-        assert!(changes <= 10, "{changes} changes in 5 s");
+        assert_eq!(last, 12);
         // Onto the floor even by 1 %; nothing below it.
         let mut s = Sender::default();
         s.update(t0, Some(7.0));
         assert_eq!(s.update(t0 + ms(600), Some(2.0)), Some(FLOOR_PCT));
         // Stale target: hold.
         assert_eq!(s.update(t0 + ms(1200), None), Some(FLOOR_PCT));
+        // Snap: straight to the new target.
+        s.snap();
+        assert_eq!(s.update(t0 + ms(1300), Some(40.0)), Some(40));
     }
 
     #[test]

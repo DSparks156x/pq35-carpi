@@ -140,8 +140,9 @@ fn sends_only_label_and_brightness_to_the_rnse() {
         .collect();
     assert!(!bb.is_empty());
     assert!(bb.iter().all(|&l| (45..=62).contains(&l)), "{bb:?}");
-    // Settle + one resend: a handful of frames, not a stream.
-    assert!(sent.len() <= 6, "{} frames", sent.len());
+    // Settle + one resend, plus the 1 % ramp as trim arrives: a handful
+    // of frames, not a stream.
+    assert!(sent.len() <= 8, "{} frames {bb:?}", sent.len());
     let s = car.store();
     let end = next_tick - Duration::from_millis(100);
     assert_eq!(s.get_bool("light.night", end), Some(false));
