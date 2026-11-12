@@ -593,8 +593,8 @@ mod tests {
             std::fs::read_to_string(std::path::Path::new(&last.dir).join("data.csv")).unwrap();
         assert!(
             csv.starts_with(
-                "time_s,engine.rpm
-0.000,900
+                "Time (s),engine.rpm,Mark
+0.000,900,
 "
             ),
             "{csv}"
