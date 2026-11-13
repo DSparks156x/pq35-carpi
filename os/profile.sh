@@ -272,27 +272,50 @@ done
 RAWHOOK=/etc/kernel/postinst.d/zz-carpi-raw-kernel
 if put_file $RAWHOOK '#!/bin/sh
 # carpi (os/profile.sh): the firmware loads an uncompressed copy of the kernel, ~0.3 s faster.
-# Keeps kernel_2712_raw.img in step with kernel_2712.img; drops the kernel= line if that fails.
+# BCM2712 only: Pi OS also ships kernel_2712.img on boards which cannot boot it.
+# --enable is used by profile.sh; kernel updates only refresh an already selected raw kernel.
 # Also folds the overlays again (carpi-dt-merge): a kernel update brings new DTBs and overlays.
 C=/boot/firmware/config.txt
-if gunzip -c /boot/firmware/kernel_2712.img > /boot/firmware/kernel_2712_raw.img.tmp 2>/dev/null; then
-  mv /boot/firmware/kernel_2712_raw.img.tmp /boot/firmware/kernel_2712_raw.img
-else
-  rm -f /boot/firmware/kernel_2712_raw.img.tmp
-  sed -i "/^kernel=kernel_2712_raw.img$/d" $C
+[ -f "$C" ] || exit 0
+supported=0
+if [ -r /proc/device-tree/compatible ] &&
+   tr "\000" "\n" < /proc/device-tree/compatible | grep -qx "brcm,bcm2712"; then
+  supported=1
+fi
+# Be conservative about conditional kernels, prefixes and included config files: never
+# append an [all] override over a custom selection. Ignore only our own exact legacy line.
+custom=0
+if sed "/^kernel=kernel_2712_raw.img$/d" "$C" |
+   grep -qE "^[[:space:]]*(kernel[[:space:]]*=|os_prefix[[:space:]]*=|include[[:space:]])"; then
+  custom=1
+fi
+if [ "$supported" = 0 ] || [ "$custom" = 1 ]; then
+  # Repair images previously profiled on an incompatible board, preserving every other line.
+  sed -i "/^kernel=kernel_2712_raw.img$/d" "$C"
+elif [ "${1:-}" = --enable ] || grep -qx "kernel=kernel_2712_raw.img" "$C"; then
+  if gunzip -c /boot/firmware/kernel_2712.img > /boot/firmware/kernel_2712_raw.img.tmp 2>/dev/null &&
+     mv /boot/firmware/kernel_2712_raw.img.tmp /boot/firmware/kernel_2712_raw.img; then
+    if [ "${1:-}" = --enable ] && ! grep -qx "kernel=kernel_2712_raw.img" "$C"; then
+      printf "\n[all]\n# carpi boot time\nkernel=kernel_2712_raw.img\nforce_eeprom_read=0\n" >> "$C"
+    fi
+  else
+    rm -f /boot/firmware/kernel_2712_raw.img.tmp
+    sed -i "/^kernel=kernel_2712_raw.img$/d" "$C"
+  fi
 fi
 [ -x /usr/local/sbin/carpi-dt-merge ] && /usr/local/sbin/carpi-dt-merge merge
 exit 0'; then
   do_ chmod 755 $RAWHOOK
 fi
-if ! grep -qx 'kernel=kernel_2712_raw.img' $CONFIG && [ -f /boot/firmware/kernel_2712.img ]; then
-  say "config.txt: uncompressed kernel"
-  if [ $DRY = 0 ]; then
-    $RAWHOOK
-    [ -f /boot/firmware/kernel_2712_raw.img ] && \
-      printf '\n[all]\n# carpi boot time\nkernel=kernel_2712_raw.img\nforce_eeprom_read=0\n' >> $CONFIG
+if [ $DRY = 0 ]; then
+  RAW_CONFIG_BEFORE=$(cat "$CONFIG")
+  $RAWHOOK --enable
+  if [ "$(cat "$CONFIG")" != "$RAW_CONFIG_BEFORE" ]; then
+    say "config.txt: updated board-safe uncompressed kernel selection"
+    REBOOT=1
   fi
-  REBOOT=1
+else
+  say "would check board and config.txt before selecting an uncompressed kernel"
 fi
 #     Kernel command line: black from power-on to LIVI. No splash (plymouth), console off the screen,
 #     no logo, no cursor.

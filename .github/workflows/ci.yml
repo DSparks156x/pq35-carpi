@@ -23,6 +23,7 @@ jobs:
       - name: first-install defaults and clock synchronization
         run: |
           python3 -B tools/test-options-config.py
+          python3 -B tools/test-profile-kernel.py
           python3 -B tools/test-firstboot-clock.py
           python3 -B tools/test-firstboot-release.py
           python3 -B tools/test-install-avsd.py
