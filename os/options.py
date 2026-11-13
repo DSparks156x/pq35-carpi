@@ -47,6 +47,15 @@ def say(msg):
     print(f"options: {msg}", flush=True)
 
 
+def validate_setup(s):
+    """Reject mutually exclusive USB CAN roles before any setup files are changed."""
+    can = s.get("can") or {}
+    if can.get("usb_diag") and can.get("usb_ican"):
+        raise ValueError("can.usb_diag and can.usb_ican cannot both be enabled")
+    if can.get("usb_ican") and can.get("mcp2515"):
+        raise ValueError("can.usb_ican and can.mcp2515 both claim the ican interface")
+
+
 def read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
@@ -65,7 +74,7 @@ def write(path, text, owner=None, mode=0o644):
 
 
 def config_lines(s):
-    """config.txt lines for the hat, RTC and DAC."""
+    """config.txt lines for the hat, RTC, DAC and display choice."""
     out = []
     can = s.get("can") or {}
     spi = can.get("mcp2515")
@@ -86,6 +95,9 @@ def config_lines(s):
     dac = DACS.get(s.get("audio"))
     if dac:
         out += dac
+    if s.get("video") is None:
+        # A profile may disable auto-detect. Restore it for the explicit Leave it choice.
+        out.append("display_auto_detect=1")
     return out
 
 
@@ -140,14 +152,27 @@ def apply_edid(s, share):
 
 def apply_usb_can(s):
     can = s.get("can") or {}
-    link = "/etc/systemd/network/70-carpi-candiag.link"
-    net = "/etc/systemd/network/80-carpi-candiag.network"
-    if not can.get("usb_diag"):
+    validate_setup(s)
+    if can.get("usb_ican"):
+        name, bitrate = "ican", 100000
+    elif can.get("usb_diag"):
+        name, bitrate = "candiag", 500000
+    else:
         return
-    write(link, "[Match]\nDriver=gs_usb\n\n[Link]\nName=candiag\nTransmitQueueLength=100\n")
+    link = (
+        "/etc/systemd/network/70-carpi-usb-ican.link"
+        if name == "ican"
+        else "/etc/systemd/network/70-carpi-candiag.link"
+    )
+    net = (
+        "/etc/systemd/network/80-carpi-usb-ican.network"
+        if name == "ican"
+        else "/etc/systemd/network/80-carpi-candiag.network"
+    )
+    write(link, f"[Match]\nDriver=gs_usb\n\n[Link]\nName={name}\nTransmitQueueLength=100\n")
     write(
         net,
-        "[Match]\nName=candiag\n\n[CAN]\nBitRate=500000\n\n[Link]\nRequiredForOnline=no\n",
+        f"[Match]\nName={name}\n\n[CAN]\nBitRate={bitrate}\n\n[Link]\nRequiredForOnline=no\n",
     )
 
 
@@ -266,6 +291,10 @@ def main():
     s = json.loads(read(a.setup))
     if s.get("version") != 1:
         sys.exit(f"options: setup.json version {s.get('version')!r}, this knows 1")
+    try:
+        validate_setup(s)
+    except ValueError as e:
+        sys.exit(f"options: {e}")
     user = pwd.getpwnam(a.user)
     if a.phase == "pre":
         apply_config_txt(s)
