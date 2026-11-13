@@ -225,7 +225,7 @@ impl Actuators {
             }
             Output::Power(PowerEvent::ShutdownCancelled) => info!("bus woke; shutdown cancelled"),
             // The daemon persists these before outputs get here.
-            Output::LightLearned(_) => {}
+            Output::LightLearned(_) | Output::HaldexConfirmed { .. } => {}
         }
     }
 

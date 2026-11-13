@@ -201,7 +201,9 @@ async fn main() -> anyhow::Result<()> {
     let ring_min = cfg.recorder.minutes.max(cfg.logs.capture_minutes);
     let recorder = Recorder::new(Duration::from_secs(ring_min * 60), 2_000_000);
     let mut car = Car::new(ifaces.clone(), recorder, config::raw_capture_dir());
-    car.configure(cfg.core(), Instant::now());
+    let mut core_cfg = cfg.core();
+    core_cfg.haldex_tx_ready &= !replay;
+    car.configure(core_cfg, Instant::now());
     car.set_power(cfg.power_policy());
     car.set_gestures(cfg.gestures());
     let mut act = act::Actuators::new(
@@ -464,6 +466,14 @@ impl Daemon {
             }
             Msg::DiagUnsubscribe(ids) => car.diag_unsubscribe(&ids, now),
             Msg::DiagJob(action, events, reply) => {
+                if matches!(action, DiagAction::SetHaldexMode { .. })
+                    && (!self.have_file || self.replay)
+                {
+                    let _ = reply.send(Err(
+                        "Haldex mode switching requires a writable config and live CAN".into(),
+                    ));
+                    return;
+                }
                 let is_scan = action == DiagAction::Scan;
                 match car.diag_start(action, now) {
                     Ok(id) => {
@@ -653,7 +663,9 @@ impl Daemon {
             ));
         }
         let new = settings::set(&self.config_path, patch)?;
-        car.configure(new.core(), now);
+        let mut core_cfg = new.core();
+        core_cfg.haldex_tx_ready &= !self.replay;
+        car.configure(core_cfg, now);
         car.set_power(new.power_policy());
         car.set_gestures(new.gestures());
         if new.tx.enabled != self.cfg.tx.enabled
@@ -744,7 +756,27 @@ impl Daemon {
 
     /// Outputs to the actuators, diag job events to their connections.
     fn flush(&mut self, car: &mut Car) {
+        let mut haldex_save_errors = HashMap::new();
         for o in car.drain_outputs() {
+            if let carpi_core::Output::HaldexConfirmed { id, mode } = &o {
+                if self.cfg.haldex.last_mode != Some(*mode) {
+                    match settings::save_haldex_mode(&self.config_path, *mode) {
+                        Ok(cfg) => {
+                            self.cfg.haldex.last_mode = cfg.haldex.last_mode;
+                            info!("Haldex mode saved: {}", mode.name());
+                        }
+                        Err(e) => {
+                            let message = format!(
+                                "{} confirmed, but could not save startup mode: {e}",
+                                mode.name()
+                            );
+                            warn!("{message}");
+                            haldex_save_errors.insert(*id, message);
+                        }
+                    }
+                }
+                continue;
+            }
             if let carpi_core::Output::LightLearned(points) = &o {
                 self.cfg.light.learned = points
                     .iter()
@@ -759,7 +791,15 @@ impl Daemon {
             }
             self.act.act(o, car);
         }
-        for (id, events) in car.drain_diag_jobs() {
+        for (id, mut events) in car.drain_diag_jobs() {
+            if let Some(message) = haldex_save_errors.get(&id) {
+                for e in &mut events {
+                    if let JobEvent::Finished { ok, message: m } = e {
+                        *ok = false;
+                        *m = message.clone();
+                    }
+                }
+            }
             let done = events
                 .iter()
                 .any(|e| matches!(e, JobEvent::Finished { .. }));

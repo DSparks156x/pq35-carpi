@@ -118,6 +118,8 @@ pub struct Config {
     pub dis: Dis,
     #[serde(default)]
     pub avsd: Avsd,
+    #[serde(default)]
+    pub haldex: carpi_proto::HaldexSettings,
     /// Absent: no portal. `config_file` is always the file carpid loaded.
     pub portal: Option<carpi_portal::PortalConfig>,
 }
@@ -913,6 +915,8 @@ impl Config {
                 },
             },
             routes: self.routes().unwrap_or_default(),
+            haldex: self.haldex,
+            haldex_tx_ready: self.tx.enabled && !self.tx.flashing_mode,
         }
     }
 
@@ -944,6 +948,7 @@ impl Config {
             light: Light::default(),
             dis: Dis::default(),
             avsd: Avsd::default(),
+            haldex: Default::default(),
             portal: None,
         }
     }
@@ -1078,6 +1083,8 @@ mod tests {
         let text = include_str!("../../../deploy/carpid.toml");
         let cfg = Config::parse(text).unwrap();
         assert!(!cfg.tx.enabled);
+        assert!(!cfg.haldex.enabled);
+        assert!(cfg.haldex.last_mode.is_none());
         assert!(!cfg.power.shutdown);
         assert!(!cfg.dis.enabled);
         let p = cfg.portal.as_ref().expect("[portal] in the deploy file");

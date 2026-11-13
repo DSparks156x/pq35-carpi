@@ -10,6 +10,7 @@
 
 mod client;
 pub mod group;
+pub mod haldex;
 mod request;
 pub mod services;
 

@@ -42,6 +42,8 @@ carpi replay some.log     # run a candump file through the decoders offline
 
 `carpid --replay some.log --realtime` plays a capture as if it were the bus.
 
+**Car Integration > Haldex mode switching** enables the optional RNSE-HUDIY five-mode controls in **Diagnostics > 22 AWD (Haldex)**: Stock, Performance, Competition, Snow Drift and Full Coupling. It is off by default. Enabling it requires HaldexRE firmware with the custom `3B F0` diagnostic handler (7716 or later); the feature probes support before sending a mode write. A switch is confirmed by querying the ECU after its debounce, and the last confirmed mode is saved in `[haldex]` in `carpid.toml` and restored on startup when enabled. A fresh installation has no saved mode to restore. Disabling the toggle hides the controls and stops mode switching and restore traffic; the saved setting remains available if enabled again. All requests use the existing diagnostics channel and TX gate.
+
 In LIVI, **Car Integration > A/V over SD > SDLink firmware** (also under Software Update) shows the RNS-E SDLink module (sector 107) and the Teensy firmware: what is installed, what this release bundles, and whether it's newer. **Check versions** reads the module header and firmware table over CAN (read only) and asks the Teensy its version. **Install** writes the bundled image after a second press to confirm:
 
 - RNS-E: ignition on, engine off. carpid stops the A/V chain, takes the CAN bus, stages the image over CAN (about a minute), commits it (the RNS-E erases sector 107, programs it and restarts, about 25 s), then reads the sector back and checks its CRC, the restart count and that the module runs. Before the commit nothing is written; a failed check stops there. Procedure: sdlink `docs/PI_UPDATER.md`.

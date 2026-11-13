@@ -19,6 +19,7 @@ use toml_edit::{Array, DocumentMut, InlineTable, Item, Value, value};
 pub fn get(cfg: &Config) -> Settings {
     Settings {
         tx_enabled: cfg.tx.enabled,
+        haldex: cfg.haldex,
         flashing_mode: cfg.tx.flashing_mode,
         power_shutdown: cfg.power.shutdown,
         light: carpi_proto::LightSettings {
@@ -401,9 +402,27 @@ pub fn save_learned(path: &Path, points: &[LearnedPoint]) -> Result<Config, Stri
     Ok(cfg)
 }
 
-/// The file's text with `patch` applied. Doesn't check the result.
+/// Save only a mode confirmed by a post-debounce ECU query.
+pub fn save_haldex_mode(path: &Path, mode: carpi_proto::HaldexMode) -> Result<Config, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("current file: {e}"))?;
+    table(&mut doc, "haldex")?;
+    doc["haldex"]["last_mode"] = value(name(mode));
+    let new = doc.to_string();
+    let cfg = Config::parse(&new)?;
+    if new != text {
+        carpi_portal::replace_with_backup(path, &new).map_err(|e| e.to_string())?;
+    }
+    Ok(cfg)
+}
+
+/// The file's text with the patch applied. Doesn't check the result.
 pub fn apply(text: &str, patch: &SettingsPatch) -> Result<String, String> {
     let mut doc: DocumentMut = text.parse().map_err(|e| format!("current file: {e}"))?;
+    if let Some(v) = patch.haldex_enabled {
+        table(&mut doc, "haldex")?;
+        doc["haldex"]["enabled"] = value(v);
+    }
     if let Some(v) = patch.tx_enabled {
         table(&mut doc, "tx")?;
         doc["tx"]["enabled"] = value(v);
@@ -664,6 +683,58 @@ mod tests {
                     .ends_with(".bak")
             })
             .count()
+    }
+
+    #[test]
+    fn haldex_toggle_keeps_last_confirmed_mode() {
+        use carpi_proto::HaldexMode;
+        let text = "# keep me\n[bus.ican]\niface='ican'\n[haldex]\nenabled=true\nlast_mode='competition'\n";
+        let off = apply(
+            text,
+            &SettingsPatch {
+                haldex_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let cfg = Config::parse(&off).unwrap();
+        assert!(!cfg.haldex.enabled);
+        assert_eq!(cfg.haldex.last_mode, Some(HaldexMode::Competition));
+        assert!(off.contains("# keep me"));
+        let on = apply(
+            &off,
+            &SettingsPatch {
+                haldex_enabled: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let cfg = Config::parse(&on).unwrap();
+        assert!(cfg.haldex.enabled);
+        assert_eq!(cfg.core().haldex.last_mode, Some(HaldexMode::Competition));
+        assert!(Config::parse(&text.replace("competition", "mystery")).is_err());
+    }
+
+    #[test]
+    fn haldex_confirmed_mode_persists_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("carpid.toml");
+        std::fs::write(
+            &path,
+            "# retained\n[bus.ican]\niface='ican'\n[haldex]\nenabled=true\n",
+        )
+        .unwrap();
+        save_haldex_mode(&path, carpi_proto::HaldexMode::SnowDrift).unwrap();
+        let cfg = Config::load(&path).unwrap();
+        assert_eq!(
+            cfg.haldex.last_mode,
+            Some(carpi_proto::HaldexMode::SnowDrift)
+        );
+        assert!(
+            std::fs::read_to_string(path)
+                .unwrap()
+                .contains("# retained")
+        );
     }
 
     #[test]

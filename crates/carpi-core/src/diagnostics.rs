@@ -112,6 +112,13 @@ pub(crate) struct Diagnostics {
     scan: Option<Scan>,
     /// Finished scans, until carpid takes them.
     reports: BTreeMap<JobId, ScanReport>,
+    haldex: proto::HaldexSettings,
+    haldex_tx_ready: bool,
+    haldex_job: Option<(JobId, proto::HaldexMode)>,
+    haldex_next: Option<Instant>,
+    haldex_status: String,
+    haldex_applied: Option<proto::HaldexMode>,
+    haldex_confirmed: Vec<(JobId, proto::HaldexMode)>,
 }
 
 /// The catalog for pickers (`Request::Catalog`). Static: it's the same
@@ -198,6 +205,8 @@ fn job_error(e: &JobError) -> String {
             "Timeout".into()
         }
         JobError::Cancelled => "Cancelled".into(),
+        JobError::HaldexUnsupported => "Requires RNSE-HUDIY Haldex firmware 7716+".into(),
+        JobError::HaldexUnconfirmed => "Haldex did not confirm the requested mode".into(),
         e => format!("{e:?}"),
     }
 }
@@ -212,6 +221,13 @@ impl Diagnostics {
             jobs: Vec::new(),
             scan: None,
             reports: BTreeMap::new(),
+            haldex: Default::default(),
+            haldex_tx_ready: false,
+            haldex_job: None,
+            haldex_next: None,
+            haldex_status: "Off".into(),
+            haldex_applied: None,
+            haldex_confirmed: Vec::new(),
         }
     }
 
@@ -224,7 +240,78 @@ impl Diagnostics {
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.diag.next_deadline()
+        self.diag
+            .next_deadline()
+            .into_iter()
+            .chain(self.haldex_next)
+            .min()
+    }
+
+    pub fn configure_haldex(&mut self, cfg: proto::HaldexSettings, tx_ready: bool, now: Instant) {
+        if self.haldex == cfg && self.haldex_tx_ready == tx_ready {
+            return;
+        }
+        self.haldex = cfg;
+        self.haldex_tx_ready = tx_ready;
+        if !cfg.enabled || !tx_ready {
+            if let Some((id, _)) = self.haldex_job.take() {
+                self.diag.cancel_job(now, id);
+            }
+            self.haldex_next = None;
+            self.haldex_applied = None;
+            self.haldex_status = if cfg.enabled {
+                "CAN transmission inhibited"
+            } else {
+                "Off"
+            }
+            .into();
+        } else {
+            self.haldex_next = cfg.last_mode.map(|_| now);
+            self.haldex_status = if cfg.last_mode.is_some() {
+                "Waiting to restore"
+            } else {
+                "Choose a mode"
+            }
+            .into();
+        }
+    }
+
+    pub fn haldex_start(&mut self, now: Instant, mode: proto::HaldexMode) -> Result<JobId, String> {
+        if !self.haldex.enabled {
+            return Err("Haldex mode switching is disabled in Car Integration".into());
+        }
+        if !self.haldex_tx_ready {
+            return Err("CAN transmission is inhibited".into());
+        }
+        if self.haldex_job.is_some() {
+            return Err("Haldex mode switch busy".into());
+        }
+        let id = self.start(now, Job::HaldexMode { mode: mode.code() }, true)?;
+        self.haldex_job = Some((id, mode));
+        self.haldex_next = None;
+        self.haldex_status = format!("Switching to {}", mode.name());
+        Ok(id)
+    }
+
+    fn restore_haldex(&mut self, now: Instant, ignition: bool) {
+        if !self.haldex_next.is_some_and(|t| now >= t) {
+            return;
+        }
+        self.haldex_next = None;
+        if !self.haldex.enabled || !self.haldex_tx_ready {
+            return;
+        }
+        // Wait for the car and let user jobs, VCDS and bus leases take precedence.
+        if !ignition || !self.job_modules.is_empty() || self.diag.mode() != Mode::Normal {
+            self.haldex_next = Some(now + Duration::from_secs(2));
+            return;
+        }
+        if let Some(mode) = self.haldex.last_mode {
+            if let Err(e) = self.haldex_start(now, mode) {
+                self.haldex_status = e;
+                self.haldex_next = Some(now + Duration::from_secs(10));
+            }
+        }
     }
 
     pub fn subscribe(&mut self, now: Instant, prefixes: &[String], period: Duration) -> Vec<SubId> {
@@ -272,7 +359,7 @@ impl Diagnostics {
             Job::ClearDtcs { .. } if !confirm => {
                 return Err("clearing fault codes needs confirm: true".into());
             }
-            Job::ClearDtcs { .. } => Class::Persistent,
+            Job::ClearDtcs { .. } | Job::HaldexMode { .. } => Class::Persistent,
             Job::ReadGroup { .. } if denied => return Err("ABS not polled".into()),
             _ if denied => Class::ReadOnly,
             _ => {
@@ -370,6 +457,7 @@ impl Diagnostics {
         gate: &mut Gate,
         out: &mut Vec<Output>,
     ) {
+        self.restore_haldex(now, view.is_some_and(|v| v.kl15 == Some(true)));
         self.diag.tick(now);
         self.pump(now, store, view, gate, out);
     }
@@ -385,6 +473,9 @@ impl Diagnostics {
         out: &mut Vec<Output>,
     ) {
         self.events(now);
+        for (id, mode) in self.haldex_confirmed.drain(..) {
+            out.push(Output::HaldexConfirmed { id, mode });
+        }
         while let Some(f) = self.diag.poll_transmit() {
             // No ICAN view: no Kl15, nothing passes.
             if let Some(v) = &view
@@ -415,6 +506,14 @@ impl Diagnostics {
             .filter(|c| matches!(c.state, ChannelState::Open | ChannelState::Grace { .. }))
             .count();
         set("diag.channels_open", Value::Num(open as f64));
+        set(
+            "haldex.control.status",
+            Value::Text(self.haldex_status.clone()),
+        );
+        set(
+            "haldex.control.applied",
+            Value::Text(self.haldex_applied.map_or("Unknown", |m| m.name()).into()),
+        );
     }
 
     /// Diag's events: tokens back, API job events, the scan's next step.
@@ -433,6 +532,29 @@ impl Diagnostics {
                     JobEvent::Done { .. } => self.job_modules.remove(&id),
                     JobEvent::Progress { .. } => self.job_modules.get(&id).copied(),
                 };
+                if let JobEvent::Done { result, .. } = &j
+                    && let Some((_, mode)) = self.haldex_job.filter(|j| j.0 == id)
+                {
+                    self.haldex_job = None;
+                    self.haldex_next = Some(now + Duration::from_secs(10));
+                    match result {
+                        Ok(JobOutput::HaldexMode(_)) => {
+                            self.haldex.last_mode = Some(mode);
+                            self.haldex_applied = Some(mode);
+                            self.haldex_status = "Confirmed".into();
+                            self.haldex_confirmed.push((id, mode));
+                        }
+                        Err(e) => {
+                            self.haldex_applied = None;
+                            self.haldex_status = job_error(e);
+                            // An unsupported handler never receives repeated probes or writes.
+                            if matches!(e, JobError::HaldexUnsupported) {
+                                self.haldex_next = None;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if self.scan_owns(id) {
                     self.on_scan(now, &j);
                     continue;
@@ -631,6 +753,13 @@ pub fn job_events(ev: &JobEvent, module: u8) -> Vec<proto::JobEvent> {
                 group_event(module, g),
                 finished(true, format!("group {}", g.group)),
             ],
+            Ok(JobOutput::HaldexMode(s)) => vec![finished(
+                true,
+                format!(
+                    "{} confirmed",
+                    proto::HaldexMode::ALL[usize::from(s.applied)].name()
+                ),
+            )],
             Err(e) => vec![finished(false, job_error(e))],
         },
     }
@@ -729,6 +858,144 @@ mod tests {
     use carpi_kwp::group::Record;
 
     #[test]
+    fn haldex_opt_in_restore_and_disable() {
+        use carpi_sim::tp2::{Gateway, ModuleSpec};
+        use proto::{HaldexMode as M, HaldexSettings as S};
+        let mut spec = ModuleSpec::haldex();
+        spec.replies.insert(
+            vec![0x3B, 0xF0],
+            [
+                vec![0x7B, 0xF0, 0, 0, 0xFF, 3],
+                vec![0x7B, 0xF0, 1, 1, 0xFF, 3],
+            ]
+            .into(),
+        );
+        spec.replies.insert(
+            vec![0x3B, 0xF0, 0xA5, 0x5A],
+            [vec![0x7B, 0xF0, 0, 0, 1, 1]].into(),
+        );
+        let mut gw = Gateway::new([spec]);
+        let mut bus = carpi_sim::bus::Bus::new(Instant::now());
+        let mut n = Node {
+            d: Diagnostics::new(0),
+            events: Vec::new(),
+        };
+        let saved = S {
+            enabled: false,
+            last_mode: Some(M::Performance),
+        };
+        n.d.configure_haldex(saved, true, bus.now);
+        bus.run_for(&mut [&mut n, &mut gw], Duration::from_secs(20));
+        assert!(gw.module(0x0A).requests.is_empty());
+        assert!(n.d.haldex_start(bus.now, M::Stock).is_err());
+        n.d.configure_haldex(
+            S {
+                enabled: true,
+                ..saved
+            },
+            true,
+            bus.now,
+        );
+        bus.run_for(&mut [&mut n, &mut gw], Duration::from_secs(2));
+        assert_eq!(n.d.haldex_applied, Some(M::Performance));
+        assert_eq!(n.d.haldex_confirmed.len(), 1);
+        n.d.configure_haldex(saved, true, bus.now);
+        let count = gw.module(0x0A).requests.len();
+        bus.run_for(&mut [&mut n, &mut gw], Duration::from_secs(20));
+        assert_eq!(gw.module(0x0A).requests.len(), count);
+        assert!(n.d.haldex_next.is_none());
+    }
+
+    #[test]
+    fn haldex_disable_cancels_inflight_switch_without_remembering_it() {
+        use carpi_sim::tp2::{Gateway, ModuleSpec};
+        let mut spec = ModuleSpec::haldex();
+        spec.replies.insert(
+            vec![0x3B, 0xF0],
+            [
+                vec![0x7B, 0xF0, 0, 0, 0xFF, 3],
+                vec![0x7B, 0xF0, 2, 2, 0xFF, 3],
+            ]
+            .into(),
+        );
+        spec.replies.insert(
+            vec![0x3B, 0xF0, 0x3C, 0xC3],
+            [vec![0x7B, 0xF0, 0, 0, 2, 1]].into(),
+        );
+        let mut gw = Gateway::new([spec]);
+        let mut bus = carpi_sim::bus::Bus::new(Instant::now());
+        let mut n = Node {
+            d: Diagnostics::new(0),
+            events: Vec::new(),
+        };
+        let cfg = proto::HaldexSettings {
+            enabled: true,
+            last_mode: None,
+        };
+        n.d.configure_haldex(cfg, true, bus.now);
+        n.d.haldex_start(bus.now, proto::HaldexMode::Competition)
+            .unwrap();
+        for _ in 0..100 {
+            bus.run_for(&mut [&mut n, &mut gw], Duration::from_millis(10));
+            if gw
+                .module(0x0A)
+                .requests
+                .iter()
+                .any(|r| r.len() == 4 && r[..2] == [0x3B, 0xF0])
+            {
+                break;
+            }
+        }
+        assert!(n.d.haldex_job.is_some());
+        n.d.configure_haldex(
+            proto::HaldexSettings {
+                enabled: false,
+                ..cfg
+            },
+            true,
+            bus.now,
+        );
+        bus.run_for(&mut [&mut n, &mut gw], Duration::from_secs(20));
+        assert!(n.d.haldex_confirmed.is_empty());
+        assert!(n.d.haldex.last_mode.is_none());
+        assert!(n.d.tokens.is_empty());
+        assert_eq!(
+            gw.module(0x0A)
+                .requests
+                .iter()
+                .filter(|r| r[..2] == [0x3B, 0xF0])
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn haldex_fresh_enable_and_inhibited_tx_do_not_restore() {
+        let now = Instant::now();
+        let mut d = Diagnostics::new(0);
+        d.configure_haldex(
+            proto::HaldexSettings {
+                enabled: true,
+                last_mode: None,
+            },
+            true,
+            now,
+        );
+        d.restore_haldex(now, true);
+        assert!(d.haldex_job.is_none());
+        d.configure_haldex(
+            proto::HaldexSettings {
+                enabled: true,
+                last_mode: Some(proto::HaldexMode::Stock),
+            },
+            false,
+            now,
+        );
+        assert!(d.haldex_start(now, proto::HaldexMode::Stock).is_err());
+        assert!(d.haldex_next.is_none());
+    }
+
+    #[test]
     fn group_fields_for_the_ui() {
         let g = Group {
             group: 3,
@@ -788,6 +1055,7 @@ mod tests {
             self.settle(now);
         }
         fn tick(&mut self, now: Instant) {
+            self.d.restore_haldex(now, true);
             self.d.diag.tick(now);
             self.settle(now);
         }

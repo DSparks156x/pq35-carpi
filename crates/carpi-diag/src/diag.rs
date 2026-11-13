@@ -548,6 +548,9 @@ impl Diag {
         for s in self.subs.values() {
             take(Some(s.spec.lease_expires));
         }
+        for j in &self.jobs {
+            take(j.not_before);
+        }
         take(self.vcds_until);
         d
     }
@@ -787,7 +790,7 @@ impl Diag {
         if self.silent() {
             return Err(JobError::Paused(self.mode()));
         }
-        if matches!(job, Job::ClearDtcs { .. }) && token.is_none() {
+        if matches!(job, Job::ClearDtcs { .. } | Job::HaldexMode { .. }) && token.is_none() {
             return Err(JobError::NeedsToken);
         }
         match (token, self.exclusive) {
@@ -810,8 +813,15 @@ impl Diag {
             _ => None,
         };
         let id = JobId(self.id());
-        self.jobs
-            .push(JobRun::new(id, job, token.map(|t| t.lease()), clear));
+        let mut run = JobRun::new(id, job, token.map(|t| t.lease()), clear);
+        if let Job::HaldexMode { mode } = job {
+            let token = token.expect("checked");
+            run.haldex_requests = Some([
+                carpi_kwp::haldex::query(token).map_err(|_| JobError::StaleToken)?,
+                carpi_kwp::haldex::set(mode, token).map_err(|_| JobError::StaleToken)?,
+            ]);
+        }
+        self.jobs.push(run);
 
         self.events.push_back(Event::Job(JobEvent::Progress {
             id,
@@ -1216,12 +1226,17 @@ impl Diag {
         }
     }
 
-    fn on_job(&mut self, _now: Instant, _m: u8, id: JobId, result: Result<Vec<u8>, KwpError>) {
+    fn on_job(&mut self, now: Instant, _m: u8, id: JobId, result: Result<Vec<u8>, KwpError>) {
         let Some(i) = self.jobs.iter().position(|j| j.id == id) else {
             return; // cancelled
         };
         match self.jobs[i].on_result(result) {
-            Step::Next => self.jobs[i].active = false,
+            Step::Next => {
+                let j = &mut self.jobs[i];
+                j.active = false;
+                j.not_before = (matches!(j.job, Job::HaldexMode { .. }) && j.step == 2)
+                    .then_some(now + carpi_kwp::haldex::CONFIRM_DELAY);
+            }
             Step::Done(r) => {
                 if let Ok(JobOutput::InstallList(l)) = &r {
                     for m in l {
@@ -1354,6 +1369,10 @@ impl Diag {
             .collect();
         for m in idle {
             if let Some(i) = self.jobs.iter().position(|j| j.job.module() == m) {
+                if self.jobs[i].not_before.is_some_and(|t| now < t) {
+                    continue;
+                }
+                self.jobs[i].not_before = None;
                 let req = self.wrap(m, self.jobs[i].request());
                 let mut bytes = [0u8; 2];
                 for (b, r) in bytes.iter_mut().zip(req.bytes()) {

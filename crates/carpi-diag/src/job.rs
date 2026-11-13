@@ -7,7 +7,8 @@ use crate::ChannelError;
 use crate::Mode;
 use carpi_kwp::group::{self, Group};
 use carpi_kwp::services::{self, Dtc, Ident, Installed};
-use carpi_kwp::{KwpError, Request};
+use carpi_kwp::{KwpError, Request, haldex};
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct JobId(pub u64);
@@ -16,6 +17,8 @@ pub struct JobId(pub u64);
 pub enum Job {
     /// `1A 9F` to the gateway, TP2 0x1F. Proven.
     InstallList,
+    /// Query custom handler support, set the RAM mode, then confirm after debounce.
+    HaldexMode { mode: u8 },
     /// `18 02 FF 00`, then `18 00 FF 00`, then `13` on a negative reply: the old
     /// worker's fallback order. Which modules need which: unknown.
     ReadDtcs { module: u8 },
@@ -33,6 +36,7 @@ impl Job {
     pub fn module(&self) -> u8 {
         match *self {
             Job::InstallList => services::GATEWAY,
+            Job::HaldexMode { .. } => haldex::MODULE,
             Job::ReadDtcs { module }
             | Job::ClearDtcs { module }
             | Job::Identify { module }
@@ -51,6 +55,7 @@ pub enum JobOutput {
     },
     Identity(Ident),
     Group(Group),
+    HaldexMode(haldex::State),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +74,8 @@ pub enum JobError {
     Kwp(KwpError),
     BadReply(Vec<u8>),
     Cancelled,
+    HaldexUnsupported,
+    HaldexUnconfirmed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +109,8 @@ pub(crate) struct JobRun {
     pub clear: Option<Request>,
     pub step: u8,
     pub active: bool,
+    pub not_before: Option<Instant>,
+    pub haldex_requests: Option<[Request; 2]>,
     /// What an identity job has so far.
     pub ident: Ident,
     /// The last refusal an identity job saw, for its error.
@@ -131,6 +140,8 @@ impl JobRun {
             clear,
             step: 0,
             active: false,
+            not_before: None,
+            haldex_requests: None,
             ident: Ident::default(),
             last_nrc: 0,
         }
@@ -140,6 +151,9 @@ impl JobRun {
     pub fn request(&self) -> Request {
         match self.job {
             Job::InstallList => services::read_install_list(),
+            Job::HaldexMode { .. } => self.haldex_requests.as_ref().expect("built at submit")
+                [usize::from(self.step == 1)]
+            .clone(),
             Job::ReadDtcs { .. } => dtc_read(self.step),
             Job::ClearDtcs { .. } if self.step == 0 => self.clear.clone().expect("built at submit"),
             Job::ClearDtcs { .. } => dtc_read(self.step - 1),
@@ -156,6 +170,7 @@ impl JobRun {
 
     pub fn on_result(&mut self, res: Result<Vec<u8>, KwpError>) -> Step {
         match self.job {
+            Job::HaldexMode { mode } => self.haldex_step(mode, res),
             Job::InstallList => Step::Done(match res {
                 Ok(r) => services::parse_install_list(&r).map_or_else(
                     || Err(JobError::BadReply(r)),
@@ -181,6 +196,33 @@ impl JobRun {
                     .map_err(|_| JobError::BadReply(r)),
                 Err(e) => Err(JobError::Kwp(e)),
             }),
+        }
+    }
+
+    fn haldex_step(&mut self, mode: u8, res: Result<Vec<u8>, KwpError>) -> Step {
+        let state = match res {
+            Ok(r) => match haldex::State::parse(&r) {
+                Some(s) => s,
+                None => return Step::Done(Err(JobError::HaldexUnsupported)),
+            },
+            Err(KwpError::Negative { nrc: 0x12 }) => {
+                return Step::Done(Err(JobError::HaldexUnsupported));
+            }
+            Err(e) => return Step::Done(Err(JobError::Kwp(e))),
+        };
+        match self.step {
+            0 if state.matches(mode) => Step::Done(Ok(JobOutput::HaldexMode(state))),
+            0 => {
+                self.step = 1;
+                Step::Next
+            }
+            // The set reply is a pre-debounce snapshot, never a confirmation.
+            1 => {
+                self.step = 2;
+                Step::Next
+            }
+            _ if state.matches(mode) => Step::Done(Ok(JobOutput::HaldexMode(state))),
+            _ => Step::Done(Err(JobError::HaldexUnconfirmed)),
         }
     }
 

@@ -156,6 +156,93 @@ impl World {
     }
 }
 
+#[test]
+fn haldex_queries_before_setting_and_waits_for_debounce_confirmation() {
+    let mut spec = ModuleSpec::haldex();
+    spec.replies.insert(
+        vec![0x3B, 0xF0],
+        [
+            vec![0x7B, 0xF0, 0, 0, 0xFF, 3],
+            vec![0x7B, 0xF0, 2, 2, 0xFF, 3],
+        ]
+        .into(),
+    );
+    spec.replies.insert(
+        vec![0x3B, 0xF0, 0x3C, 0xC3],
+        [vec![0x7B, 0xF0, 0, 0, 2, 1]].into(),
+    );
+    let mut w = World::new(Gateway::new([spec]), Catalog::seed());
+    let token = w.dm.d.begin_exclusive(w.now(), Class::Persistent).unwrap();
+    let id = w.job(Job::HaldexMode { mode: 2 }, Some(&token));
+    assert!(matches!(w.dm.job_done(id), Some(Ok(JobOutput::HaldexMode(s))) if s.matches(2)));
+    let requests = &w.gw.module(0x0A).requests;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r[0] == 0x3B)
+            .cloned()
+            .collect::<Vec<_>>(),
+        [
+            vec![0x3B, 0xF0],
+            vec![0x3B, 0xF0, 0x3C, 0xC3],
+            vec![0x3B, 0xF0]
+        ]
+    );
+    let sent = w
+        .bus
+        .sent_by(0)
+        .filter(|(_, _, d)| d.get(3..5) == Some(&[0x3B, 0xF0]))
+        .collect::<Vec<_>>();
+    assert_eq!(sent.len(), 3);
+    assert!(sent[2].0.duration_since(sent[1].0) >= Duration::from_millis(300));
+}
+
+#[test]
+fn haldex_never_sets_an_unsupported_or_malformed_handler() {
+    for reply in [
+        vec![0x7F, 0x3B, 0x12],
+        vec![0x7B, 0xF0, 0, 0],
+        vec![0x7B, 0xF0, 9, 0, 0xFF, 3],
+    ] {
+        let mut spec = ModuleSpec::haldex();
+        spec.replies.insert(vec![0x3B, 0xF0], [reply].into());
+        let mut w = World::new(Gateway::new([spec]), Catalog::seed());
+        let token = w.dm.d.begin_exclusive(w.now(), Class::Persistent).unwrap();
+        let id = w.job(Job::HaldexMode { mode: 4 }, Some(&token));
+        assert_eq!(w.dm.job_done(id), Some(Err(JobError::HaldexUnsupported)));
+        assert_eq!(
+            w.gw.module(0x0A)
+                .requests
+                .iter()
+                .filter(|r| r[0] == 0x3B)
+                .cloned()
+                .collect::<Vec<_>>(),
+            [vec![0x3B, 0xF0]]
+        );
+    }
+}
+
+#[test]
+fn haldex_set_acknowledgement_does_not_count_as_confirmation() {
+    let mut spec = ModuleSpec::haldex();
+    spec.replies.insert(
+        vec![0x3B, 0xF0],
+        [
+            vec![0x7B, 0xF0, 0, 0, 0xFF, 3],
+            vec![0x7B, 0xF0, 0, 0, 4, 2],
+        ]
+        .into(),
+    );
+    spec.replies.insert(
+        vec![0x3B, 0xF0, 0x96, 0x69],
+        [vec![0x7B, 0xF0, 4, 4, 0xFF, 3]].into(),
+    );
+    let mut w = World::new(Gateway::new([spec]), Catalog::seed());
+    let token = w.dm.d.begin_exclusive(w.now(), Class::Persistent).unwrap();
+    let id = w.job(Job::HaldexMode { mode: 4 }, Some(&token));
+    assert_eq!(w.dm.job_done(id), Some(Err(JobError::HaldexUnconfirmed)));
+}
+
 fn near(v: f64, want: f64, tol: f64) -> bool {
     (v - want).abs() <= tol
 }

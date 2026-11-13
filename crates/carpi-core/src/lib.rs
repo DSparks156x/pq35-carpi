@@ -63,6 +63,8 @@ pub struct CoreConfig {
     pub dis: DisSetup,
     pub light: LightSetup,
     pub routes: RouteConfig,
+    pub haldex: proto::HaldexSettings,
+    pub haldex_tx_ready: bool,
 }
 
 /// A bus-state change, tagged with the interface it happened on.
@@ -125,6 +127,9 @@ impl Car {
 
     /// Apply new settings. Nothing needs a restart.
     pub fn configure(&mut self, cfg: CoreConfig, now: Instant) {
+        if let Some(d) = &mut self.diag {
+            d.configure_haldex(cfg.haldex, cfg.haldex_tx_ready, now);
+        }
         self.display.configure(cfg.dis, now);
         self.controls.set_light(cfg.light);
         self.controls.routes = cfg.routes;
@@ -346,10 +351,20 @@ impl Car {
         now: Instant,
     ) -> Result<DiagJobId, String> {
         use carpi_diag::Job;
+        if matches!(action, proto::DiagAction::SetHaldexMode { .. })
+            && carpi_gate::kl15(&self.store, now) != Some(true)
+        {
+            return Err("Haldex mode switching requires ignition on".into());
+        }
         let Some(d) = &mut self.diag else {
             return Err("no interface has the diag role".into());
         };
         let (job, confirm) = match action {
+            proto::DiagAction::SetHaldexMode { mode } => {
+                let r = d.haldex_start(now, mode);
+                self.pump_diag(now);
+                return r;
+            }
             proto::DiagAction::InstallList => (Job::InstallList, false),
             proto::DiagAction::ReadDtcs { module } => (Job::ReadDtcs { module }, false),
             proto::DiagAction::ClearDtcs { module, confirm } => {

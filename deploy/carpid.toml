@@ -129,3 +129,9 @@ restart_system = []
 [avsd]
 env = "~/avsd/avsd.env"
 unit = "avsd-chain.service"
+
+# Custom RNSE-HUDIY Haldex firmware 7716+: opt in from Car Integration.
+# The last confirmed mode is saved here and restored only while enabled.
+[haldex]
+enabled = false
+# last_mode = "stock" # carpid-owned; absent until a mode is confirmed

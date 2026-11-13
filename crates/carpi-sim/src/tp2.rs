@@ -72,6 +72,8 @@ pub struct ModuleSpec {
     pub dtcs: Vec<(u16, u8)>,
     /// `1A 9F` records (gateway only).
     pub install_list: Vec<[u8; 4]>,
+    /// Exact scripted KWP answers, consumed in order (then normal behavior).
+    pub replies: BTreeMap<Vec<u8>, VecDeque<Vec<u8>>>,
 }
 
 impl ModuleSpec {
@@ -112,6 +114,7 @@ impl ModuleSpec {
             ident: b"8J0907115   MED17.5.1  0040".to_vec(),
             dtcs: vec![(17965, 0x23)],
             install_list: vec![],
+            replies: BTreeMap::new(),
         }
     }
 
@@ -321,6 +324,9 @@ impl SimModule {
     }
 
     fn answer(&mut self, req: &[u8]) -> Vec<u8> {
+        if let Some(reply) = self.spec.replies.get_mut(req).and_then(VecDeque::pop_front) {
+            return reply;
+        }
         let sid = req[0];
         let sub = req.get(1).copied();
         let neg = |nrc| vec![0x7F, sid, nrc];

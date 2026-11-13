@@ -466,6 +466,8 @@ pub enum DiagAction {
         #[serde(default)]
         confirm: bool,
     },
+    /// RNSE-HUDIY 7716+ RAM mode, after a guarded support query.
+    SetHaldexMode { mode: HaldexMode },
     /// Mode, channels and subscriptions, as one [`JobEvent::DiagStatus`].
     Status,
 }
@@ -516,6 +518,47 @@ pub struct Settings {
     pub avsd: AvsdSettings,
     #[serde(default)]
     pub remote: RemoteSettings,
+    #[serde(default)]
+    pub haldex: HaldexSettings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum HaldexMode {
+    Stock,
+    Performance,
+    Competition,
+    SnowDrift,
+    FullCoupling,
+}
+impl HaldexMode {
+    pub const ALL: [Self; 5] = [
+        Self::Stock,
+        Self::Performance,
+        Self::Competition,
+        Self::SnowDrift,
+        Self::FullCoupling,
+    ];
+    pub fn code(self) -> u8 {
+        self as u8
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Stock => "Stock",
+            Self::Performance => "Performance",
+            Self::Competition => "Competition",
+            Self::SnowDrift => "Snow Drift",
+            Self::FullCoupling => "Full Coupling",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HaldexSettings {
+    pub enabled: bool,
+    /// Last mode confirmed by the ECU. None on a fresh install: no startup write.
+    pub last_mode: Option<HaldexMode>,
 }
 
 /// Remote access: VNC on the desktop. ssh is always on.
@@ -1121,6 +1164,8 @@ pub struct Binding {
 /// Fields left out stay as they are.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SettingsPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub haldex_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_enabled: Option<bool>,
     /// Persistently inhibit all CAN transmissions.

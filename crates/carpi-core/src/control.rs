@@ -38,6 +38,11 @@ pub enum Output {
     /// The light model's learned points changed (a nudge or a reset): every
     /// source's, for the daemon to persist.
     LightLearned(carpi_light::Learned),
+    /// A custom Haldex mode confirmed after the ECU debounce.
+    HaldexConfirmed {
+        id: crate::DiagJobId,
+        mode: carpi_proto::HaldexMode,
+    },
 }
 
 /// Light settings (PLAN 2.6); see `carpi_light`.
